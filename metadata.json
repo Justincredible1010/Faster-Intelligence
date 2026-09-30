@@ -1,0 +1,7 @@
+{
+  "name": "OmniFact - Source-Grounded Marketing Content Engine",
+  "description": "Transform master briefs and landing pages into multi-channel marketing campaigns and ad targeting packs with strict sentence-level source attribution, hallucination defense, and human-in-the-loop review.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
