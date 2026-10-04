@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
-import { Target, Search, ShieldAlert, Copy, Check, Download, AlertTriangle } from 'lucide-react';
-import { AcademicKeywordsPack } from '../types';
+import { Target, Search, ShieldAlert, Copy, Check, Download, AlertTriangle, Compass, Layers } from 'lucide-react';
+import { AcademicKeywordsPack, StageCode, STAGE_CONFIGS, normalizeStage } from '../types';
 
 interface Props {
   keywords: AcademicKeywordsPack;
   journalName?: string;
+  stage?: StageCode;
 }
 
-export const TargetingViewer: React.FC<Props> = ({ keywords, journalName = 'Journal' }) => {
+export const TargetingViewer: React.FC<Props> = ({ keywords, journalName = 'Journal', stage = 'CON' }) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const normalized = normalizeStage(stage);
+  const stageCfg = STAGE_CONFIGS[normalized];
 
   const copyToClipboard = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
@@ -52,6 +55,33 @@ export const TargetingViewer: React.FC<Props> = ({ keywords, journalName = 'Jour
           <Download className="w-3.5 h-3.5" />
           <span>Export Keywords CSV</span>
         </button>
+      </div>
+
+      {/* Stage Keyword Intent Alignment */}
+      <div className="p-3.5 rounded-xl bg-blue-50/60 border border-blue-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2.5">
+          <span className="w-6 h-6 rounded-lg bg-[#002d62] text-white flex items-center justify-center font-mono font-bold text-xs shrink-0">
+            {stageCfg.code}
+          </span>
+          <div>
+            <div className="font-semibold text-slate-800 flex items-center gap-1.5">
+              <span>{stageCfg.name} Keyword Intent</span>
+              <span className="text-slate-400">·</span>
+              <span className="text-slate-500 font-normal italic">"{stageCfg.authorMindset}"</span>
+            </div>
+            <div className="text-[11px] text-slate-600 mt-0.5">
+              {stage === 'AWA' && 'Targeting broad disciplinary keywords, scope exploration, and research community queries.'}
+              {stage === 'CON' && 'Targeting evaluative keywords: journal ranking, impact factor, review duration, and scope fit.'}
+              {stage === 'DEC' && 'Targeting actionable submission keywords: author guidelines, preparation checklists, and submission portal.'}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 text-[11px]">
+          <span className="text-slate-500">Destination:</span>
+          <span className="font-semibold text-blue-900 bg-white px-2 py-0.5 rounded border border-blue-200">
+            {stageCfg.recommendedDestination.label}
+          </span>
+        </div>
       </div>
 
       {/* 1. English Search Keywords */}

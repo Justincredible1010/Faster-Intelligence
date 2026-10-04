@@ -8,26 +8,41 @@ import {
   Smartphone,
   Monitor,
   MoreVertical,
-  AlertTriangle,
   Scissors,
   CheckCircle2,
   Shuffle,
   Pin,
   HelpCircle,
   Sparkles,
+  Compass,
 } from 'lucide-react';
-import { GoogleSearchAds, GoogleSearchHeadline, GoogleSearchDescription } from '../types';
+import { GoogleSearchAds, GoogleSearchHeadline, GoogleSearchDescription, StageCode } from '../types';
 
 interface Props {
   content: GoogleSearchAds;
   displayUrl?: string;
+  stage?: StageCode;
   onEditHeadline?: (index: number, text: string) => void;
   onEditDescription?: (index: number, text: string) => void;
+}
+
+// Smart clamp avoiding mid-word bisection
+function smartTrim(text: string, maxLen: number): string {
+  const clean = text.trim();
+  if (clean.length <= maxLen) return clean;
+
+  const candidate = clean.slice(0, maxLen);
+  const lastSpace = candidate.lastIndexOf(' ');
+  if (lastSpace > maxLen - 12 && lastSpace > 10) {
+    return candidate.slice(0, lastSpace).trim().replace(/[,;:.\-—]+$/, '');
+  }
+  return candidate.trim().replace(/[,;:.\-—]+$/, '');
 }
 
 export const GoogleAdPreview: React.FC<Props> = ({
   content,
   displayUrl = 'https://www.nature.com/nature',
+  stage = 'CON',
   onEditHeadline,
   onEditDescription,
 }) => {
@@ -49,13 +64,21 @@ export const GoogleAdPreview: React.FC<Props> = ({
 
   // Parse domain for SERP display
   let cleanDomain = 'nature.com';
-  let pathBreadcrumb = 'submissions › call-for-papers';
+  let pathBreadcrumb =
+    stage === 'AWA'
+      ? 'topics › overview'
+      : stage === 'DEC'
+      ? 'for-authors › submission-portal'
+      : 'aims-and-scope › evaluation';
+
   try {
     const parsed = new URL(displayUrl.startsWith('http') ? displayUrl : `https://${displayUrl}`);
     cleanDomain = parsed.hostname.replace(/^www\./, '');
     const segments = parsed.pathname.split('/').filter(Boolean);
     if (segments.length > 0) {
-      pathBreadcrumb = segments.join(' › ');
+      pathBreadcrumb = `${segments.join(' › ')} › ${
+        stage === 'AWA' ? 'overview' : stage === 'DEC' ? 'submission' : 'scope'
+      }`;
     }
   } catch {
     // fallback
@@ -67,7 +90,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
   // Active headline texts for SERP title
   const h1Text = (headlines[pinnedH1 ?? selectedH1Index]?.text || headlines[0]?.text || 'Official Academic Journal').trim();
   const h2Text = (headlines[pinnedH2 ?? selectedH2Index]?.text || headlines[1]?.text || 'Clarivate JCR Q1').trim();
-  const h3Text = (headlines[pinnedH3 ?? selectedH3Index]?.text || headlines[2]?.text || 'Fast Peer Review').trim();
+  const h3Text = (headlines[pinnedH3 ?? selectedH3Index]?.text || headlines[2]?.text || 'Editorial Rigor').trim();
 
   const previewTitle =
     deviceView === 'desktop'
@@ -86,13 +109,13 @@ export const GoogleAdPreview: React.FC<Props> = ({
 
   const handleAutoTrimHeadline = (index: number, text: string) => {
     if (onEditHeadline) {
-      onEditHeadline(index, text.slice(0, 30).trim());
+      onEditHeadline(index, smartTrim(text, 30));
     }
   };
 
   const handleAutoTrimDesc = (index: number, text: string) => {
     if (onEditDescription) {
-      onEditDescription(index, text.slice(0, 90).trim());
+      onEditDescription(index, smartTrim(text, 90));
     }
   };
 
@@ -123,21 +146,21 @@ export const GoogleAdPreview: React.FC<Props> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
             <Search className="w-4 h-4 text-blue-600" />
-            <span>Google Responsive Search Ad (Live SERP Presentation)</span>
+            <span>Google Responsive Search Ad (Live SERP Preview)</span>
           </div>
 
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handleShuffleCombination}
-              className="flex items-center gap-1.5 px-3 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 rounded-lg text-xs font-semibold border border-blue-200 transition"
+              className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold border border-slate-300 transition"
               title="Simulate Google's dynamic machine-learning rotation of headlines and descriptions"
             >
               <Shuffle className="w-3.5 h-3.5 text-blue-600" />
-              <span>Simulate Machine-Learning Rotation</span>
+              <span>Simulate ML Rotation</span>
             </button>
 
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs">
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl text-xs">
               <button
                 onClick={() => setDeviceView('desktop')}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition ${
@@ -147,7 +170,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
                 }`}
               >
                 <Monitor className="w-3.5 h-3.5" />
-                <span>Desktop SERP</span>
+                <span>Desktop</span>
               </button>
               <button
                 onClick={() => setDeviceView('mobile')}
@@ -158,7 +181,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
                 }`}
               >
                 <Smartphone className="w-3.5 h-3.5" />
-                <span>Mobile SERP</span>
+                <span>Mobile</span>
               </button>
             </div>
           </div>
@@ -166,15 +189,15 @@ export const GoogleAdPreview: React.FC<Props> = ({
 
         {/* Real Google Search Ad Container */}
         <div
-          className={`mx-auto bg-white border border-slate-200 rounded-2xl shadow-sm p-5 font-sans transition-all ${
+          className={`mx-auto bg-white border border-slate-200 rounded-2xl shadow-xs p-5 font-sans transition-all ${
             deviceView === 'mobile' ? 'max-w-md' : 'max-w-3xl'
           }`}
         >
-          {/* Top row: Favicon + Domain + Breadcrumb + 3 dots */}
+          {/* Top row: Favicon + Domain + Breadcrumb + Sponsored pill */}
           <div className="flex items-center justify-between text-xs mb-1.5">
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 rounded-full bg-[#002d62] text-white flex items-center justify-center font-bold text-[10px] shrink-0">
-                N
+                SN
               </div>
               <div className="flex flex-col">
                 <span className="text-[13px] font-medium text-slate-900 leading-tight">
@@ -214,7 +237,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
             </div>
           )}
 
-          {/* Sitelinks (Real Google Ad Sitelinks Extensions) */}
+          {/* Sitelinks (Differentiated by Stage Destination) */}
           {content.sitelinks && content.sitelinks.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-100">
               {content.sitelinks.map((link, idx) => (
@@ -232,30 +255,27 @@ export const GoogleAdPreview: React.FC<Props> = ({
       </div>
 
       {/* 2. Official Google Best Practice Specifications Banner */}
-      <div className="p-4 rounded-xl bg-blue-50/70 border border-blue-200 text-xs space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="font-bold text-blue-900 flex items-center gap-1.5 uppercase tracking-wider">
-            <Sparkles className="w-4 h-4 text-blue-600" />
-            <span>Google Responsive Search Ads (RSA) Best Practices</span>
-          </span>
-          <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-300">
-            Ad Strength: Excellent (15 Headlines / 4 Descriptions)
+      <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
+          <span className="text-slate-700">
+            Google Responsive Search Ads: <strong>15 diverse headlines</strong> (strict max 30 chars) and <strong>4 descriptions</strong> (strict max 90 chars).
           </span>
         </div>
-        <p className="text-slate-600 leading-relaxed text-[11px]">
-          According to official Google Ads guidelines, providing the full maximum of <strong>15 distinct headlines</strong> (strict 30-char limit) and <strong>4 descriptions</strong> (strict 90-char limit) maximizes machine-learning auction competitiveness and ad rank.
-        </p>
+        <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 shrink-0">
+          Ad Strength: Excellent
+        </span>
       </div>
 
-      {/* 3. Headlines Specification Table (15 Headlines, Strictly <= 30 Chars) */}
+      {/* 3. Headlines Table (15 Headlines, Strictly <= 30 Chars) */}
       <div className="space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              Google RSA Headlines (15 Generated, Strict Max 30 Characters Each)
+              Google RSA Headlines (15 Headlines · Max 30 Chars Each)
             </h4>
             <span className="text-[11px] text-slate-500">
-              Categorized by role: Brand &amp; Title (H1-H3), Authority &amp; IF (H4-H6), Speed (H7-H9), Scope (H10-H12), CTA (H13-H15)
+              Tailored for {stage} stage communication priority
             </span>
           </div>
 
@@ -290,11 +310,11 @@ export const GoogleAdPreview: React.FC<Props> = ({
             <button
               onClick={() =>
                 copyToClipboard(
-                  headlines.map((h, i) => `H${i + 1} (${h.category || 'General'}): ${h.text}`).join('\n'),
+                  headlines.map((h, i) => `H${i + 1} (${h.category || 'Standard'}): ${h.text}`).join('\n'),
                   'all-headlines'
                 )
               }
-              className="px-2.5 py-1 text-xs text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg flex items-center gap-1 shadow-2xs transition"
+              className="px-2.5 py-1 text-xs text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg flex items-center gap-1 shadow-2xs transition"
             >
               {copiedKey === 'all-headlines' ? (
                 <>
@@ -322,26 +342,23 @@ export const GoogleAdPreview: React.FC<Props> = ({
                 key={index}
                 className={`p-3 rounded-xl border transition-all ${
                   isOverLimit
-                    ? 'bg-rose-50 border-rose-300 shadow-xs'
-                    : 'bg-white border-slate-200 shadow-2xs hover:border-slate-300'
+                    ? 'bg-rose-50/50 border-rose-300'
+                    : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
                 }`}
               >
-                {/* Meta Row: Number + Category + Pinning + Copy */}
+                {/* Meta Row */}
                 <div className="flex items-center justify-between text-xs mb-1.5">
                   <div className="flex items-center gap-1.5">
                     <span className="font-extrabold text-[#002d62] text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">
                       H{index + 1}
                     </span>
-                    <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
-                      {h.category || (index < 3 ? 'Brand' : index < 6 ? 'Authority' : index < 9 ? 'Speed' : index < 12 ? 'Scope' : 'CTA')}
+                    <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded truncate max-w-[110px]">
+                      {h.category || (index < 3 ? 'Identity' : index < 6 ? 'Metrics' : 'Guidance')}
                     </span>
-                    <span className="text-[10px] font-bold text-slate-500">
-                      [{h.language}]
-                    </span>
+                    <span className="text-[10px] font-bold text-slate-500">[{h.language}]</span>
                   </div>
 
                   <div className="flex items-center gap-1">
-                    {/* Pin button */}
                     <button
                       type="button"
                       onClick={() => {
@@ -380,11 +397,11 @@ export const GoogleAdPreview: React.FC<Props> = ({
                   className={`w-full text-xs font-medium p-2 rounded-lg border focus:outline-none transition ${
                     isOverLimit
                       ? 'bg-white border-rose-400 text-rose-900 focus:ring-2 focus:ring-rose-500'
-                      : 'bg-slate-50/70 border-slate-200 text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500'
+                      : 'bg-slate-50/70 border-slate-200 text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-600'
                   }`}
                 />
 
-                {/* Footer: Character Counter & Auto-trim */}
+                {/* Footer: Character Counter & Smart Trim */}
                 <div className="flex items-center justify-between mt-2 text-[11px]">
                   <span className="text-[10px] text-slate-400 truncate max-w-[140px]" title={h.sourceFact}>
                     {h.sourceFact}
@@ -396,7 +413,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
                         type="button"
                         onClick={() => handleAutoTrimHeadline(index, h.text)}
                         className="px-1.5 py-0.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded flex items-center gap-0.5 text-[10px] transition"
-                        title="Auto-trim to strict 30 character limit"
+                        title="Smart trim to strict 30 characters"
                       >
                         <Scissors className="w-3 h-3" />
                         <span>Trim</span>
@@ -422,15 +439,15 @@ export const GoogleAdPreview: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* 4. Descriptions Specification Table (4 Descriptions, Strictly <= 90 Chars) */}
+      {/* 4. Descriptions Table (4 Descriptions, Strictly <= 90 Chars) */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              Google RSA Descriptions (4 Generated, Strict Max 90 Characters Each)
+              Google RSA Descriptions (4 Descriptions · Max 90 Chars Each)
             </h4>
             <span className="text-[11px] text-slate-500">
-              High-converting angles: Prestige, Fast Turnaround, Special Issue Scope, &amp; China NSFC Author Support
+              Evidence-based, stage-appropriate messaging
             </span>
           </div>
 
@@ -441,7 +458,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
                 'all-descs'
               )
             }
-            className="px-2.5 py-1 text-xs text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg flex items-center gap-1 shadow-2xs transition"
+            className="px-2.5 py-1 text-xs text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg flex items-center gap-1 shadow-2xs transition"
           >
             {copiedKey === 'all-descs' ? (
               <>
@@ -468,8 +485,8 @@ export const GoogleAdPreview: React.FC<Props> = ({
                 key={index}
                 className={`p-3.5 rounded-xl border transition-all ${
                   isOverLimit
-                    ? 'bg-rose-50 border-rose-300 shadow-xs'
-                    : 'bg-white border-slate-200 shadow-2xs hover:border-slate-300'
+                    ? 'bg-rose-50/50 border-rose-300'
+                    : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
                 }`}
               >
                 {/* Meta Row */}
@@ -479,7 +496,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
                       Description {index + 1}
                     </span>
                     <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
-                      {d.theme || (index === 0 ? 'Prestige & Metrics' : index === 1 ? 'Turnaround Speed' : index === 2 ? 'China NSFC Support' : 'Urgent Call to Action')}
+                      {d.theme || 'Stage Focus'}
                     </span>
                     <span className="text-[10px] font-bold text-slate-500">[{d.language}]</span>
                   </div>
@@ -504,7 +521,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
                   className={`w-full text-xs font-medium p-2 rounded-lg border focus:outline-none transition resize-none leading-relaxed ${
                     isOverLimit
                       ? 'bg-white border-rose-400 text-rose-900 focus:ring-2 focus:ring-rose-500'
-                      : 'bg-slate-50/70 border-slate-200 text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-500'
+                      : 'bg-slate-50/70 border-slate-200 text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-600'
                   }`}
                 />
 
@@ -520,7 +537,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
                         type="button"
                         onClick={() => handleAutoTrimDesc(index, d.text)}
                         className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded flex items-center gap-0.5 text-[10px] transition"
-                        title="Auto-trim to strict 90 character limit"
+                        title="Smart trim to strict 90 characters"
                       >
                         <Scissors className="w-3 h-3" />
                         <span>Trim to 90</span>

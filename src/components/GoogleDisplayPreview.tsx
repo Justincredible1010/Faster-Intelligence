@@ -18,7 +18,7 @@ import {
   Sliders,
   ChevronRight,
 } from 'lucide-react';
-import { GoogleDisplayAd } from '../types';
+import { GoogleDisplayAd, StageCode, STAGE_CONFIGS, normalizeStage } from '../types';
 
 interface Props {
   content: GoogleDisplayAd;
@@ -26,6 +26,7 @@ interface Props {
   impactFactor?: number;
   casZone?: string;
   publisher?: string;
+  stage?: StageCode;
   onUpdateContent?: (updated: GoogleDisplayAd) => void;
 }
 

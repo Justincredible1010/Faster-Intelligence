@@ -1,22 +1,49 @@
-export type FunnelStage = 'TOFU' | 'MOFU' | 'BOFU';
+export type StageCode = 'AWA' | 'CON' | 'DEC';
+// Backwards compatibility alias for existing code
+export type FunnelStage = StageCode | 'TOFU' | 'MOFU' | 'BOFU';
+
+export type OutputLanguage = 'all' | 'EN' | 'ZH';
+
+export type FactVerificationStatus = 'source_verified' | 'user_provided' | 'unverified';
 
 export interface ClarivateJournalMetrics {
   url?: string;
   journalName: string;
-  publisher: 'Springer Nature' | 'Nature Portfolio' | 'BMC (Part of Springer Nature)' | 'SpringerLink';
+  publisher: 'Springer Nature' | 'Nature Portfolio' | 'BMC (Part of Springer Nature)' | 'SpringerLink' | string;
   impactFactor: number;
   fiveYearImpactFactor: number;
-  jcrQuartile: 'Q1' | 'Q2';
-  casZone: string; // e.g. "中科院1区 Top", "中科院2区"
+  jcrQuartile: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  casZone: string; // e.g. "中科院综合性期刊1区 Top", "中科院医学1区"
   firstDecisionDays: number;
   indexing: string[]; // e.g. ["SCIE", "PubMed Central", "Scopus", "DOAJ"]
-  openAccessType: 'Gold Open Access' | 'Hybrid Open Access';
+  openAccessType: 'Gold Open Access' | 'Hybrid Open Access' | string;
   apcUsd: number;
   chinaWaiverAvailable: boolean;
   aimsAndScopeSummary: string;
   primaryDiscipline: string;
   sourceAttribution: string;
   isVerifiedClarivate?: boolean;
+  verificationStatus: FactVerificationStatus;
+  reportingYear?: string; // e.g. "JCR 2024 (released June 2024)"
+}
+
+export interface StageStrategyDefinition {
+  code: StageCode;
+  legacyCode: 'TOFU' | 'MOFU' | 'BOFU';
+  name: string; // "AWA — Awareness", "CON — Consideration", "DEC — Decision"
+  shortLabel: string;
+  authorMindset: string; // "What is this journal, and why is it relevant to me?"
+  campaignObjective: string; // "Introduce the journal and establish relevance and credible interest"
+  tone: string; // "Informative, welcoming, research-led, low-pressure"
+  primaryCta: string;
+  messagingPriorities: string[];
+  thingsToAvoid: string[];
+  exampleCtas: string[];
+  recommendedDestination: {
+    label: string;
+    pathSuffix: string;
+    purpose: string;
+  };
 }
 
 export interface GoogleSearchHeadline {
@@ -24,7 +51,7 @@ export interface GoogleSearchHeadline {
   charCount: number;
   sourceFact: string;
   language: 'EN' | 'ZH';
-  category?: 'Brand & Title' | 'Clarivate IF & Rank' | 'Turnaround & Speed' | 'Scope & Special Issue' | 'Call to Action';
+  category?: 'Journal Identity' | 'Scope & Community' | 'Evaluation & Metrics' | 'Author Guidance' | 'Call to Action' | string;
   positionRecommendation?: string; // e.g. 'Position 1', 'Position 2', 'Any Position'
 }
 
@@ -33,17 +60,16 @@ export interface GoogleSearchDescription {
   charCount: number;
   sourceFact: string;
   language: 'EN' | 'ZH';
-  theme?: 'Prestige & Metrics' | 'Fast Turnaround' | 'China Author Support & APC' | 'Urgent Submission';
+  theme?: 'Scope & Relevance' | 'Evaluation & Peer Review' | 'Author Checklist' | 'Publishing Options' | string;
 }
 
 export interface GoogleSearchAds {
-  // Google Official Best Practice for Responsive Search Ads (RSA):
-  // Maximum of 15 headlines (<= 30 chars each) and 4 descriptions (<= 90 chars each)
   headlines: GoogleSearchHeadline[];
   descriptions: GoogleSearchDescription[];
-  sitelinks: { title: string; desc: string }[];
+  sitelinks: { title: string; desc: string; urlPath?: string }[];
   callouts?: string[];
   structuredSnippet?: { header: string; values: string[] };
+  recommendedFinalUrl?: string;
 }
 
 export interface GoogleDisplayAd {
@@ -60,21 +86,139 @@ export interface GoogleDisplayAd {
   targetPlacements: string[];
   bannerHeadlineZh: string;
   bannerSubtextZh: string;
-  customBannerImage?: string; // Base64 or URL from uploaded stock / PPT
+  customBannerImage?: string;
+  recommendedFinalUrl?: string;
+}
+
+export interface AcademicKeywordItem {
+  keyword: string;
+  matchType: 'Exact' | 'Phrase' | 'Broad';
+  intent: string;
+}
+
+export interface ChineseKeywordItem {
+  keywordZh: string;
+  matchType: '精确 (Exact)' | '短语 (Phrase)';
+  intentZh: string;
 }
 
 export interface AcademicKeywordsPack {
-  englishSearchKeywords: { keyword: string; matchType: 'Exact' | 'Phrase' | 'Broad'; intent: string }[];
-  chineseAuthorKeywords: { keywordZh: string; matchType: '精确 (Exact)' | '短语 (Phrase)'; intentZh: string }[];
-  negativeKeywords: string[]; // Crucial against paper mills
+  englishSearchKeywords: AcademicKeywordItem[];
+  chineseAuthorKeywords: ChineseKeywordItem[];
+  negativeKeywords: string[];
 }
 
 export interface GeneratedAdCampaign {
-  funnelStage: FunnelStage;
+  funnelStage: StageCode;
+  legacyStage?: 'TOFU' | 'MOFU' | 'BOFU';
   clarivateFacts: ClarivateJournalMetrics;
   searchAds?: GoogleSearchAds;
   displayAds?: GoogleDisplayAd;
   keywords: AcademicKeywordsPack;
   funnelStrategyNote: string;
+  primaryCta: string;
+  recommendedDestination: {
+    label: string;
+    url: string;
+    description: string;
+  };
+  generationSource: 'ai_grounded' | 'template_fallback';
   appliedPlaybookRules?: string[];
+  outputLanguage?: OutputLanguage;
+  generatedAt?: string;
+}
+
+export const STAGE_CONFIGS: Record<StageCode, StageStrategyDefinition> = {
+  AWA: {
+    code: 'AWA',
+    legacyCode: 'TOFU',
+    name: 'AWA — Awareness',
+    shortLabel: 'Awareness',
+    authorMindset: '“What is this journal, and why is it relevant to my research?”',
+    campaignObjective: 'Introduce the journal, establish subject relevance, and build credible discovery without submission pressure.',
+    tone: 'Informative, welcoming, research-led, and low-pressure.',
+    primaryCta: 'Explore the journal',
+    messagingPriorities: [
+      'Research topics and journal scope',
+      'The scientific community the journal serves',
+      'Relevant published work and discoveries',
+      'Publisher identity and supported credibility signals',
+    ],
+    thingsToAvoid: [
+      'Submission pressure or immediate upload CTAs',
+      'Deadlines or artificial urgency',
+      'Leading every ad asset with impact factor or review speed',
+      'Vague hype or unverified citation claims',
+    ],
+    exampleCtas: ['Explore the journal', 'Browse articles', 'Discover the scope', 'Explore latest research'],
+    recommendedDestination: {
+      label: 'Journal Overview & Latest Articles',
+      pathSuffix: '/about',
+      purpose: 'Overview, research scope, and article highlights for first-time visitors.',
+    },
+  },
+  CON: {
+    code: 'CON',
+    legacyCode: 'MOFU',
+    name: 'CON — Consideration',
+    shortLabel: 'Consideration',
+    authorMindset: '“Is this the right journal for my manuscript and career goals?”',
+    campaignObjective: 'Help the author evaluate topical fit, article types, editorial rigor, open access models, and indexed metrics.',
+    tone: 'Specific, transparent, evidence-led, and useful for objective comparison.',
+    primaryCta: 'Check journal fit',
+    messagingPriorities: [
+      'Specific aims and scope & accepted article types',
+      'Editorial board expertise and peer review process',
+      'Publishing model, APC fees, and institutional options',
+      'Supported indexing (SCIE, Scopus) and official JCR metrics',
+    ],
+    thingsToAvoid: [
+      'Treating Consideration as synonymous with Special Issues or CFP',
+      'Inventing competitor comparisons or superiority claims',
+      'Conflating open access with free publishing',
+      'Hiding author requirements or fee transparency',
+    ],
+    exampleCtas: ['Check journal fit', 'Review aims and scope', 'Explore publishing options', 'View indexing & metrics'],
+    recommendedDestination: {
+      label: 'Aims, Scope & Publishing Criteria',
+      pathSuffix: '/aims-and-scope',
+      purpose: 'Detailed scope, accepted formats, fees, and editorial standards.',
+    },
+  },
+  DEC: {
+    code: 'DEC',
+    legacyCode: 'BOFU',
+    name: 'DEC — Decision',
+    shortLabel: 'Decision',
+    authorMindset: '“What do I need to prepare and do to submit my manuscript?”',
+    campaignObjective: 'Reduce submission friction, provide clear preparation checklists, fee/waiver criteria, and direct submission access.',
+    tone: 'Clear, practical, reassuring, and action-oriented without artificial hype.',
+    primaryCta: 'View submission checklist',
+    messagingPriorities: [
+      'Author guidelines and manuscript preparation requirements',
+      'Required documentation, formatting checklists, and templates',
+      'Applicable fees, waiver criteria, and institutional agreements',
+      'The verified online submission portal and editorial workflow',
+    ],
+    thingsToAvoid: [
+      'Invented deadlines or fake expiration dates',
+      'Guaranteed acceptance or fast-track promises',
+      'Treating first decision time as acceptance or publication time',
+      'Hidden fees or unverified funding compliance claims',
+    ],
+    exampleCtas: ['View submission checklist', 'Read author guidelines', 'Start submission', 'Prepare your manuscript'],
+    recommendedDestination: {
+      label: 'Author Guidelines & Submission Portal',
+      pathSuffix: '/submission-guidelines',
+      purpose: 'Manuscript preparation instructions, checklist, and direct submission link.',
+    },
+  },
+};
+
+export function normalizeStage(stage: string): StageCode {
+  const upper = (stage || '').toUpperCase();
+  if (upper === 'AWA' || upper === 'TOFU') return 'AWA';
+  if (upper === 'CON' || upper === 'MOFU') return 'CON';
+  if (upper === 'DEC' || upper === 'BOFU') return 'DEC';
+  return 'CON'; // Default
 }
