@@ -6,6 +6,8 @@ import { FrameworkModal } from './components/FrameworkModal';
 import { PlaybookSkillModal, PRESET_SKILLS } from './components/PlaybookSkillModal';
 import { StageComparisonModal } from './components/StageComparisonModal';
 import { StrategySummaryBanner } from './components/StrategySummaryBanner';
+import { ManualJournalModal } from './components/ManualJournalModal';
+import { ValidationReportModal } from './components/ValidationReportModal';
 import {
   StageCode,
   OutputLanguage,
@@ -13,7 +15,10 @@ import {
   normalizeStage,
   ClarivateJournalMetrics,
   GeneratedAdCampaign,
+  ComplianceValidationReport,
 } from './types';
+import { runComplianceAudit, autoFixComplianceIssues } from './utils/complianceValidator';
+import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
 import { AlertCircle, AlertTriangle, Sparkles } from 'lucide-react';
 
 const DEFAULT_LANDING_URL = 'https://www.nature.com/nature';
@@ -34,6 +39,8 @@ export default function App() {
   const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
   const [isPlaybookOpen, setIsPlaybookOpen] = useState<boolean>(false);
   const [isCompareOpen, setIsCompareOpen] = useState<boolean>(false);
+  const [isManualJournalOpen, setIsManualJournalOpen] = useState<boolean>(false);
+  const [isComplianceModalOpen, setIsComplianceModalOpen] = useState<boolean>(false);
   const [customPlaybook, setCustomPlaybook] = useState<string>(PRESET_SKILLS.default);
   const [hasManualEdits, setHasManualEdits] = useState<boolean>(false);
   const [pendingStageChange, setPendingStageChange] = useState<StageCode | null>(null);
@@ -48,7 +55,7 @@ export default function App() {
     handleGenerateCampaign(landingPageUrl, funnelStage, selectedChannels, outputLanguage, customPlaybook);
   }, []);
 
-  const fetchClarivateFacts = async (url: string) => {
+  const fetchClarivateFacts = async (url: string, forceRefresh = false) => {
     if (!url || !url.trim()) return;
     setIsFetchingFacts(true);
     setError(null);
@@ -56,13 +63,13 @@ export default function App() {
       const res = await fetch('/api/fetch-clarivate-facts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({ url: url.trim(), forceRefresh }),
       });
       const data = await res.json();
       if (data.facts) {
         setClarivateFacts(data.facts);
         if (campaign) {
-          setCampaign(prev => (prev ? { ...prev, clarivateFacts: data.facts } : null));
+          setCampaign((prev) => (prev ? { ...prev, clarivateFacts: data.facts } : null));
         }
       }
     } catch (err: any) {
@@ -99,9 +106,23 @@ export default function App() {
     stage = funnelStage,
     channels = selectedChannels,
     lang = outputLanguage,
-    playbook = customPlaybook
+    playbook = customPlaybook,
+    manualFacts: ClarivateJournalMetrics | null = null
   ) => {
     if (!url.trim()) return;
+
+    // Check if facts are missing before generating
+    const currentFacts = manualFacts || clarivateFacts;
+    if (
+      currentFacts &&
+      (currentFacts.verificationStatus === 'missing' ||
+        (currentFacts.missingFields && currentFacts.missingFields.length > 0) ||
+        currentFacts.impactFactor === null)
+    ) {
+      setError('Please complete journal metrics before generating campaigns. Key metrics are missing.');
+      setIsManualJournalOpen(true);
+      return;
+    }
 
     // Increment request ID to ignore stale responses
     const currentRequestId = ++latestRequestIdRef.current;
@@ -131,6 +152,7 @@ export default function App() {
           outputLanguage: lang,
           channels: activeChannels,
           customPlaybook: playbook,
+          userProvidedFacts: manualFacts || (clarivateFacts?.verificationStatus === 'user_provided' ? clarivateFacts : null),
         }),
       });
 
@@ -142,12 +164,24 @@ export default function App() {
       }
 
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to generate campaign');
+        if (data.missingFields) {
+          setError('Please complete journal metrics to continue.');
+          setIsManualJournalOpen(true);
+        } else {
+          throw new Error(data.error || 'Failed to generate campaign');
+        }
+        return;
       }
 
-      setCampaign(data.campaign);
-      if (data.campaign?.clarivateFacts) {
-        setClarivateFacts(data.campaign.clarivateFacts);
+      const generated = data.campaign as GeneratedAdCampaign;
+
+      // Run compliance audit
+      const audit = runComplianceAudit(generated, generated.clarivateFacts);
+      generated.complianceReport = audit;
+
+      setCampaign(generated);
+      if (generated.clarivateFacts) {
+        setClarivateFacts(generated.clarivateFacts);
       }
       setHasManualEdits(false);
     } catch (err: any) {
@@ -163,10 +197,21 @@ export default function App() {
     }
   };
 
+  const handleSaveManualJournal = (facts: ClarivateJournalMetrics) => {
+    setClarivateFacts(facts);
+    handleGenerateCampaign(landingPageUrl, funnelStage, selectedChannels, outputLanguage, customPlaybook, facts);
+  };
+
+  const handleAutoFixCompliance = () => {
+    if (!campaign) return;
+    const fixed = autoFixComplianceIssues(campaign);
+    setCampaign(fixed);
+  };
+
   const handleUpdateClarivateFacts = (updated: ClarivateJournalMetrics) => {
     setClarivateFacts(updated);
     if (campaign) {
-      setCampaign(prev => (prev ? { ...prev, clarivateFacts: updated } : null));
+      setCampaign((prev) => (prev ? { ...prev, clarivateFacts: updated } : null));
     }
   };
 
@@ -178,13 +223,15 @@ export default function App() {
       text: newText,
       charCount: newText.length,
     };
-    setCampaign({
+    const updatedCampaign = {
       ...campaign,
       searchAds: {
         ...campaign.searchAds,
         headlines: updatedHeadlines,
       },
-    });
+    };
+    updatedCampaign.complianceReport = runComplianceAudit(updatedCampaign);
+    setCampaign(updatedCampaign);
     setHasManualEdits(true);
   };
 
@@ -196,19 +243,26 @@ export default function App() {
       text: newText,
       charCount: newText.length,
     };
-    setCampaign({
+    const updatedCampaign = {
       ...campaign,
       searchAds: {
         ...campaign.searchAds,
         descriptions: updatedDescs,
       },
-    });
+    };
+    updatedCampaign.complianceReport = runComplianceAudit(updatedCampaign);
+    setCampaign(updatedCampaign);
     setHasManualEdits(true);
   };
 
   const handleSavePlaybook = (newPlaybook: string) => {
     setCustomPlaybook(newPlaybook);
     handleGenerateCampaign(landingPageUrl, funnelStage, selectedChannels, outputLanguage, newPlaybook);
+  };
+
+  const handleExportCsv = () => {
+    if (!campaign) return;
+    downloadGoogleAdsEditorPackage(campaign);
   };
 
   const handleExportBrief = () => {
@@ -221,18 +275,18 @@ export default function App() {
 **Author Stage:** ${cfg.name}
 **Author Mindset:** ${cfg.authorMindset}
 **Campaign Objective:** ${cfg.campaignObjective}
-**Clarivate JCR Impact Factor:** ${campaign.clarivateFacts.impactFactor} (5-Year IF: ${campaign.clarivateFacts.fiveYearImpactFactor})
-**JCR Quartile & CAS Zone:** ${campaign.clarivateFacts.jcrQuartile} · ${campaign.clarivateFacts.casZone}
-**Publishing Model & APC:** ${campaign.clarivateFacts.openAccessType} ($${campaign.clarivateFacts.apcUsd} USD)
+**Clarivate JCR Impact Factor:** ${campaign.clarivateFacts.impactFactor ?? 'N/A'} (5-Year IF: ${campaign.clarivateFacts.fiveYearImpactFactor ?? 'N/A'})
+**JCR Quartile & CAS Zone:** ${campaign.clarivateFacts.jcrQuartile ?? 'N/A'} · ${campaign.clarivateFacts.casZone ?? 'N/A'}
+**Publishing Model & APC:** ${campaign.clarivateFacts.openAccessType ?? 'Open Access'} ($${campaign.clarivateFacts.apcUsd ?? 'N/A'} USD)
 **Primary Call-to-Action:** "${campaign.primaryCta || cfg.primaryCta}"
 **Recommended Destination:** ${campaign.recommendedDestination?.url || campaign.clarivateFacts.url} (${campaign.recommendedDestination?.label || cfg.recommendedDestination.label})
-**Generation Engine:** ${campaign.generationSource === 'ai_grounded' ? 'AI-Grounded (Gemini 2.5)' : 'Curated Publishing Strategy Fallback'}
+**Generation Engine:** ${campaign.generationSource === 'ai_grounded' ? 'AI-Grounded (Gemini 3.8)' : 'Curated Publishing Strategy Fallback'}
 **Generated Date:** ${new Date().toLocaleDateString()}
 
 ---
 
 ## 1. Google Responsive Search Ads (RSA)
-### Headlines (Strictly <= 30 Characters Each):
+### Headlines (Strictly <= 30 Visual Width Each):
 ${campaign.searchAds?.headlines
   .map(
     (h, idx) =>
@@ -240,7 +294,7 @@ ${campaign.searchAds?.headlines
   )
   .join('\n')}
 
-### Descriptions (Strictly <= 90 Characters Each):
+### Descriptions (Strictly <= 90 Visual Width Each):
 ${campaign.searchAds?.descriptions
   .map(
     (d, idx) =>
@@ -259,9 +313,9 @@ ${campaign.searchAds?.callouts?.map((c) => `- ${c}`).join('\n')}
 ---
 
 ## 2. Google Display Ads (Responsive Display)
-- **Short Headline:** ${campaign.displayAds?.shortHeadline} (${campaign.displayAds?.shortHeadlineCharCount}/30 chars)
-- **Long Headline:** ${campaign.displayAds?.longHeadline} (${campaign.displayAds?.longHeadlineCharCount}/90 chars)
-- **Description:** ${campaign.displayAds?.description} (${campaign.displayAds?.descriptionCharCount}/90 chars)
+- **Short Headline:** ${campaign.displayAds?.shortHeadline}
+- **Long Headline:** ${campaign.displayAds?.longHeadline}
+- **Description:** ${campaign.displayAds?.description}
 - **Chinese Banner Copy:** ${campaign.displayAds?.bannerHeadlineZh}
 - **Call-to-Action Text:** ${campaign.displayAds?.ctaText}
 - **Recommended GDN Placements:** ${campaign.displayAds?.targetPlacements.join(', ')}
@@ -295,6 +349,10 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
     document.body.removeChild(link);
   };
 
+  const hasPolicyWarnings =
+    campaign?.complianceReport?.status === 'has_warnings' ||
+    campaign?.complianceReport?.status === 'has_errors';
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
       {/* Top Navbar */}
@@ -302,9 +360,12 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
         onOpenGuide={() => setIsGuideOpen(true)}
         onOpenPlaybook={() => setIsPlaybookOpen(true)}
         onOpenCompareStages={() => setIsCompareOpen(true)}
-        onExport={handleExportBrief}
+        onOpenCompliance={() => setIsComplianceModalOpen(true)}
+        onExportMarkdown={handleExportBrief}
+        onExportCsv={handleExportCsv}
         hasCampaign={!!campaign}
         hasCustomPlaybook={!!customPlaybook}
+        hasPolicyWarnings={hasPolicyWarnings}
       />
 
       {/* Main Content */}
@@ -375,6 +436,7 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
             onGenerate={() => handleGenerateCampaign()}
             onOpenPlaybook={() => setIsPlaybookOpen(true)}
             onOpenCompareStages={() => setIsCompareOpen(true)}
+            onOpenAddJournal={() => setIsManualJournalOpen(true)}
             hasCustomPlaybook={!!customPlaybook}
             isLoading={isLoading}
             isFetchingFacts={isFetchingFacts}
@@ -413,6 +475,7 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
               selectedChannels={selectedChannels}
               onEditHeadline={handleEditHeadline}
               onEditDescription={handleEditDescription}
+              onOpenCompliance={() => setIsComplianceModalOpen(true)}
             />
           </section>
         )}
@@ -437,6 +500,13 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
               className="text-blue-700 hover:underline font-medium"
             >
               Custom Playbook
+            </button>
+            <span>·</span>
+            <button
+              onClick={() => setIsComplianceModalOpen(true)}
+              className="text-blue-700 hover:underline font-medium"
+            >
+              Policy Audit
             </button>
             <span>·</span>
             <button
@@ -468,6 +538,22 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
         clarivateFacts={clarivateFacts}
         onSelectStage={(st) => handleStageSelectRequest(st)}
         currentStage={funnelStage}
+      />
+
+      {/* Add / Edit Journal Metrics Modal */}
+      <ManualJournalModal
+        isOpen={isManualJournalOpen}
+        onClose={() => setIsManualJournalOpen(false)}
+        initialFacts={clarivateFacts}
+        onSaveFacts={handleSaveManualJournal}
+      />
+
+      {/* Google Ads Policy Compliance Modal */}
+      <ValidationReportModal
+        isOpen={isComplianceModalOpen}
+        onClose={() => setIsComplianceModalOpen(false)}
+        report={campaign?.complianceReport || (campaign ? runComplianceAudit(campaign) : null)}
+        onAutoFix={handleAutoFixCompliance}
       />
     </div>
   );

@@ -7,99 +7,55 @@ import {
   Copy,
   Smartphone,
   Monitor,
-  MoreVertical,
   Scissors,
   CheckCircle2,
-  Shuffle,
   Pin,
   HelpCircle,
   Sparkles,
-  Compass,
+  Sliders,
+  AlertTriangle,
+  Wand2,
 } from 'lucide-react';
-import { GoogleSearchAds, GoogleSearchHeadline, GoogleSearchDescription, StageCode } from '../types';
+import {
+  GoogleSearchAds,
+  GoogleSearchHeadline,
+  GoogleSearchDescription,
+  StageCode,
+  ClarivateJournalMetrics,
+} from '../types';
+import {
+  countCharacterWidth,
+  formatCharCountLabel,
+  formatDescriptionCountLabel,
+  validateLanguagePurity,
+  cleanStrayCharacters,
+  smartClampWithWidth,
+} from '../utils/textUtils';
+import { SearchResultsMockup } from './SearchResultsMockup';
 
 interface Props {
   content: GoogleSearchAds;
   displayUrl?: string;
   stage?: StageCode;
+  facts: ClarivateJournalMetrics;
   onEditHeadline?: (index: number, text: string) => void;
   onEditDescription?: (index: number, text: string) => void;
-}
-
-// Smart clamp avoiding mid-word bisection
-function smartTrim(text: string, maxLen: number): string {
-  const clean = text.trim();
-  if (clean.length <= maxLen) return clean;
-
-  const candidate = clean.slice(0, maxLen);
-  const lastSpace = candidate.lastIndexOf(' ');
-  if (lastSpace > maxLen - 12 && lastSpace > 10) {
-    return candidate.slice(0, lastSpace).trim().replace(/[,;:.\-—]+$/, '');
-  }
-  return candidate.trim().replace(/[,;:.\-—]+$/, '');
 }
 
 export const GoogleAdPreview: React.FC<Props> = ({
   content,
   displayUrl = 'https://www.nature.com/nature',
   stage = 'CON',
+  facts,
   onEditHeadline,
   onEditDescription,
 }) => {
-  const [deviceView, setDeviceView] = useState<'desktop' | 'mobile'>('desktop');
+  const [activeTab, setActiveTab] = useState<'serp' | 'assets'>('serp');
   const [langView, setLangView] = useState<'all' | 'EN' | 'ZH'>('all');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  // RSA dynamic rotation simulator state
-  const [selectedH1Index, setSelectedH1Index] = useState<number>(0);
-  const [selectedH2Index, setSelectedH2Index] = useState<number>(3);
-  const [selectedH3Index, setSelectedH3Index] = useState<number>(6);
-  const [selectedD1Index, setSelectedD1Index] = useState<number>(0);
-  const [selectedD2Index, setSelectedD2Index] = useState<number>(1);
-
-  // Pinning simulation
-  const [pinnedH1, setPinnedH1] = useState<number | null>(0);
-  const [pinnedH2, setPinnedH2] = useState<number | null>(null);
-  const [pinnedH3, setPinnedH3] = useState<number | null>(null);
-
-  // Parse domain for SERP display
-  let cleanDomain = 'nature.com';
-  let pathBreadcrumb =
-    stage === 'AWA'
-      ? 'topics › overview'
-      : stage === 'DEC'
-      ? 'for-authors › submission-portal'
-      : 'aims-and-scope › evaluation';
-
-  try {
-    const parsed = new URL(displayUrl.startsWith('http') ? displayUrl : `https://${displayUrl}`);
-    cleanDomain = parsed.hostname.replace(/^www\./, '');
-    const segments = parsed.pathname.split('/').filter(Boolean);
-    if (segments.length > 0) {
-      pathBreadcrumb = `${segments.join(' › ')} › ${
-        stage === 'AWA' ? 'overview' : stage === 'DEC' ? 'submission' : 'scope'
-      }`;
-    }
-  } catch {
-    // fallback
-  }
-
   const headlines = content.headlines || [];
   const descriptions = content.descriptions || [];
-
-  // Active headline texts for SERP title
-  const h1Text = (headlines[pinnedH1 ?? selectedH1Index]?.text || headlines[0]?.text || 'Official Academic Journal').trim();
-  const h2Text = (headlines[pinnedH2 ?? selectedH2Index]?.text || headlines[1]?.text || 'Clarivate JCR Q1').trim();
-  const h3Text = (headlines[pinnedH3 ?? selectedH3Index]?.text || headlines[2]?.text || 'Editorial Rigor').trim();
-
-  const previewTitle =
-    deviceView === 'desktop'
-      ? `${h1Text} | ${h2Text} | ${h3Text}`
-      : `${h1Text} | ${h2Text}`;
-
-  const desc1Text = (descriptions[selectedD1Index]?.text || descriptions[0]?.text || '').trim();
-  const desc2Text = (descriptions[selectedD2Index]?.text || descriptions[1]?.text || '').trim();
-  const previewDescription = `${desc1Text} ${desc2Text}`.trim();
 
   const copyToClipboard = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
@@ -107,461 +63,365 @@ export const GoogleAdPreview: React.FC<Props> = ({
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
+  const handleCleanPurity = (index: number, isHeadline: boolean, text: string, targetLang: 'EN' | 'ZH') => {
+    const cleaned = cleanStrayCharacters(text, targetLang);
+    if (isHeadline && onEditHeadline) {
+      onEditHeadline(index, cleaned);
+    } else if (!isHeadline && onEditDescription) {
+      onEditDescription(index, cleaned);
+    }
+  };
+
   const handleAutoTrimHeadline = (index: number, text: string) => {
-    if (onEditHeadline) {
-      onEditHeadline(index, smartTrim(text, 30));
-    }
+    const trimmed = smartClampWithWidth(text, 30);
+    if (onEditHeadline) onEditHeadline(index, trimmed);
   };
 
-  const handleAutoTrimDesc = (index: number, text: string) => {
-    if (onEditDescription) {
-      onEditDescription(index, smartTrim(text, 90));
-    }
+  const handleAutoTrimDescription = (index: number, text: string) => {
+    const trimmed = smartClampWithWidth(text, 90);
+    if (onEditDescription) onEditDescription(index, trimmed);
   };
 
-  const handleShuffleCombination = () => {
-    if (headlines.length >= 3) {
-      const availableIndices = headlines.map((_, i) => i);
-      const shuffled = availableIndices.sort(() => 0.5 - Math.random());
-      if (pinnedH1 === null) setSelectedH1Index(shuffled[0] || 0);
-      if (pinnedH2 === null) setSelectedH2Index(shuffled[1] || 1);
-      if (pinnedH3 === null) setSelectedH3Index(shuffled[2] || 2);
-    }
-    if (descriptions.length >= 2) {
-      const dIndices = descriptions.map((_, i) => i).sort(() => 0.5 - Math.random());
-      setSelectedD1Index(dIndices[0] || 0);
-      setSelectedD2Index(dIndices[1] || 1);
-    }
-  };
+  const filteredHeadlines = headlines.filter((h) => {
+    if (langView === 'all') return true;
+    return h.language === langView;
+  });
 
-  const filteredHeadlines =
-    langView === 'all'
-      ? headlines
-      : headlines.filter((h) => h.language === langView);
+  const filteredDescriptions = descriptions.filter((d) => {
+    if (langView === 'all') return true;
+    return d.language === langView;
+  });
 
   return (
     <div className="space-y-6">
-      {/* 1. Live Google.com SERP Ad Presentation (Desktop & Mobile) */}
-      <div className="space-y-2.5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+      {/* Top Header & Sub-tab Switcher */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
+        <div>
+          <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
             <Search className="w-4 h-4 text-blue-600" />
-            <span>Google Responsive Search Ad (Live SERP Preview)</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleShuffleCombination}
-              className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold border border-slate-300 transition"
-              title="Simulate Google's dynamic machine-learning rotation of headlines and descriptions"
-            >
-              <Shuffle className="w-3.5 h-3.5 text-blue-600" />
-              <span>Simulate ML Rotation</span>
-            </button>
-
-            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl text-xs">
-              <button
-                onClick={() => setDeviceView('desktop')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition ${
-                  deviceView === 'desktop'
-                    ? 'bg-white text-slate-900 shadow-2xs font-semibold'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Monitor className="w-3.5 h-3.5" />
-                <span>Desktop</span>
-              </button>
-              <button
-                onClick={() => setDeviceView('mobile')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition ${
-                  deviceView === 'mobile'
-                    ? 'bg-white text-slate-900 shadow-2xs font-semibold'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Smartphone className="w-3.5 h-3.5" />
-                <span>Mobile</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Real Google Search Ad Container */}
-        <div
-          className={`mx-auto bg-white border border-slate-200 rounded-2xl shadow-xs p-5 font-sans transition-all ${
-            deviceView === 'mobile' ? 'max-w-md' : 'max-w-3xl'
-          }`}
-        >
-          {/* Top row: Favicon + Domain + Breadcrumb + Sponsored pill */}
-          <div className="flex items-center justify-between text-xs mb-1.5">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-full bg-[#002d62] text-white flex items-center justify-center font-bold text-[10px] shrink-0">
-                SN
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[13px] font-medium text-slate-900 leading-tight">
-                  {cleanDomain.includes('nature') ? 'Nature.com' : 'SpringerLink'}
-                </span>
-                <span className="text-[11px] text-slate-500 leading-tight truncate max-w-xs">
-                  https://www.{cleanDomain} › {pathBreadcrumb}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 text-slate-400">
-              <span className="text-[11px] font-bold text-slate-900 border border-slate-300 rounded px-1.5 py-0.2 bg-slate-50">
-                Sponsored
-              </span>
-              <MoreVertical className="w-3.5 h-3.5" />
-            </div>
-          </div>
-
-          {/* Blue Title (Clickable) */}
-          <h3 className="text-base sm:text-lg font-normal text-[#1a0dab] hover:underline cursor-pointer leading-snug mb-1">
-            {previewTitle}
+            <span>Google Responsive Search Ads (RSA) Studio</span>
           </h3>
-
-          {/* Description */}
-          <p className="text-xs sm:text-[13px] text-[#4d5156] leading-relaxed mb-2.5">
-            {previewDescription}
+          <p className="text-xs text-slate-500">
+            15 Headlines &amp; 4 Descriptions meeting Google Ads machine-learning diversity requirements
           </p>
-
-          {/* Callout Extensions */}
-          {content.callouts && content.callouts.length > 0 && (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#4d5156] border-t border-slate-100 pt-2 mb-3">
-              {content.callouts.map((callout, idx) => (
-                <span key={idx} className="flex items-center gap-1 font-medium">
-                  <span>· {callout}</span>
-                </span>
-              ))}
-            </div>
-          )}
-
-          {/* Sitelinks (Differentiated by Stage Destination) */}
-          {content.sitelinks && content.sitelinks.length > 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-100">
-              {content.sitelinks.map((link, idx) => (
-                <div key={idx} className="group cursor-pointer">
-                  <div className="text-xs font-medium text-[#1a0dab] group-hover:underline flex items-center gap-1">
-                    <span>{link.title}</span>
-                    <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition" />
-                  </div>
-                  <p className="text-[11px] text-[#5f6368] leading-tight line-clamp-1">{link.desc}</p>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
-      </div>
 
-      {/* 2. Official Google Best Practice Specifications Banner */}
-      <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
-          <span className="text-slate-700">
-            Google Responsive Search Ads: <strong>15 diverse headlines</strong> (strict max 30 chars) and <strong>4 descriptions</strong> (strict max 90 chars).
-          </span>
+          {/* Sub-tab view toggle */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+            <button
+              onClick={() => setActiveTab('serp')}
+              className={`px-3 py-1 font-semibold rounded-lg transition ${
+                activeTab === 'serp'
+                  ? 'bg-white text-slate-900 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Realistic SERP Mockup
+            </button>
+            <button
+              onClick={() => setActiveTab('assets')}
+              className={`px-3 py-1 font-semibold rounded-lg transition ${
+                activeTab === 'assets'
+                  ? 'bg-white text-slate-900 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              All Assets &amp; Purity ({headlines.length}H / {descriptions.length}D)
+            </button>
+          </div>
         </div>
-        <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 shrink-0">
-          Ad Strength: Excellent
-        </span>
       </div>
 
-      {/* 3. Headlines Table (15 Headlines, Strictly <= 30 Chars) */}
-      <div className="space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div>
-            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              Google RSA Headlines (15 Headlines · Max 30 Chars Each)
-            </h4>
-            <span className="text-[11px] text-slate-500">
-              Tailored for {stage} stage communication priority
-            </span>
-          </div>
+      {/* View 1: Realistic SERP Mockup */}
+      {activeTab === 'serp' && (
+        <SearchResultsMockup
+          ads={content}
+          displayUrl={displayUrl}
+          stage={stage}
+          facts={facts}
+          onEditHeadline={onEditHeadline}
+          onEditDescription={onEditDescription}
+        />
+      )}
 
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-xs">
-              <button
-                onClick={() => setLangView('all')}
-                className={`px-2.5 py-1 rounded-md transition ${
-                  langView === 'all' ? 'bg-white font-bold text-slate-900 shadow-2xs' : 'text-slate-600'
-                }`}
-              >
-                All ({headlines.length})
-              </button>
-              <button
-                onClick={() => setLangView('EN')}
-                className={`px-2 py-1 rounded-md transition ${
-                  langView === 'EN' ? 'bg-white font-bold text-slate-900 shadow-2xs' : 'text-slate-600'
-                }`}
-              >
-                EN
-              </button>
-              <button
-                onClick={() => setLangView('ZH')}
-                className={`px-2 py-1 rounded-md transition ${
-                  langView === 'ZH' ? 'bg-white font-bold text-slate-900 shadow-2xs' : 'text-slate-600'
-                }`}
-              >
-                ZH
-              </button>
+      {/* View 2: Asset Management, Language Purity & Double-Width Meters */}
+      {activeTab === 'assets' && (
+        <div className="space-y-8">
+          {/* Filter & Action Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-500 font-medium">Filter Language:</span>
+              {(['all', 'EN', 'ZH'] as const).map((l) => (
+                <button
+                  key={l}
+                  onClick={() => setLangView(l)}
+                  className={`px-2.5 py-1 rounded-lg font-semibold transition ${
+                    langView === l
+                      ? 'bg-[#002d62] text-white shadow-2xs'
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  {l === 'all' ? 'All (Bilingual)' : l === 'EN' ? 'English Only' : 'Chinese (中文)'}
+                </button>
+              ))}
             </div>
 
             <button
               onClick={() =>
                 copyToClipboard(
-                  headlines.map((h, i) => `H${i + 1} (${h.category || 'Standard'}): ${h.text}`).join('\n'),
+                  headlines.map((h, i) => `${i + 1}. [${h.language}] ${h.text}`).join('\n'),
                   'all-headlines'
                 )
               }
-              className="px-2.5 py-1 text-xs text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg flex items-center gap-1 shadow-2xs transition"
+              className="flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-lg shadow-2xs font-semibold"
             >
               {copiedKey === 'all-headlines' ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Copied All</span>
-                </>
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
               ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>Copy 15 Headlines</span>
-                </>
+                <Copy className="w-3.5 h-3.5" />
               )}
+              <span>Copy All Headlines</span>
             </button>
           </div>
-        </div>
 
-        {/* Headlines Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {filteredHeadlines.map((h, index) => {
-            const isOverLimit = h.text.length > 30;
-            const isNearLimit = h.text.length >= 28 && !isOverLimit;
+          {/* Headlines Grid (15 items) */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Google RSA Headlines (15 Headlines · Max 30 Width Each)
+              </span>
+              <span className="text-[11px] text-slate-500">
+                1 Chinese character = 2 width units (Google Ads standard)
+              </span>
+            </div>
 
-            return (
-              <div
-                key={index}
-                className={`p-3 rounded-xl border transition-all ${
-                  isOverLimit
-                    ? 'bg-rose-50/50 border-rose-300'
-                    : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
-                }`}
-              >
-                {/* Meta Row */}
-                <div className="flex items-center justify-between text-xs mb-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-extrabold text-[#002d62] text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">
-                      H{index + 1}
-                    </span>
-                    <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded truncate max-w-[110px]">
-                      {h.category || (index < 3 ? 'Identity' : index < 6 ? 'Metrics' : 'Guidance')}
-                    </span>
-                    <span className="text-[10px] font-bold text-slate-500">[{h.language}]</span>
-                  </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filteredHeadlines.map((h, index) => {
+                const width = countCharacterWidth(h.text);
+                const isOverLimit = width > 30;
+                const purityCheck = validateLanguagePurity(h.text, h.language);
+                const hasStray = !purityCheck.valid;
 
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (pinnedH1 === index) setPinnedH1(null);
-                        else setPinnedH1(index);
-                      }}
-                      className={`p-1 rounded text-[10px] transition ${
-                        pinnedH1 === index
-                          ? 'bg-blue-600 text-white font-bold'
-                          : 'text-slate-400 hover:text-slate-700'
-                      }`}
-                      title={pinnedH1 === index ? 'Pinned to Position 1' : 'Pin to Position 1'}
-                    >
-                      <Pin className="w-3 h-3" />
-                    </button>
+                return (
+                  <div
+                    key={index}
+                    className={`p-3.5 rounded-xl border transition flex flex-col justify-between gap-2 ${
+                      isOverLimit
+                        ? 'bg-rose-50/50 border-rose-300'
+                        : hasStray
+                        ? 'bg-amber-50/50 border-amber-300'
+                        : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
+                    }`}
+                  >
+                    {/* Header */}
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-extrabold text-[#002d62] text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">
+                          H{index + 1}
+                        </span>
+                        <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded truncate max-w-[100px]">
+                          {h.category || 'General'}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-500">[{h.language}]</span>
+                      </div>
 
-                    <button
-                      onClick={() => copyToClipboard(h.text, `h-${index}`)}
-                      className="p-1 text-slate-400 hover:text-slate-700 rounded transition"
-                      title="Copy headline"
-                    >
-                      {copiedKey === `h-${index}` ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-600" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Editable Text Input */}
-                <input
-                  type="text"
-                  value={h.text}
-                  onChange={(e) => onEditHeadline && onEditHeadline(index, e.target.value)}
-                  className={`w-full text-xs font-medium p-2 rounded-lg border focus:outline-none transition ${
-                    isOverLimit
-                      ? 'bg-white border-rose-400 text-rose-900 focus:ring-2 focus:ring-rose-500'
-                      : 'bg-slate-50/70 border-slate-200 text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-600'
-                  }`}
-                />
-
-                {/* Footer: Character Counter & Smart Trim */}
-                <div className="flex items-center justify-between mt-2 text-[11px]">
-                  <span className="text-[10px] text-slate-400 truncate max-w-[140px]" title={h.sourceFact}>
-                    {h.sourceFact}
-                  </span>
-
-                  <div className="flex items-center gap-1.5">
-                    {isOverLimit && (
                       <button
-                        type="button"
-                        onClick={() => handleAutoTrimHeadline(index, h.text)}
-                        className="px-1.5 py-0.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded flex items-center gap-0.5 text-[10px] transition"
-                        title="Smart trim to strict 30 characters"
+                        onClick={() => copyToClipboard(h.text, `h-${index}`)}
+                        className="p-1 text-slate-400 hover:text-slate-700 rounded transition"
+                        title="Copy headline"
                       >
-                        <Scissors className="w-3 h-3" />
-                        <span>Trim</span>
+                        {copiedKey === `h-${index}` ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
                       </button>
+                    </div>
+
+                    {/* Input */}
+                    <input
+                      type="text"
+                      value={h.text}
+                      onChange={(e) => onEditHeadline && onEditHeadline(index, e.target.value)}
+                      className={`w-full text-xs font-medium p-2 rounded-lg border focus:outline-none transition ${
+                        isOverLimit
+                          ? 'bg-white border-rose-400 text-rose-900 focus:ring-2 focus:ring-rose-500'
+                          : 'bg-slate-50/70 border-slate-200 text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-600'
+                      }`}
+                    />
+
+                    {/* Language Purity Warning */}
+                    {hasStray && (
+                      <div className="p-1.5 bg-amber-100/70 border border-amber-300 rounded text-[10px] text-amber-900 flex items-center justify-between">
+                        <span>
+                          Stray {h.language === 'EN' ? 'Chinese' : 'Latin'} character detected: "
+                          {purityCheck.strayChars.slice(0, 3).join('')}"
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCleanPurity(index, true, h.text, h.language)}
+                          className="px-1.5 py-0.5 bg-amber-600 text-white rounded font-bold hover:bg-amber-700"
+                        >
+                          Clean
+                        </button>
+                      </div>
                     )}
 
-                    <span
-                      className={`font-mono font-bold text-[10px] px-1.5 py-0.2 rounded ${
-                        isOverLimit
-                          ? 'bg-rose-100 text-rose-700 border border-rose-300'
-                          : isNearLimit
-                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                          : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      }`}
-                    >
-                      {h.text.length}/30
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+                    {/* Footer: Meter & Smart Trim */}
+                    <div className="flex items-center justify-between text-[11px] pt-1">
+                      <span className="text-[10px] text-slate-400 truncate max-w-[130px]">
+                        {h.sourceFact}
+                      </span>
 
-      {/* 4. Descriptions Table (4 Descriptions, Strictly <= 90 Chars) */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              Google RSA Descriptions (4 Descriptions · Max 90 Chars Each)
-            </h4>
-            <span className="text-[11px] text-slate-500">
-              Evidence-based, stage-appropriate messaging
-            </span>
+                      <div className="flex items-center gap-1.5">
+                        {isOverLimit && (
+                          <button
+                            type="button"
+                            onClick={() => handleAutoTrimHeadline(index, h.text)}
+                            className="px-1.5 py-0.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded flex items-center gap-0.5 text-[10px] transition"
+                            title="Trim to 30 visual width"
+                          >
+                            <Scissors className="w-3 h-3" />
+                            <span>Trim</span>
+                          </button>
+                        )}
+
+                        <span
+                          className={`font-mono font-bold text-[10px] px-1.5 py-0.5 rounded ${
+                            isOverLimit
+                              ? 'bg-rose-100 text-rose-700 border border-rose-300'
+                              : width >= 26
+                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          }`}
+                        >
+                          {formatCharCountLabel(h.text, h.language)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
-          <button
-            onClick={() =>
-              copyToClipboard(
-                descriptions.map((d, i) => `D${i + 1}: ${d.text}`).join('\n\n'),
-                'all-descs'
-              )
-            }
-            className="px-2.5 py-1 text-xs text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg flex items-center gap-1 shadow-2xs transition"
-          >
-            {copiedKey === 'all-descs' ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Copied All</span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-3.5 h-3.5" />
-                <span>Copy 4 Descriptions</span>
-              </>
-            )}
-          </button>
-        </div>
+          {/* Descriptions Grid (4 items) */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Google RSA Descriptions (4 Descriptions · Max 90 Width Each)
+              </span>
+              <span className="text-[11px] text-slate-500">
+                1 Chinese character = 2 width units (Google Ads standard)
+              </span>
+            </div>
 
-        {/* Descriptions Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {descriptions.map((d, index) => {
-            const isOverLimit = d.text.length > 90;
-            const isNearLimit = d.text.length >= 85 && !isOverLimit;
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {filteredDescriptions.map((d, index) => {
+                const width = countCharacterWidth(d.text);
+                const isOverLimit = width > 90;
+                const purityCheck = validateLanguagePurity(d.text, d.language);
+                const hasStray = !purityCheck.valid;
 
-            return (
-              <div
-                key={index}
-                className={`p-3.5 rounded-xl border transition-all ${
-                  isOverLimit
-                    ? 'bg-rose-50/50 border-rose-300'
-                    : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
-                }`}
-              >
-                {/* Meta Row */}
-                <div className="flex items-center justify-between text-xs mb-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-extrabold text-[#002d62] text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">
-                      Description {index + 1}
-                    </span>
-                    <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
-                      {d.theme || 'Stage Focus'}
-                    </span>
-                    <span className="text-[10px] font-bold text-slate-500">[{d.language}]</span>
-                  </div>
-
-                  <button
-                    onClick={() => copyToClipboard(d.text, `d-${index}`)}
-                    className="p-1 text-slate-400 hover:text-slate-700 rounded transition"
+                return (
+                  <div
+                    key={index}
+                    className={`p-3.5 rounded-xl border transition flex flex-col justify-between gap-2 ${
+                      isOverLimit
+                        ? 'bg-rose-50/50 border-rose-300'
+                        : hasStray
+                        ? 'bg-amber-50/50 border-amber-300'
+                        : 'bg-white border-slate-200 hover:border-slate-300 shadow-2xs'
+                    }`}
                   >
-                    {copiedKey === `d-${index}` ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-600" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-extrabold text-[#002d62] text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">
+                          Description {index + 1}
+                        </span>
+                        <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
+                          {d.theme || 'Stage Focus'}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-500">[{d.language}]</span>
+                      </div>
 
-                {/* Editable Text Area */}
-                <textarea
-                  value={d.text}
-                  rows={2}
-                  onChange={(e) => onEditDescription && onEditDescription(index, e.target.value)}
-                  className={`w-full text-xs font-medium p-2 rounded-lg border focus:outline-none transition resize-none leading-relaxed ${
-                    isOverLimit
-                      ? 'bg-white border-rose-400 text-rose-900 focus:ring-2 focus:ring-rose-500'
-                      : 'bg-slate-50/70 border-slate-200 text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-600'
-                  }`}
-                />
-
-                {/* Footer */}
-                <div className="flex items-center justify-between mt-2 text-[11px]">
-                  <span className="text-[10px] text-slate-400 truncate max-w-[200px]" title={d.sourceFact}>
-                    {d.sourceFact}
-                  </span>
-
-                  <div className="flex items-center gap-1.5">
-                    {isOverLimit && (
                       <button
-                        type="button"
-                        onClick={() => handleAutoTrimDesc(index, d.text)}
-                        className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded flex items-center gap-0.5 text-[10px] transition"
-                        title="Smart trim to strict 90 characters"
+                        onClick={() => copyToClipboard(d.text, `d-${index}`)}
+                        className="p-1 text-slate-400 hover:text-slate-700 rounded transition"
                       >
-                        <Scissors className="w-3 h-3" />
-                        <span>Trim to 90</span>
+                        {copiedKey === `d-${index}` ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
                       </button>
+                    </div>
+
+                    <textarea
+                      rows={2}
+                      value={d.text}
+                      onChange={(e) => onEditDescription && onEditDescription(index, e.target.value)}
+                      className={`w-full text-xs font-medium p-2 rounded-lg border focus:outline-none transition leading-relaxed ${
+                        isOverLimit
+                          ? 'bg-white border-rose-400 text-rose-900 focus:ring-2 focus:ring-rose-500'
+                          : 'bg-slate-50/70 border-slate-200 text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-600'
+                      }`}
+                    />
+
+                    {hasStray && (
+                      <div className="p-1.5 bg-amber-100/70 border border-amber-300 rounded text-[10px] text-amber-900 flex items-center justify-between">
+                        <span>
+                          Stray {d.language === 'EN' ? 'Chinese' : 'Latin'} characters detected
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCleanPurity(index, false, d.text, d.language)}
+                          className="px-1.5 py-0.5 bg-amber-600 text-white rounded font-bold hover:bg-amber-700"
+                        >
+                          Clean
+                        </button>
+                      </div>
                     )}
 
-                    <span
-                      className={`font-mono font-bold text-[10px] px-1.5 py-0.2 rounded ${
-                        isOverLimit
-                          ? 'bg-rose-100 text-rose-700 border border-rose-300'
-                          : isNearLimit
-                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                          : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      }`}
-                    >
-                      {d.text.length}/90
-                    </span>
+                    <div className="flex items-center justify-between text-[11px] pt-1">
+                      <span className="text-[10px] text-slate-400 truncate max-w-[200px]">
+                        {d.sourceFact}
+                      </span>
+
+                      <div className="flex items-center gap-1.5">
+                        {isOverLimit && (
+                          <button
+                            type="button"
+                            onClick={() => handleAutoTrimDescription(index, d.text)}
+                            className="px-1.5 py-0.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded flex items-center gap-0.5 text-[10px] transition"
+                            title="Trim to 90 visual width"
+                          >
+                            <Scissors className="w-3 h-3" />
+                            <span>Trim</span>
+                          </button>
+                        )}
+
+                        <span
+                          className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded ${
+                            isOverLimit
+                              ? 'bg-rose-100 text-rose-700 border border-rose-300'
+                              : width >= 80
+                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          }`}
+                        >
+                          {formatDescriptionCountLabel(d.text, d.language)}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

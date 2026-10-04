@@ -4,27 +4,49 @@ export type FunnelStage = StageCode | 'TOFU' | 'MOFU' | 'BOFU';
 
 export type OutputLanguage = 'all' | 'EN' | 'ZH';
 
-export type FactVerificationStatus = 'source_verified' | 'user_provided' | 'unverified';
+export type FactVerificationStatus = 'source_verified' | 'user_provided' | 'unverified' | 'missing';
 
 export interface ClarivateJournalMetrics {
   url?: string;
   journalName: string;
   publisher: 'Springer Nature' | 'Nature Portfolio' | 'BMC (Part of Springer Nature)' | 'SpringerLink' | string;
-  impactFactor: number;
-  fiveYearImpactFactor: number;
-  jcrQuartile: 'Q1' | 'Q2' | 'Q3' | 'Q4';
-  casZone: string; // e.g. "中科院综合性期刊1区 Top", "中科院医学1区"
-  firstDecisionDays: number;
-  indexing: string[]; // e.g. ["SCIE", "PubMed Central", "Scopus", "DOAJ"]
-  openAccessType: 'Gold Open Access' | 'Hybrid Open Access' | string;
-  apcUsd: number;
-  chinaWaiverAvailable: boolean;
-  aimsAndScopeSummary: string;
-  primaryDiscipline: string;
+  impactFactor: number | null;
+  fiveYearImpactFactor?: number | null;
+  jcrQuartile?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | string | null;
+  casZone?: string | null; // e.g. "中科院综合性期刊1区 Top", "中科院医学1区"
+  firstDecisionDays?: number | null;
+  indexing?: string[]; // e.g. ["SCIE", "PubMed Central", "Scopus", "DOAJ"]
+  openAccessType?: 'Gold Open Access' | 'Hybrid Open Access' | string | null;
+  apcUsd?: number | null;
+  chinaWaiverAvailable?: boolean;
+  aimsAndScopeSummary?: string;
+  primaryDiscipline?: string;
   sourceAttribution: string;
   isVerifiedClarivate?: boolean;
   verificationStatus: FactVerificationStatus;
   reportingYear?: string; // e.g. "JCR 2024 (released June 2024)"
+  missingFields?: string[];
+  isFromCache?: boolean;
+  cachedAt?: string;
+  cacheExpiresAt?: string;
+}
+
+export interface CachedMetricEntry {
+  metric: string;              // e.g., 'impactFactor', 'casZone', 'reviewTime', 'apc'
+  value: number | string | null;
+  year: number;
+  source: string;              // e.g., 'Clarivate JCR', 'user_provided', 'Web Lookup'
+  cachedAt: string;
+  expireAt: string;
+}
+
+export interface CachedJournal {
+  journalId: string;           // ISSN or domain slug
+  journalName: string;
+  publisher: string;
+  metrics: Record<string, CachedMetricEntry>;
+  lastAccess: string;
+  fullFacts?: ClarivateJournalMetrics;
 }
 
 export interface StageStrategyDefinition {
@@ -49,18 +71,24 @@ export interface StageStrategyDefinition {
 export interface GoogleSearchHeadline {
   text: string;
   charCount: number;
+  charWidth?: number;
   sourceFact: string;
   language: 'EN' | 'ZH';
   category?: 'Journal Identity' | 'Scope & Community' | 'Evaluation & Metrics' | 'Author Guidance' | 'Call to Action' | string;
   positionRecommendation?: string; // e.g. 'Position 1', 'Position 2', 'Any Position'
+  strayChars?: string[];
+  isPurityValid?: boolean;
 }
 
 export interface GoogleSearchDescription {
   text: string;
   charCount: number;
+  charWidth?: number;
   sourceFact: string;
   language: 'EN' | 'ZH';
   theme?: 'Scope & Relevance' | 'Evaluation & Peer Review' | 'Author Checklist' | 'Publishing Options' | string;
+  strayChars?: string[];
+  isPurityValid?: boolean;
 }
 
 export interface GoogleSearchAds {
@@ -75,10 +103,13 @@ export interface GoogleSearchAds {
 export interface GoogleDisplayAd {
   shortHeadline: string;
   shortHeadlineCharCount: number;
+  shortHeadlineCharWidth?: number;
   longHeadline: string;
   longHeadlineCharCount: number;
+  longHeadlineCharWidth?: number;
   description: string;
   descriptionCharCount: number;
+  descriptionCharWidth?: number;
   businessName: string;
   ctaText: string;
   visualConceptPrompt: string;
@@ -108,6 +139,24 @@ export interface AcademicKeywordsPack {
   negativeKeywords: string[];
 }
 
+export interface ComplianceIssue {
+  id: string;
+  type: 'error' | 'warning';
+  category: 'trademark' | 'superlative' | 'misleading_claim' | 'funding_claim' | 'char_limit';
+  message: string;
+  targetText: string;
+  suggestedFix?: string;
+  fieldLocation: string; // e.g. 'Headline 3', 'Display Long Headline', 'Keyword 2'
+}
+
+export interface ComplianceValidationReport {
+  status: 'clean' | 'has_warnings' | 'has_errors';
+  errorsCount: number;
+  warningsCount: number;
+  issues: ComplianceIssue[];
+  checkedAt: string;
+}
+
 export interface GeneratedAdCampaign {
   funnelStage: StageCode;
   legacyStage?: 'TOFU' | 'MOFU' | 'BOFU';
@@ -126,6 +175,7 @@ export interface GeneratedAdCampaign {
   appliedPlaybookRules?: string[];
   outputLanguage?: OutputLanguage;
   generatedAt?: string;
+  complianceReport?: ComplianceValidationReport;
 }
 
 export const STAGE_CONFIGS: Record<StageCode, StageStrategyDefinition> = {
@@ -162,8 +212,8 @@ export const STAGE_CONFIGS: Record<StageCode, StageStrategyDefinition> = {
     legacyCode: 'MOFU',
     name: 'CON — Consideration',
     shortLabel: 'Consideration',
-    authorMindset: '“Is this the right journal for my manuscript and career goals?”',
-    campaignObjective: 'Help the author evaluate topical fit, article types, editorial rigor, open access models, and indexed metrics.',
+    authorMindset: '“Is this journal better suited for my manuscript than other publishing options?”',
+    campaignObjective: 'Help the author evaluate topical fit, article types, editorial rigor, open access models, and objective comparisons with other journals.',
     tone: 'Specific, transparent, evidence-led, and useful for objective comparison.',
     primaryCta: 'Check journal fit',
     messagingPriorities: [
@@ -171,14 +221,15 @@ export const STAGE_CONFIGS: Record<StageCode, StageStrategyDefinition> = {
       'Editorial board expertise and peer review process',
       'Publishing model, APC fees, and institutional options',
       'Supported indexing (SCIE, Scopus) and official JCR metrics',
+      'Objective comparison facts (metrics year, turnaround days, indexing) without unverified claims',
     ],
     thingsToAvoid: [
       'Treating Consideration as synonymous with Special Issues or CFP',
-      'Inventing competitor comparisons or superiority claims',
+      'Inventing competitor claims, unverified comparisons, or superiority claims',
       'Conflating open access with free publishing',
       'Hiding author requirements or fee transparency',
     ],
-    exampleCtas: ['Check journal fit', 'Review aims and scope', 'Explore publishing options', 'View indexing & metrics'],
+    exampleCtas: ['Check journal fit', 'Review aims and scope', 'Compare publishing options', 'View indexing & metrics'],
     recommendedDestination: {
       label: 'Aims, Scope & Publishing Criteria',
       pathSuffix: '/aims-and-scope',

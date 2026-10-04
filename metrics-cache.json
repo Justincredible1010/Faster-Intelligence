@@ -1,0 +1,72 @@
+{
+  "nature": {
+    "journalId": "nature",
+    "journalName": "Nature",
+    "publisher": "Nature Portfolio",
+    "lastAccess": "2026-10-04T06:59:21.448Z",
+    "metrics": {
+      "impactFactor": {
+        "metric": "impactFactor",
+        "value": 50.5,
+        "year": 2024,
+        "source": "Clarivate JCR",
+        "cachedAt": "2026-10-04T06:59:21.448Z",
+        "expireAt": "2027-06-30T23:59:59.000Z"
+      },
+      "casZone": {
+        "metric": "casZone",
+        "value": "中科院综合性期刊1区 Top",
+        "year": 2024,
+        "source": "CAS Ranking",
+        "cachedAt": "2026-10-04T06:59:21.448Z",
+        "expireAt": "2026-12-31T23:59:59.000Z"
+      },
+      "firstDecisionDays": {
+        "metric": "firstDecisionDays",
+        "value": 32,
+        "year": 2024,
+        "source": "Publisher Average",
+        "cachedAt": "2026-10-04T06:59:21.448Z",
+        "expireAt": "2027-01-02T06:59:21.449Z"
+      },
+      "apcUsd": {
+        "metric": "apcUsd",
+        "value": 11690,
+        "year": 2024,
+        "source": "Publisher Price List",
+        "cachedAt": "2026-10-04T06:59:21.448Z",
+        "expireAt": "2026-12-03T06:59:21.449Z"
+      }
+    },
+    "fullFacts": {
+      "url": "https://www.nature.com/nature",
+      "slugs": [
+        "nature",
+        "flagship",
+        "default"
+      ],
+      "journalName": "Nature",
+      "publisher": "Nature Portfolio",
+      "impactFactor": 50.5,
+      "fiveYearImpactFactor": 54.3,
+      "jcrQuartile": "Q1",
+      "casZone": "中科院综合性期刊1区 Top",
+      "firstDecisionDays": 32,
+      "indexing": [
+        "SCIE",
+        "PubMed Central",
+        "MEDLINE",
+        "Scopus"
+      ],
+      "openAccessType": "Hybrid Open Access",
+      "apcUsd": 11690,
+      "chinaWaiverAvailable": false,
+      "aimsAndScopeSummary": "The world’s premier multidisciplinary science journal publishing the finest peer-reviewed research across all areas of science and technology.",
+      "primaryDiscipline": "Multidisciplinary Sciences (综合性科学)",
+      "verificationStatus": "source_verified",
+      "reportingYear": "JCR 2024 (Clarivate Journal Citation Reports)",
+      "isVerifiedClarivate": true,
+      "sourceAttribution": "Verified via Clarivate Journal Citation Reports (JCR 2024/2025) & Web of Science Index"
+    }
+  }
+}
