@@ -15,6 +15,7 @@ import { JOURNAL_CATALOG } from './src/data/journalCatalog';
 import { joinJournalUrl, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
 import { lookupMetricsByIssn, pageFacts } from './src/utils/metricSources';
 import { factsForCopy, guardAdCopy, metricPromptSection, metricsFromClarivateWos } from './src/utils/metricClaims';
+import { withChinaChannels } from './src/china/withChinaChannels';
 
 dotenv.config();
 
@@ -1014,10 +1015,11 @@ export function generateDeterministicCampaign(
       ? [copyFacts.impactFactor ? `${metricsFromClarivateWos(copyFacts) ? 'Clarivate IF' : 'IF'} ${copyFacts.impactFactor}` : 'Peer-reviewed journal', copyFacts.casZone ? copyFacts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', copyFacts.firstDecisionDays ? `1st Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
       : ['Author Guidelines Ready', 'Standard Preparation Checklist', copyFacts.firstDecisionDays ? `First Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Official Submission Portal'];
 
-  return guardAdCopy({
+  return withChinaChannels(guardAdCopy({
     funnelStage: stage,
     legacyStage: stage === 'AWA' ? 'TOFU' : stage === 'CON' ? 'MOFU' : 'BOFU',
     clarivateFacts: facts,
+    outputLanguage,
     funnelStrategyNote: `${stageConfig.name}: ${stageConfig.campaignObjective}`,
     primaryCta: stageConfig.primaryCta,
     recommendedDestination: {
@@ -1042,7 +1044,7 @@ export function generateDeterministicCampaign(
       recommendedFinalUrl: destinationUrl,
     },
     keywords,
-  }, facts);
+  }, facts));
 }
 
 // 3. Campaign Generation API
@@ -1232,22 +1234,22 @@ GOOGLE ADS REQUIREMENTS:
 
     const destinationUrl = joinJournalUrl(facts.url, stageConfig.recommendedDestination.urlPath);
 
-    const campaign = guardAdCopy({
+    const campaign = withChinaChannels(guardAdCopy({
       funnelStage: normalizedStage,
       legacyStage: normalizedStage === 'AWA' ? 'TOFU' : normalizedStage === 'CON' ? 'MOFU' : 'BOFU',
       clarivateFacts: facts,
       funnelStrategyNote: `${stageConfig.name}: ${stageConfig.campaignObjective}`,
       primaryCta: campaignOutput.primaryCta || stageConfig.primaryCta,
       generationSource,
-      outputLanguage,
       generatedAt: new Date().toISOString(),
       ...campaignOutput,
+      outputLanguage,
       recommendedDestination: {
         label: stageConfig.recommendedDestination.label,
         url: destinationUrl,
         description: stageConfig.recommendedDestination.description,
       },
-    }, facts);
+    }, facts));
 
     res.json({ success: true, campaign });
   } catch (error: any) {

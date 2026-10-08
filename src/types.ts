@@ -214,7 +214,16 @@ export interface AcademicKeywordsPack {
 export interface ComplianceIssue {
   id: string;
   type: 'error' | 'warning';
-  category: 'trademark' | 'superlative' | 'misleading_claim' | 'funding_claim' | 'char_limit' | 'missing_fact' | 'stale_fact' | 'source_mismatch';
+  category:
+    | 'trademark'
+    | 'superlative'
+    | 'misleading_claim'
+    | 'funding_claim'
+    | 'char_limit'
+    | 'missing_fact'
+    | 'stale_fact'
+    | 'source_mismatch'
+    | 'china_ad_law';
   message: string;
   targetText: string;
   suggestedFix?: string;
@@ -254,12 +263,55 @@ export interface AssetGenerationContext {
   aiModel?: 'gemini' | null;
 }
 
+export interface WeiboEnglishOption {
+  hook: string;
+  body: string;
+  hashtags: string[];
+  /** Same resolved landing URL as the Chinese post. */
+  link: string;
+}
+
+/** Organic Weibo post. Hook + body stay within Weibo's practical length. */
+export interface WeiboPost {
+  hook: string;
+  body: string;
+  practicalLength: number;
+  practicalLimit: number;
+  hashtags: string[];
+  link: string;
+  /** Present only when the campaign language is bilingual. */
+  englishOption?: WeiboEnglishOption;
+  factNotes: string[];
+}
+
+export interface WeChatAdFields {
+  headline: string;
+  description: string;
+  cta: string;
+}
+
+/** Paid WeChat ad (Moments and Official Account). Not an organic post. */
+export interface WeChatAd extends WeChatAdFields {
+  headlineLimit: number;
+  descriptionLimit: number;
+  ctaLimit: number;
+  landingUrl: string;
+  placements: Array<'moments' | 'official_account'>;
+  /** Present only when the campaign language is bilingual. */
+  englishOption?: WeChatAdFields;
+  factNotes: string[];
+}
+
 export interface GeneratedAdCampaign {
   funnelStage: StageCode;
   legacyStage?: 'TOFU' | 'MOFU' | 'BOFU';
   clarivateFacts: ClarivateJournalMetrics;
   searchAds?: GoogleSearchAds;
   displayAds?: GoogleDisplayAd;
+  /** Organic Weibo post for this journal and stage. */
+  weiboPost?: WeiboPost;
+  /** Paid WeChat Moments / Official Account ad for this journal and stage. */
+  wechatAd?: WeChatAd;
   keywords: AcademicKeywordsPack;
   funnelStrategyNote: string;
   primaryCta: string;

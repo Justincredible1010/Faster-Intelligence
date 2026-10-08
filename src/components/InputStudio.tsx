@@ -781,6 +781,7 @@ export const InputStudio: React.FC<Props> = ({
               : selectedChannels.search
               ? 'Search Only'
               : 'Display Only'}
+            {' · Weibo post and WeChat ad'}
           </span>
         </div>
 

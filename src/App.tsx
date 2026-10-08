@@ -19,6 +19,7 @@ import {
 } from './types';
 import { runComplianceAudit, autoFixComplianceIssues } from './utils/complianceValidator';
 import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
+import { chinaChannelsExportSection } from './china/exportText';
 import { AlertCircle, AlertTriangle, Sparkles } from 'lucide-react';
 import { apiFetch } from './auth/api';
 import { pickEditableJournalFacts } from './utils/editableJournalFacts';
@@ -349,6 +350,10 @@ ${campaign.keywords.chineseAuthorKeywords
 
 ### Negative Keywords (Academic Integrity Firewall):
 ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
+
+---
+
+${chinaChannelsExportSection(campaign)}
 `;
 
     const blob = new Blob([markdownBrief], { type: 'text/markdown;charset=utf-8' });
