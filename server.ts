@@ -347,9 +347,36 @@ export function isShoutyLabel(value: string): boolean {
   return letters.length >= 2 && letters === letters.toUpperCase();
 }
 
-function toDisplayCase(value: string): string {
-  if (!isShoutyLabel(value)) return value;
-  return value.toLowerCase().replace(/(^|[^a-z0-9])([a-z])/g, (_match, sep: string, ch: string) => `${sep}${ch.toUpperCase()}`);
+/** Society and publisher acronyms that stay uppercase when an all-caps name is title-cased. */
+const DISPLAY_ACRONYMS = new Set([
+  'ACM',
+  'ACS',
+  'AIP',
+  'AMS',
+  'APS',
+  'ASME',
+  'BMC',
+  'BMJ',
+  'IEEE',
+  'IET',
+  'IOP',
+  'JAMA',
+  'OSA',
+  'PLOS',
+  'PNAS',
+  'RSC',
+  'SIAM',
+  'SPIE',
+]);
+
+/** Title-case an all-caps Clarivate label. Mixed-case text is left as it arrived. */
+export function toDisplayCase(value: string): string {
+  if (!value || !isShoutyLabel(value)) return value;
+  return value.replace(/[A-Za-z0-9]+/g, (word) => {
+    const upper = word.toUpperCase();
+    if (DISPLAY_ACRONYMS.has(upper)) return upper;
+    return upper.charAt(0) + upper.slice(1).toLowerCase();
+  });
 }
 
 function filled(value: unknown): boolean {
@@ -377,13 +404,16 @@ export function displayJournalName(
   return toDisplayCase(raw);
 }
 
-/** Keep a mixed-case landing publisher. Never surface "Unknown publisher". */
+/**
+ * Prefer a mixed-case publisher. An all-caps API value is title-cased when
+ * the landing page has no mixed-case publisher. "Unknown publisher" is dropped.
+ */
 export function displayPublisher(apiPublisher: unknown, landingPublisher?: string): string {
   const api = labelText(apiPublisher);
   const landing = labelText(landingPublisher);
-  if (api && !(isShoutyLabel(api) && landing && !isShoutyLabel(landing))) return api;
-  if (landing) return landing;
-  return api ? toDisplayCase(api) : '';
+  if (api && !isShoutyLabel(api)) return api;
+  if (landing && !isShoutyLabel(landing)) return landing;
+  return toDisplayCase(api || landing);
 }
 
 /** Copy with a safe journal name and publisher for headlines and callouts. */

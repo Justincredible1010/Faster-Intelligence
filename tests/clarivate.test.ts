@@ -26,6 +26,7 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
 
 {
   const {
+    CLARIVATE_TRANSPORT_BACKOFF_MS,
     createClarivateWosJournalsClient,
     createRateLimiter,
     parseWosJournalProfile,
@@ -163,6 +164,84 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   assert.strictEqual(await gaveUp.searchByIssn('0028-0836'), null);
   assert.strictEqual(longWait, 0);
 
+  let backoffClock = 1_000;
+  let backoffFetches = 0;
+  const paused = createClarivateWosJournalsClient({
+    apiKey: secret,
+    minIntervalMs: 0,
+    maxAttempts: 1,
+    random: () => 0,
+    now: () => backoffClock,
+    sleep: async (ms) => {
+      backoffClock += ms;
+    },
+    fetchImpl: async () => {
+      backoffFetches += 1;
+      return jsonResponse(401, {});
+    },
+  });
+  assert.strictEqual(await paused.searchByIssn('0028-0836'), null);
+  assert.strictEqual(await paused.getJournal('NATURE'), null);
+  assert.strictEqual(backoffFetches, 1);
+  backoffClock += CLARIVATE_TRANSPORT_BACKOFF_MS;
+  assert.strictEqual(await paused.searchByIssn('0028-0836'), null);
+  assert.strictEqual(backoffFetches, 2);
+
+  let limitedFetches = 0;
+  let limitClock = 0;
+  const rateLimited = createClarivateWosJournalsClient({
+    apiKey: secret,
+    minIntervalMs: 0,
+    maxAttempts: 2,
+    random: () => 0,
+    now: () => limitClock,
+    sleep: async (ms) => {
+      limitClock += ms;
+    },
+    fetchImpl: async () => {
+      limitedFetches += 1;
+      return jsonResponse(503, {});
+    },
+  });
+  assert.strictEqual(await rateLimited.searchByIssn('0028-0836'), null);
+  assert.strictEqual(limitedFetches, 2);
+  assert.strictEqual(await rateLimited.searchByIssn('1476-4687'), null);
+  assert.strictEqual(limitedFetches, 2);
+
+  let missed = 0;
+  const notFoundClient = createClarivateWosJournalsClient({
+    apiKey: secret,
+    minIntervalMs: 0,
+    maxAttempts: 1,
+    now: () => 0,
+    sleep: async () => undefined,
+    fetchImpl: async () => {
+      missed += 1;
+      return jsonResponse(404, {});
+    },
+  });
+  assert.strictEqual(await notFoundClient.searchByIssn('0000-0000'), null);
+  assert.strictEqual(await notFoundClient.searchByIssn('0000-0001'), null);
+  assert.strictEqual(missed, 2);
+
+  let recoveredFetches = 0;
+  const recovered = createClarivateWosJournalsClient({
+    apiKey: secret,
+    minIntervalMs: 0,
+    maxAttempts: 3,
+    random: () => 0,
+    now: () => 0,
+    sleep: async () => undefined,
+    fetchImpl: async () => {
+      recoveredFetches += 1;
+      if (recoveredFetches === 1) return jsonResponse(429, {}, { 'retry-after': '1' });
+      return jsonResponse(200, searchBody);
+    },
+  });
+  assert.deepStrictEqual(await recovered.searchByIssn('0028-0836'), { hits: [{ id: 'NATURE' }] });
+  assert.deepStrictEqual(await recovered.searchByIssn('0028-0836'), { hits: [{ id: 'NATURE' }] });
+  assert.strictEqual(recoveredFetches, 3);
+
   let searches = 0;
   const sharedClient = {
     async searchByIssn() {
@@ -216,7 +295,16 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
     guardMetricClaims,
     sanitizeUserProvidedFacts,
   } = await import('../src/utils/metricClaims.ts');
-  const { clarivateAdminRefreshEnabled, displayJournalName, generateDeterministicCampaign, mergeClarivateOverLanding, resolveJournalIssn } = await import('../server.ts');
+  const {
+    clarivateAdminRefreshEnabled,
+    displayJournalName,
+    displayPublisher,
+    generateDeterministicCampaign,
+    mergeClarivateOverLanding,
+    resolveJournalIssn,
+    toDisplayCase,
+    withAdIdentity,
+  } = await import('../server.ts');
   const { generateGoogleAdsEditorCsv } = await import('../src/utils/csvExporter.ts');
   const nature = JOURNAL_CATALOG.find((entry) => entry.journalName === 'Nature');
   assert(nature);
@@ -366,6 +454,22 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   assert(!shoutyText.includes('Evaluate NATURE'));
   assert(!shoutyText.includes('Unknown publisher'));
   assert(shoutyText.includes('Evaluate Nature'));
+
+  assert.strictEqual(displayPublisher('NATURE PORTFOLIO', 'NATURE PORTFOLIO'), 'Nature Portfolio');
+  assert.strictEqual(withAdIdentity({ journalName: 'NATURE', publisher: 'NATURE PORTFOLIO' }).publisher, 'Nature Portfolio');
+  assert.strictEqual(displayPublisher('NATURE PORTFOLIO', 'Nature Portfolio'), 'Nature Portfolio');
+  assert.strictEqual(displayPublisher('Nature Portfolio', ''), 'Nature Portfolio');
+  for (const acronym of ['IEEE', 'BMC', 'ACS', 'JAMA', 'PLOS', 'BMJ', 'AIP', 'APS', 'ACM', 'SIAM']) {
+    assert.strictEqual(toDisplayCase(acronym), acronym, acronym);
+  }
+  assert.strictEqual(toDisplayCase('NATURE PORTFOLIO'), 'Nature Portfolio');
+  assert.strictEqual(toDisplayCase('BMC BIOLOGY'), 'BMC Biology');
+  assert.strictEqual(toDisplayCase('IEEE ACCESS'), 'IEEE Access');
+  assert.strictEqual(toDisplayCase('PLOS ONE'), 'PLOS One');
+  assert.strictEqual(toDisplayCase('ACS NANO'), 'ACS Nano');
+  assert.strictEqual(toDisplayCase('SIAM JOURNAL ON APPLIED MATH'), 'SIAM Journal On Applied Math');
+  assert.strictEqual(displayJournalName({ journalName: 'PLOS ONE', wosName: 'PLOS ONE' }, ''), 'PLOS One');
+  assert.strictEqual(toDisplayCase('Nature Portfolio'), 'Nature Portfolio');
 
   assert.strictEqual(resolveJournalIssn({ requested: '00280836', catalog: { issn: '1476-4687' } }), '0028-0836');
   assert.strictEqual(resolveJournalIssn({ cached: { issn: '1234-5678' }, catalog: nature }), '1234-5678');

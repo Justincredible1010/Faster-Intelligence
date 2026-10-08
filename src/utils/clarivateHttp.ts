@@ -11,6 +11,11 @@ export const CLARIVATE_MIN_INTERVAL_MS = 500;
 export const CLARIVATE_MAX_ATTEMPTS = 4;
 /** A Retry-After longer than this is not waited out. The request gives up. */
 export const CLARIVATE_MAX_RETRY_AFTER_MS = 30_000;
+/**
+ * After auth failure, exhausted 429/5xx retries, or a Retry-After over the cap,
+ * this process skips further Journals API calls for two minutes. Not persisted.
+ */
+export const CLARIVATE_TRANSPORT_BACKOFF_MS = 2 * 60 * 1000;
 const BACKOFF_BASE_MS = 400;
 const BACKOFF_CAP_MS = 30_000;
 
@@ -177,6 +182,7 @@ async function requestJson(
   deps: Required<Pick<ClarivateHttpDependencies, 'fetchImpl' | 'now' | 'sleep' | 'random' | 'log' | 'maxAttempts'>> & {
     limiter: RateLimiter;
     apiKey: string;
+    onTransportFailure: (reason: string) => void;
   }
 ): Promise<unknown | null> {
   let delay = BACKOFF_BASE_MS;
@@ -195,6 +201,7 @@ async function requestJson(
       const message = err instanceof Error ? err.message : 'network error';
       if (attempt === deps.maxAttempts - 1) {
         deps.log(`[Clarivate] Request failed for ${pathForLog(url)}: ${message}`);
+        deps.onTransportFailure('network error');
         return null;
       }
       const wait = Math.min(BACKOFF_CAP_MS, delay + deps.random() * delay * 0.25);
@@ -217,6 +224,10 @@ async function requestJson(
     if (!retryable || attempt === deps.maxAttempts - 1) {
       if (response.status === 401 || response.status === 403) {
         deps.log(`[Clarivate] Journals API rejected the request (HTTP ${response.status}). Check CLARIVATE_API_KEY.`);
+        deps.onTransportFailure('auth error');
+      } else if (retryable) {
+        deps.log(`[Clarivate] HTTP ${response.status} for ${pathForLog(url)}`);
+        deps.onTransportFailure(`HTTP ${response.status}`);
       } else {
         deps.log(`[Clarivate] HTTP ${response.status} for ${pathForLog(url)}`);
       }
@@ -228,6 +239,7 @@ async function requestJson(
       deps.log(
         `[Clarivate] Retry-After of ${Math.round(headerWait / 1000)}s for ${pathForLog(url)} exceeds 30s. Giving up.`
       );
+      deps.onTransportFailure('Retry-After over 30s');
       return null;
     }
     const wait = headerWait != null ? headerWait : Math.min(BACKOFF_CAP_MS, delay + deps.random() * delay * 0.25);
@@ -251,8 +263,14 @@ export function createClarivateWosJournalsClient(options: ClarivateHttpDependenc
       sleep,
     });
   const maxAttempts = options.maxAttempts ?? CLARIVATE_MAX_ATTEMPTS;
+  let transportBackoffUntil = 0;
 
   const key = () => (options.apiKey !== undefined ? options.apiKey?.trim() || null : readClarivateApiKey());
+
+  function onTransportFailure(reason: string): void {
+    transportBackoffUntil = now() + CLARIVATE_TRANSPORT_BACKOFF_MS;
+    log(`[Clarivate] Pausing Journals API calls for 2 minutes after ${reason}. This pause is kept in memory only.`);
+  }
 
   async function getJson(url: string): Promise<unknown | null> {
     const apiKey = key();
@@ -260,7 +278,8 @@ export function createClarivateWosJournalsClient(options: ClarivateHttpDependenc
       warnMissingKey(log);
       return null;
     }
-    return requestJson(url, { fetchImpl, now, sleep, random, log, maxAttempts, limiter, apiKey });
+    if (now() < transportBackoffUntil) return null;
+    return requestJson(url, { fetchImpl, now, sleep, random, log, maxAttempts, limiter, apiKey, onTransportFailure });
   }
 
   return {
