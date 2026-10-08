@@ -72,6 +72,25 @@ export function runComplianceAudit(
   const issues: ComplianceIssue[] = [];
   const currentFacts = facts || campaign.clarivateFacts;
   const journalName = currentFacts?.journalName || '';
+  const currentYear = new Date().getFullYear();
+
+  // Stale fact audit
+  if (currentFacts?.reportingYear) {
+    const yearMatch = currentFacts.reportingYear.match(/\b(20\d{2})\b/);
+    if (yearMatch) {
+      const year = parseInt(yearMatch[1], 10);
+      if (year < currentYear - 1) {
+        issues.push({
+          id: `fact-stale-year`,
+          type: 'warning',
+          category: 'stale_fact',
+          message: `Impact Factor is from ${year}, consider refreshing metrics from latest Clarivate JCR release.`,
+          targetText: currentFacts.reportingYear,
+          fieldLocation: 'Journal Reporting Year',
+        });
+      }
+    }
+  }
 
   // 1. Audit Search Headlines
   if (campaign.searchAds?.headlines) {
@@ -92,9 +111,36 @@ export function runComplianceAudit(
         });
       }
 
+      // Missing fact check: mentions IF but impactFactor is null
+      if (/\b(if|impact\s+factor)\b/i.test(h.text) || /影响因子/.test(h.text)) {
+        if (!currentFacts?.impactFactor) {
+          issues.push({
+            id: `hl-missing-if-${idx}`,
+            type: 'error',
+            category: 'missing_fact',
+            message: 'Headline mentions Impact Factor but metric is missing. Remove or verify metric in Step 1.',
+            targetText: h.text,
+            suggestedFix: h.text.replace(/\b(if|impact\s+factor)\s*[\d.]+/i, 'Peer-Reviewed Quality').replace(/影响因子[\d.]+/i, '同行评议'),
+            fieldLocation: location,
+          });
+        }
+      }
+
+      // Source credibility check: cites Clarivate when user_provided
+      if (currentFacts?.verificationStatus === 'user_provided' && /\bclarivate\b/i.test(h.text)) {
+        issues.push({
+          id: `hl-source-mismatch-${idx}`,
+          type: 'warning',
+          category: 'source_mismatch',
+          message: 'Headline cites Clarivate metrics but facts are user-provided. Use verified data or remove Clarivate attribution.',
+          targetText: h.text,
+          suggestedFix: h.text.replace(/\bclarivate\b/i, 'Indexed'),
+          fieldLocation: location,
+        });
+      }
+
       // Trademark check
       for (const tm of COMPETITOR_TRADEMARKS) {
-        // Exclude if the competitor name is part of the journal's own name
         if (journalName.toLowerCase().includes(tm.name.toLowerCase())) continue;
         if (tm.name === 'Science' && /\b(sciences|scientific)\b/i.test(h.text)) continue;
 
@@ -114,7 +160,6 @@ export function runComplianceAudit(
       // Superlatives check
       for (const sup of SUPERLATIVES) {
         if (sup.pattern.test(h.text)) {
-          // Allow Q1 if source verified
           if (sup.term === 'top-ranked' && currentFacts?.casZone?.includes('1区')) continue;
           issues.push({
             id: `hl-sup-${idx}-${sup.term}`,
@@ -160,6 +205,21 @@ export function runComplianceAudit(
           suggestedFix: smartClampWithWidth(d.text, 90),
           fieldLocation: location,
         });
+      }
+
+      // Missing fact check
+      if (/\b(if|impact\s+factor)\b/i.test(d.text) || /影响因子/.test(d.text)) {
+        if (!currentFacts?.impactFactor) {
+          issues.push({
+            id: `desc-missing-if-${idx}`,
+            type: 'error',
+            category: 'missing_fact',
+            message: 'Description mentions Impact Factor but metric is missing. Verify metric or remove claim.',
+            targetText: d.text,
+            suggestedFix: d.text.replace(/\b(clarivate\s+)?if\s+[\d.]+/i, 'peer-reviewed research'),
+            fieldLocation: location,
+          });
+        }
       }
 
       for (const mis of MISLEADING_PATTERNS) {
@@ -239,8 +299,6 @@ export function runComplianceAudit(
         if (tm.name === 'Science' && /\b(sciences|scientific)\b/i.test(kw.keyword)) continue;
 
         if (tm.pattern.test(kw.keyword)) {
-          // In Google Ads, bidding on competitor trademarks is permitted as a keyword, but ads must not claim to be the competitor.
-          // We provide an advisory warning.
           issues.push({
             id: `kw-tm-${idx}-${tm.name}`,
             type: 'warning',
@@ -266,9 +324,6 @@ export function runComplianceAudit(
   };
 }
 
-/**
- * Automatically cleans campaign assets by applying the suggested fixes to errors.
- */
 export function autoFixComplianceIssues(campaign: GeneratedAdCampaign): GeneratedAdCampaign {
   const report = runComplianceAudit(campaign);
   let updatedCampaign = JSON.parse(JSON.stringify(campaign)) as GeneratedAdCampaign;
@@ -276,7 +331,6 @@ export function autoFixComplianceIssues(campaign: GeneratedAdCampaign): Generate
   report.issues.forEach((issue) => {
     if (!issue.suggestedFix) return;
 
-    // Search headlines
     if (updatedCampaign.searchAds?.headlines) {
       updatedCampaign.searchAds.headlines = updatedCampaign.searchAds.headlines.map((h) => {
         if (h.text === issue.targetText) {
@@ -292,7 +346,6 @@ export function autoFixComplianceIssues(campaign: GeneratedAdCampaign): Generate
       });
     }
 
-    // Search descriptions
     if (updatedCampaign.searchAds?.descriptions) {
       updatedCampaign.searchAds.descriptions = updatedCampaign.searchAds.descriptions.map((d) => {
         if (d.text === issue.targetText) {
@@ -308,7 +361,6 @@ export function autoFixComplianceIssues(campaign: GeneratedAdCampaign): Generate
       });
     }
 
-    // Display ads
     if (updatedCampaign.displayAds) {
       if (updatedCampaign.displayAds.shortHeadline === issue.targetText) {
         updatedCampaign.displayAds.shortHeadline = issue.suggestedFix;
@@ -325,7 +377,6 @@ export function autoFixComplianceIssues(campaign: GeneratedAdCampaign): Generate
     }
   });
 
-  // Re-run audit after fix
   updatedCampaign.complianceReport = runComplianceAudit(updatedCampaign);
   return updatedCampaign;
 }

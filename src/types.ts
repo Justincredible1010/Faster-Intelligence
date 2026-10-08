@@ -6,6 +6,31 @@ export type OutputLanguage = 'all' | 'EN' | 'ZH';
 
 export type FactVerificationStatus = 'source_verified' | 'user_provided' | 'unverified' | 'missing';
 
+export type WorkflowStep = 'builder' | 'library' | 'preview' | 'compliance' | 'export';
+
+export interface ExtractedFactField<T> {
+  value: T;
+  source: 'Clarivate' | 'LandingPage' | 'UserOverride' | 'Inferred';
+  confidence: number; // 0.0 - 1.0 (0.9 = verified/exact, 0.6 = heuristic, 0.0 = missing)
+  extractedAt?: string;
+  provenanceLabel?: string;
+}
+
+export interface ExtractedPageFacts {
+  submissionPortalUrl: ExtractedFactField<string | null>;
+  authorGuidelinesUrl: ExtractedFactField<string | null>;
+  aimsAndScopeSummary: ExtractedFactField<string | null>;
+  articleProcessingChargeUsd: ExtractedFactField<number | null>;
+  firstDecisionDays: ExtractedFactField<number | null>;
+  acceptedArticleTypes: ExtractedFactField<string[]>;
+  editorInChief: ExtractedFactField<string | null>;
+  peerReviewModel: ExtractedFactField<string | null>;
+  openAccessPolicy: ExtractedFactField<string | null>;
+  specialIssuesAvailable: ExtractedFactField<boolean>;
+  rawConfidenceAverage: number;
+  extractedDate: string;
+}
+
 export interface ClarivateJournalMetrics {
   url?: string;
   journalName: string;
@@ -29,6 +54,10 @@ export interface ClarivateJournalMetrics {
   isFromCache?: boolean;
   cachedAt?: string;
   cacheExpiresAt?: string;
+  submissionPortalUrl?: string | null;
+  authorGuidelinesUrl?: string | null;
+  extractedFacts?: ExtractedPageFacts;
+  provenanceMap?: Record<string, { source: string; confidence: number; year?: number; note?: string }>;
 }
 
 export interface CachedMetricEntry {
@@ -47,6 +76,8 @@ export interface CachedJournal {
   metrics: Record<string, CachedMetricEntry>;
   lastAccess: string;
   fullFacts?: ClarivateJournalMetrics;
+  extractedFacts?: ExtractedPageFacts;
+  extractedExpireAt?: string;  // 30 days
 }
 
 export interface StageStrategyDefinition {
@@ -142,7 +173,7 @@ export interface AcademicKeywordsPack {
 export interface ComplianceIssue {
   id: string;
   type: 'error' | 'warning';
-  category: 'trademark' | 'superlative' | 'misleading_claim' | 'funding_claim' | 'char_limit';
+  category: 'trademark' | 'superlative' | 'misleading_claim' | 'funding_claim' | 'char_limit' | 'missing_fact' | 'stale_fact' | 'source_mismatch';
   message: string;
   targetText: string;
   suggestedFix?: string;
@@ -155,6 +186,31 @@ export interface ComplianceValidationReport {
   warningsCount: number;
   issues: ComplianceIssue[];
   checkedAt: string;
+}
+
+export interface GenerationFactProvenanceItem {
+  field: string;
+  value: any;
+  source: string;
+  year?: number;
+  confidence?: number;
+  provenanceString: string;
+}
+
+export interface AssetValidationReport {
+  status: 'OK' | 'Warnings' | 'Errors';
+  usedFacts: GenerationFactProvenanceItem[];
+  missingFacts: string[];
+  warnings: string[];
+  issues: Array<{ field: string; message: string; severity: 'error' | 'warning' | 'info' }>;
+}
+
+export interface AssetGenerationContext {
+  facts: ClarivateJournalMetrics;
+  stage: StageCode;
+  outputLanguage: OutputLanguage;
+  customPlaybook?: string;
+  aiModel?: 'gemini' | null;
 }
 
 export interface GeneratedAdCampaign {
@@ -176,6 +232,7 @@ export interface GeneratedAdCampaign {
   outputLanguage?: OutputLanguage;
   generatedAt?: string;
   complianceReport?: ComplianceValidationReport;
+  assetValidationReport?: AssetValidationReport;
 }
 
 export const STAGE_CONFIGS: Record<StageCode, StageStrategyDefinition> = {

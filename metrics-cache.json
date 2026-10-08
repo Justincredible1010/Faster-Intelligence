@@ -68,5 +68,69 @@
       "isVerifiedClarivate": true,
       "sourceAttribution": "Verified via Clarivate Journal Citation Reports (JCR 2024/2025) & Web of Science Index"
     }
+  },
+  "paper": {
+    "journalId": "paper",
+    "journalName": "Journal of Quantum Synthesis",
+    "publisher": "Springer Nature",
+    "lastAccess": "2026-10-04T07:15:32.424Z",
+    "metrics": {
+      "impactFactor": {
+        "metric": "impactFactor",
+        "value": 4.8,
+        "year": 2025,
+        "source": "User Provided",
+        "cachedAt": "2026-10-04T07:15:32.424Z",
+        "expireAt": "2027-06-30T23:59:59.000Z"
+      },
+      "casZone": {
+        "metric": "casZone",
+        "value": "中科院2区",
+        "year": 2025,
+        "source": "User Provided",
+        "cachedAt": "2026-10-04T07:15:32.424Z",
+        "expireAt": "2026-12-31T23:59:59.000Z"
+      },
+      "firstDecisionDays": {
+        "metric": "firstDecisionDays",
+        "value": 24,
+        "year": 2025,
+        "source": "User Provided",
+        "cachedAt": "2026-10-04T07:15:32.424Z",
+        "expireAt": "2027-01-02T07:15:32.424Z"
+      },
+      "apcUsd": {
+        "metric": "apcUsd",
+        "value": 2980,
+        "year": 2025,
+        "source": "User Provided",
+        "cachedAt": "2026-10-04T07:15:32.424Z",
+        "expireAt": "2026-12-03T07:15:32.424Z"
+      }
+    },
+    "fullFacts": {
+      "url": "https://unknown-nonexistent-journal.org/paper",
+      "journalName": "Journal of Quantum Synthesis",
+      "publisher": "Springer Nature",
+      "impactFactor": 4.8,
+      "fiveYearImpactFactor": 5.1,
+      "jcrQuartile": "Q1",
+      "casZone": "中科院2区",
+      "firstDecisionDays": 24,
+      "indexing": [
+        "SCIE",
+        "Scopus"
+      ],
+      "openAccessType": "Hybrid Open Access",
+      "apcUsd": 2980,
+      "chinaWaiverAvailable": true,
+      "aimsAndScopeSummary": "Focus on quantum materials.",
+      "primaryDiscipline": "Quantum Physics",
+      "isVerifiedClarivate": false,
+      "verificationStatus": "user_provided",
+      "sourceAttribution": "Manually supplied by user (User Verified)",
+      "missingFields": [],
+      "reportingYear": "User Provided (2025/2026)"
+    }
   }
 }

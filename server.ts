@@ -687,6 +687,84 @@ app.post('/api/cache/clear', (_req, res) => {
   res.json({ success: true, message: 'All cached metrics cleared successfully.' });
 });
 
+// Update or store user-provided journal metrics into cache
+app.post('/api/update-journal-metrics', (req, res) => {
+  try {
+    const { facts } = req.body;
+    if (!facts || !facts.journalName) {
+      return res.status(400).json({ error: 'Valid journal metrics object is required.' });
+    }
+
+    const norm = normalizeUrlComponents(facts.url || '');
+    const journalId = norm.slug || facts.journalName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const nowStr = new Date().toISOString();
+
+    const userProvidedFacts: JCRJournalEntry = {
+      ...facts,
+      isVerifiedClarivate: false,
+      verificationStatus: 'user_provided',
+      sourceAttribution: facts.sourceAttribution || 'Manually supplied by user (User Verified)',
+      missingFields: [],
+      reportingYear: facts.reportingYear || 'User Provided (2025/2026)',
+    };
+
+    const cachedEntry: CachedJournal = {
+      journalId,
+      journalName: facts.journalName,
+      publisher: facts.publisher || 'Springer Nature',
+      lastAccess: nowStr,
+      metrics: {
+        impactFactor: {
+          metric: 'impactFactor',
+          value: facts.impactFactor,
+          year: 2025,
+          source: 'User Provided',
+          cachedAt: nowStr,
+          expireAt: calculateMetricExpiry('impactFactor'),
+        },
+        casZone: {
+          metric: 'casZone',
+          value: facts.casZone || null,
+          year: 2025,
+          source: 'User Provided',
+          cachedAt: nowStr,
+          expireAt: calculateMetricExpiry('casZone'),
+        },
+        firstDecisionDays: {
+          metric: 'firstDecisionDays',
+          value: facts.firstDecisionDays || null,
+          year: 2025,
+          source: 'User Provided',
+          cachedAt: nowStr,
+          expireAt: calculateMetricExpiry('firstDecisionDays'),
+        },
+        apcUsd: {
+          metric: 'apcUsd',
+          value: facts.apcUsd || null,
+          year: 2025,
+          source: 'User Provided',
+          cachedAt: nowStr,
+          expireAt: calculateMetricExpiry('apcUsd'),
+        },
+      },
+      fullFacts: userProvidedFacts,
+    };
+
+    metricsCache.set(journalId, cachedEntry);
+    saveCacheToDisk();
+
+    console.log(`[Metrics Cache] Saved user-provided metrics for ${facts.journalName} (${journalId})`);
+    res.json({
+      success: true,
+      message: `Saved verified metrics for ${facts.journalName}`,
+      facts: userProvidedFacts,
+    });
+  } catch (err: any) {
+    console.error('Failed to update journal metrics:', err);
+    res.status(500).json({ error: err.message || 'Failed to update metrics' });
+  }
+});
+
 interface HeadlineSeed {
   text: string;
   sourceFact: string;

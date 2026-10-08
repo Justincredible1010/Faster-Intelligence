@@ -197,8 +197,17 @@ export default function App() {
     }
   };
 
-  const handleSaveManualJournal = (facts: ClarivateJournalMetrics) => {
+  const handleSaveManualJournal = async (facts: ClarivateJournalMetrics) => {
     setClarivateFacts(facts);
+    try {
+      await fetch('/api/update-journal-metrics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ facts }),
+      });
+    } catch (err) {
+      console.warn('Failed to persist manual metrics to server:', err);
+    }
     handleGenerateCampaign(landingPageUrl, funnelStage, selectedChannels, outputLanguage, customPlaybook, facts);
   };
 
