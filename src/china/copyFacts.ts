@@ -153,16 +153,3 @@ export function chinaCopyFacts(facts: FactRecord): ChinaCopyFacts {
     factNotes,
   };
 }
-
-/** Use a landing URL the campaign already resolved. Never build a new one. */
-export function resolvedLandingUrl(url: string | null | undefined): string {
-  const trimmed = (url || '').trim();
-  if (!/^https?:\/\//i.test(trimmed)) return '';
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
-    return trimmed;
-  } catch {
-    return '';
-  }
-}

@@ -35,6 +35,21 @@ import {
 import { JOURNAL_CATALOG } from '../data/journalCatalog';
 import { pickEditableJournalFacts } from '../utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from '../utils/journalUrl';
+import { metricFieldIsTrusted } from '../utils/metricClaims';
+
+function metricSourceLabel(source: string | undefined, field?: string): string {
+  if (
+    (field === 'impactFactor' || field === 'fiveYearImpactFactor') &&
+    (source === 'page_sourced' || source === 'landing_page')
+  ) {
+    return 'from journal website';
+  }
+  if (source === 'page_sourced' || source === 'landing_page') return 'Page-sourced';
+  if (source === 'catalog_snapshot') return 'Catalog snapshot';
+  if (source === 'user_provided') return 'User provided';
+  if (source === 'clarivate_wos_journals_api') return 'WOS Journals API';
+  return '';
+}
 
 interface Props {
   landingPageUrl: string;
@@ -404,16 +419,24 @@ export const InputStudio: React.FC<Props> = ({
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                   <span className="text-[10px] text-slate-400 font-semibold uppercase block">Impact Factor</span>
                   <div className="text-base font-extrabold text-slate-900 flex items-center gap-1.5">
-                    <span>{clarivateFacts.impactFactor || 'N/A'}</span>
-                    {clarivateFacts.jcrQuartile && (
+                    <span>{clarivateFacts.impactFactor ?? 'N/A'}</span>
+                    {clarivateFacts.jcrQuartile && metricFieldIsTrusted(clarivateFacts, 'jcrQuartile') && (
                       <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
                         {clarivateFacts.jcrQuartile}
                       </span>
                     )}
                   </div>
-                  <span className="text-[10px] text-slate-400">
-                    5-Yr: {clarivateFacts.fiveYearImpactFactor || 'N/A'}
+                  <span className="text-[10px] text-slate-400 block">
+                    5-Yr: {clarivateFacts.fiveYearImpactFactor ?? 'N/A'}
+                    {metricSourceLabel(clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source, 'fiveYearImpactFactor')
+                      ? ` · ${metricSourceLabel(clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source, 'fiveYearImpactFactor')}`
+                      : ''}
                   </span>
+                  {metricSourceLabel(clarivateFacts.provenanceMap?.impactFactor?.source, 'impactFactor') && (
+                    <span className="text-[10px] text-slate-500 block">
+                      {metricSourceLabel(clarivateFacts.provenanceMap?.impactFactor?.source, 'impactFactor')}
+                    </span>
+                  )}
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -421,7 +444,12 @@ export const InputStudio: React.FC<Props> = ({
                   <span className="text-xs font-bold text-slate-900 line-clamp-1">
                     {clarivateFacts.casZone || 'Not stated'}
                   </span>
-                  <span className="text-[10px] text-slate-400">Chinese Academy of Sciences</span>
+                  <span className="text-[10px] text-slate-400">
+                    {metricSourceLabel(clarivateFacts.provenanceMap?.casZone?.source) ||
+                      (clarivateFacts.casZone && clarivateFacts.verificationStatus === 'page_sourced'
+                        ? 'Catalog snapshot'
+                        : 'Chinese Academy of Sciences')}
+                  </span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -429,7 +457,9 @@ export const InputStudio: React.FC<Props> = ({
                   <span className="text-sm font-bold text-slate-900">
                     {clarivateFacts.firstDecisionDays ? `${clarivateFacts.firstDecisionDays} Days` : 'N/A'}
                   </span>
-                  <span className="text-[10px] text-slate-500 block">Initial editorial review</span>
+                  <span className="text-[10px] text-slate-500 block">
+                    {metricSourceLabel(clarivateFacts.provenanceMap?.firstDecisionDays?.source) || 'Initial editorial review'}
+                  </span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -439,7 +469,7 @@ export const InputStudio: React.FC<Props> = ({
                   </span>
                   <span className="text-[10px] text-slate-500 font-medium">
                     {clarivateFacts.apcUsd
-                      ? `APC: $${clarivateFacts.apcUsd}`
+                      ? `APC: $${clarivateFacts.apcUsd}${metricSourceLabel(clarivateFacts.provenanceMap?.apcUsd?.source) ? ` · ${metricSourceLabel(clarivateFacts.provenanceMap?.apcUsd?.source)}` : ''}`
                       : 'APC not stated'}
                   </span>
                 </div>

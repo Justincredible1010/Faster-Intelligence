@@ -6,15 +6,16 @@ import { charCount } from '../src/china/chinaAdLaw';
 import { chinaChannelsExportSection, generateChinaChannelsCsv } from '../src/china/exportText';
 import { autoFixComplianceIssues, runComplianceAudit } from '../src/utils/complianceValidator';
 import { generateDeterministicCampaign } from '../server.ts';
-import { ClarivateJournalMetrics, GeneratedAdCampaign, OutputLanguage, StageCode } from '../src/types';
+import { ClarivateJournalMetrics, ExtractedPageFacts, GeneratedAdCampaign, OutputLanguage, StageCode } from '../src/types';
 
-const LANDING = 'https://www.nature.com/aims-and-scope';
+const JOURNAL = 'https://www.nature.com';
+const GUESSED_PATH = /\/(about|articles|editors|collections|aims-and-scope|article-types|metrics|for-authors|checklist|apc-waivers|submission-guidelines)\/?$/;
 
 function campaignFor(
   facts: Partial<ClarivateJournalMetrics>,
   stage: StageCode = 'CON',
   outputLanguage: OutputLanguage = 'all',
-  url = LANDING
+  journalUrl = JOURNAL
 ) {
   return withChinaChannels({
     funnelStage: stage,
@@ -25,9 +26,14 @@ function campaignFor(
       impactFactor: null,
       sourceAttribution: 'test',
       verificationStatus: 'missing',
+      url: journalUrl,
       ...facts,
     } as ClarivateJournalMetrics,
-    recommendedDestination: { url, label: 'Aims and scope' },
+    recommendedDestination: {
+      label: 'Guessed aims page',
+      url: 'https://www.nature.com/aims-and-scope',
+      description: 'Not a link from the journal page',
+    },
   });
 }
 
@@ -60,9 +66,11 @@ describe('Weibo posts and WeChat ads', () => {
       provenanceSource: 'page_sourced',
       impactFactor: null,
     });
-    assert.equal(campaign.weiboPost.link, LANDING);
-    assert.equal(campaign.weiboPost.englishOption?.link, LANDING);
-    assert.equal(campaign.wechatAd.landingUrl, LANDING);
+    assert.equal(campaign.weiboPost.link, JOURNAL);
+    assert.equal(campaign.weiboPost.englishOption?.link, JOURNAL);
+    assert.equal(campaign.wechatAd.landingUrl, JOURNAL);
+    assert.doesNotMatch(campaign.weiboPost.link, GUESSED_PATH);
+    assert.doesNotMatch(campaign.wechatAd.landingUrl, GUESSED_PATH);
     assert.ok(campaign.weiboPost.practicalLength <= campaign.weiboPost.practicalLimit);
     assert.equal(campaign.weiboPost.practicalLength, charCount(campaign.weiboPost.hook) + 1 + charCount(campaign.weiboPost.body));
     assert.ok(campaign.weiboPost.hashtags.every((tag) => tag.startsWith('#') && tag.endsWith('#')));
@@ -172,18 +180,38 @@ describe('Weibo posts and WeChat ads', () => {
     assert.equal(campaignFor(facts, 'AWA', 'all').wechatAd.cta, '了解更多');
   });
 
+  it('uses a page-resolved stage link and ignores a guessed path', () => {
+    const journal = 'https://www.nature.com/ncomms';
+    const consideration = campaignFor({ url: journal }, 'CON');
+    assert.equal(consideration.weiboPost.link, journal);
+    assert.equal(consideration.wechatAd.landingUrl, journal);
+    assert.doesNotMatch(consideration.weiboPost.link, GUESSED_PATH);
+
+    const withAims = campaignFor({
+      url: journal,
+      extractedFacts: {
+        canonicalUrl: { value: journal, source: 'LandingPage', confidence: 0.9 },
+        aimsUrl: { value: 'https://www.nature.com/ncomms/aims', source: 'LandingPage', confidence: 0.9 },
+      } as ExtractedPageFacts,
+    }, 'CON');
+    assert.equal(withAims.weiboPost.link, 'https://www.nature.com/ncomms/aims');
+    assert.equal(withAims.wechatAd.landingUrl, 'https://www.nature.com/ncomms/aims');
+
+    const decision = campaignFor({
+      url: journal,
+      authorGuidelinesUrl: 'https://www.nature.com/ncomms/submit',
+    }, 'DEC', 'ZH');
+    assert.equal(decision.weiboPost.link, 'https://www.nature.com/ncomms/submit');
+    assert.equal(decision.wechatAd.landingUrl, 'https://www.nature.com/ncomms/submit');
+  });
+
   it('does not invent a destination when the campaign has no resolved URL', () => {
     const blank = campaignFor({ verificationStatus: 'page_sourced', provenanceSource: 'page_sourced' }, 'DEC', 'ZH', '');
     assert.equal(blank.weiboPost.link, '');
     assert.equal(blank.wechatAd.landingUrl, '');
-    const relative = campaignFor(
-      { verificationStatus: 'page_sourced', provenanceSource: 'page_sourced' },
-      'DEC',
-      'ZH',
-      '/submission-guidelines'
-    );
-    assert.equal(relative.weiboPost.link, '');
-    assert.equal(relative.wechatAd.landingUrl, '');
+    const journal = campaignFor({ url: 'https://www.nature.com/ncomms' }, 'DEC', 'ZH');
+    assert.equal(journal.weiboPost.link, 'https://www.nature.com/ncomms');
+    assert.doesNotMatch(journal.weiboPost.link, /submission-guidelines|for-authors|about$/);
   });
 
   it('warns on China Advertising Law terms and does not rewrite the line', () => {
@@ -198,9 +226,9 @@ describe('Weibo posts and WeChat ads', () => {
     campaign.primaryCta = 'Check journal fit';
     campaign.generationSource = 'template_fallback';
     campaign.recommendedDestination = {
-      label: 'Aims and scope',
-      url: LANDING,
-      description: 'Scope',
+      label: 'Journal',
+      url: JOURNAL,
+      description: 'Journal landing page',
     };
 
     const originalHook = campaign.weiboPost?.hook || '';
@@ -235,8 +263,13 @@ describe('Weibo posts and WeChat ads', () => {
       generated.wechatAd?.description,
       generated.wechatAd?.englishOption?.description,
     ].join('\n');
-    assert.equal(generated.weiboPost?.link, 'https://www.nature.com/aps/aims-and-scope');
+    assert.equal(generated.weiboPost?.link, 'https://www.nature.com/aps');
+    assert.equal(generated.wechatAd?.landingUrl, 'https://www.nature.com/aps');
     assert.equal(generated.wechatAd?.landingUrl, generated.recommendedDestination.url);
+    assert.doesNotMatch(generated.weiboPost?.link || '', GUESSED_PATH);
+    for (const link of generated.searchAds?.sitelinks || []) {
+      assert.doesNotMatch(link.urlPath || '', GUESSED_PATH);
+    }
     for (const banned of ['6.9', '7.4', '4190', '23', '1区', 'SCIE', 'Materia']) {
       assert.equal(text.includes(banned), false, `catalog value leaked: ${banned}`);
     }
@@ -259,7 +292,9 @@ describe('Weibo posts and WeChat ads', () => {
     assert.match(section, /## Weibo organic post and WeChat ads/);
     assert.match(section, /not a Google Ads Editor table/);
     assert.match(section, /WeChat ads \(paid: Moments and Official Account\)/);
-    assert.match(section, new RegExp(LANDING.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(section, /https:\/\/www\.nature\.com/);
+    assert.doesNotMatch(section, GUESSED_PATH);
+    assert.doesNotMatch(csv, GUESSED_PATH);
     assert.equal(section.includes('8.8'), false);
     assert.match(csv.split('\n')[0], /Section,Channel,Stage,Journal,Field,Language,Text,Landing URL,Notes/);
     assert.match(csv, /Weibo organic post/);

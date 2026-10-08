@@ -12,6 +12,7 @@ import { MagicLinkRejected, requestMagicLink } from '../src/server/auth/magicLin
 import { loadAuthConfig } from '../src/server/auth/config';
 import { resetAuthForTests } from '../src/server/auth/reset';
 import { setPageFactsClientForTests } from '../src/utils/metricSources';
+import type { ExtractedFactField, ExtractedPageFacts } from '../src/types';
 import { MockOidcIssuer, type MockClaims } from './mockOidcIssuer';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mcge-auth-'));
@@ -26,6 +27,7 @@ let baseUrl = '';
 let appServer: Server;
 let mock: MockOidcIssuer;
 let resetMetricsCacheForTests: () => void;
+let setLandingPageFetchForTests: (fetchPage: ((url: string) => Promise<string>) | null) => void;
 
 type Jar = Map<string, string>;
 
@@ -167,6 +169,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     await mock.start();
     const serverMod = await import('../server.ts');
     resetMetricsCacheForTests = serverMod.resetMetricsCacheForTests;
+    setLandingPageFetchForTests = serverMod.setLandingPageFetchForTests;
     appServer = serverMod.app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => appServer.once('listening', () => resolve()));
     const address = appServer.address();
@@ -186,6 +189,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     resetAuthForTests();
     resetMetricsCacheForTests();
     setPageFactsClientForTests(null);
+    setLandingPageFetchForTests(async () => '<html><head></head><body></body></html>');
     mock.reset();
   });
 
@@ -445,7 +449,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     const saved = await api('/api/update-journal-metrics', {
       jar,
       csrf: user.csrfToken,
-      body: { facts: validFacts({ impactFactor: 8.1 }) },
+      body: { facts: validFacts({ impactFactor: 8.1, issn: '1234-5678' }) },
     });
     assert.equal(saved.status, 200);
     const body = await saved.json();
@@ -465,7 +469,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(audit[0].actorEmail, 'dev.user@springernature.com');
     assert.ok(audit[0].changedFields.some((change) => change.field === 'impactFactor' && change.after === 8.1));
 
-    const cached = await api('/api/cache/journal/example-journal', { jar });
+    const cached = await api(`/api/cache/journal/${encodeURIComponent('issn:1234-5678')}`, { jar });
     assert.equal(cached.status, 200);
     const cachedBody = await cached.json();
     assert.equal(cachedBody.cachedJournal.lastModifiedBy.email, 'dev.user@springernature.com');
@@ -556,6 +560,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal('isFromCache' in catalogBody.campaign.clarivateFacts, false);
 
     const pageUrl = 'https://www.nature.com/page-sourced-journal';
+    const pageLinks = stubPageLinks(pageUrl);
     setPageFactsClientForTests({
       async extractFromPage(canonicalUrl: string) {
         if (canonicalUrl !== pageUrl) return null;
@@ -577,6 +582,9 @@ describe('authenticated http api', { concurrency: 1 }, () => {
           verificationStatus: 'page_sourced',
           provenanceSource: 'page_sourced',
           isVerifiedClarivate: false,
+          submissionPortalUrl: pageLinks.submissionPortalUrl.value,
+          authorGuidelinesUrl: pageLinks.authorGuidelinesUrl.value,
+          extractedFacts: pageLinks,
         };
       },
     });
@@ -610,8 +618,20 @@ describe('authenticated http api', { concurrency: 1 }, () => {
         channels: ['search'],
         outputLanguage: 'EN',
         userProvidedFacts: {
-          ...pageFacts,
+          url: pageFacts.url,
+          journalName: pageFacts.journalName,
+          publisher: pageFacts.publisher,
           impactFactor: 2.8,
+          fiveYearImpactFactor: pageFacts.fiveYearImpactFactor,
+          jcrQuartile: pageFacts.jcrQuartile,
+          casZone: pageFacts.casZone,
+          firstDecisionDays: pageFacts.firstDecisionDays,
+          indexing: pageFacts.indexing,
+          openAccessType: pageFacts.openAccessType,
+          apcUsd: pageFacts.apcUsd,
+          chinaWaiverAvailable: pageFacts.chinaWaiverAvailable,
+          aimsAndScopeSummary: pageFacts.aimsAndScopeSummary,
+          primaryDiscipline: pageFacts.primaryDiscipline,
           jcrYear: 2023,
           verificationStatus: 'user_provided',
         },
@@ -625,10 +645,41 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(pageBody.campaign.clarivateFacts.verificationStatus, 'user_provided');
     assert.equal(pageBody.campaign.clarivateFacts.provenanceSource, 'user_provided');
     assert.equal(pageBody.campaign.clarivateFacts.isVerifiedClarivate, false);
+    assert.equal(pageBody.campaign.clarivateFacts.submissionPortalUrl, 'https://mts-example.nature.com');
+    assert.equal(pageBody.campaign.clarivateFacts.authorGuidelinesUrl, `${pageUrl}/submit`);
+    const articlesLink = pageBody.campaign.searchAds.sitelinks.find((link: { title: string }) => link.title === 'Article Types & Formats');
+    assert.equal(articlesLink?.urlPath, `${pageUrl}/research-articles`);
+    assert.equal(pageBody.campaign.recommendedDestination.url, pageUrl);
     assert.deepEqual(pageBody.campaign.clarivateFacts.slugs, []);
     assert.equal('cachedAt' in pageBody.campaign.clarivateFacts, false);
     assert.equal('cacheExpiresAt' in pageBody.campaign.clarivateFacts, false);
     assert.equal('isFromCache' in pageBody.campaign.clarivateFacts, false);
+  });
+
+  it('returns 400 for a non-Springer-Nature URL after sign-in', async () => {
+    const jar: Jar = new Map();
+    const user = await devLogin(jar);
+    const evil = 'https://evil.example/paper';
+    for (const route of [
+      { path: '/api/fetch-clarivate-facts', body: { url: evil } },
+      { path: '/api/generate-campaign', body: { landingPageUrl: evil, funnelStage: 'CON', channels: ['search'], outputLanguage: 'EN' } },
+      { path: '/api/compare-stages', body: { landingPageUrl: evil, outputLanguage: 'EN' } },
+      { path: '/api/update-journal-metrics', body: { facts: validFacts({ url: evil, jcrYear: 2024 }) } },
+      { path: '/api/generate-campaign', body: { landingPageUrl: evil, userProvidedFacts: validFacts({ url: evil, jcrYear: 2024 }) } },
+    ]) {
+      const res = await api(route.path, { jar, csrf: user.csrfToken, body: route.body });
+      assert.equal(res.status, 400, route.path);
+      assert.match((await res.json()).error, /Springer Nature/);
+    }
+
+    applyEnv({ NODE_ENV: 'development', AUTH_DEV_BYPASS: 'true', AUTH_ADMIN_EMAILS: 'dev.user@springernature.com' });
+    const refresh = await api('/api/cache/refresh/nature', {
+      jar,
+      csrf: user.csrfToken,
+      body: { url: evil },
+    });
+    assert.equal(refresh.status, 400);
+    assert.match((await refresh.json()).error, /Springer Nature/);
   });
 
   it('returns 401 for mixed-case and percent-encoded /api paths', async () => {
@@ -791,6 +842,43 @@ function rawApi(
     if (payload) req.write(payload);
     req.end();
   });
+}
+
+function pageField<T>(value: T): ExtractedFactField<T> {
+  return { value, source: 'LandingPage', confidence: 0.8, provenanceLabel: 'landing_page' };
+}
+
+function stubPageLinks(url: string): ExtractedPageFacts {
+  const empty = pageField<string | null>(null);
+  return {
+    journalTitle: pageField('Page Sourced Journal'),
+    issnPrint: empty,
+    issnElectronic: empty,
+    canonicalUrl: pageField(url),
+    publisherName: pageField('Nature Portfolio'),
+    submissionPortalUrl: pageField('https://mts-example.nature.com'),
+    authorGuidelinesUrl: pageField(`${url}/submit`),
+    aboutUrl: empty,
+    articlesUrl: pageField(`${url}/research-articles`),
+    editorsUrl: empty,
+    collectionsUrl: empty,
+    aimsUrl: empty,
+    metricsUrl: empty,
+    checklistUrl: empty,
+    aimsAndScopeSummary: pageField('Read from the journal page.'),
+    articleProcessingChargeUsd: pageField<number | null>(null),
+    apcInfoUrl: empty,
+    firstDecisionDays: pageField<number | null>(40),
+    acceptedArticleTypes: pageField<string[]>([]),
+    editorInChief: empty,
+    peerReviewModel: empty,
+    openAccessPolicy: empty,
+    specialIssuesAvailable: pageField(false),
+    pageMetrics: [],
+    layout: 'unknown',
+    rawConfidenceAverage: 0.5,
+    extractedDate: '2026-10-08T00:00:00.000Z',
+  };
 }
 
 async function devLogin(jar: Jar): Promise<{ csrfToken: string; email: string }> {
