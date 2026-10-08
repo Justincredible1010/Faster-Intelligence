@@ -750,9 +750,9 @@ export async function runLandingPageTests() {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ landingPageUrl: 'https://evil.example/paper' }),
         });
-        assert.equal(response.status, 400, route);
+        assert.equal(response.status, 401, route);
         const body = await response.json();
-        assert.match(body.error || '', /Springer Nature/);
+        assert.match(body.error || '', /Authentication required/);
       }
     } finally {
       await new Promise<void>((resolve, reject) => httpServer.close((err) => (err ? reject(err) : resolve())));
