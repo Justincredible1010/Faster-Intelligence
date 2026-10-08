@@ -67,7 +67,7 @@ export const Navbar: React.FC<Props> = ({
               </span>
               <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 flex items-center gap-1">
                 <Award className="w-3 h-3 text-blue-600" />
-                <span>Clarivate JCR Verified</span>
+                <span>Source-grounded metrics</span>
               </span>
             </div>
             <p className="text-xs text-slate-500 hidden sm:block">

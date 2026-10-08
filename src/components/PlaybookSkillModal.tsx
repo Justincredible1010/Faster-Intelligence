@@ -133,7 +133,7 @@ File type: ${file.type || file.name.split('.').pop()?.toUpperCase()}
 - Apply brand guidelines and creative instructions specified in ${file.name}.
 - Follow Springer Nature official scholarly standards.
 - Enforce Google Ads RSA 15 headlines (<=30 chars) and 4 descriptions (<=90 chars).
-- Ensure all Clarivate metrics and CAS Zone rankings are strictly grounded in fact.`;
+- Cite an impact factor only when it is on the trusted facts record, and name Clarivate only for clarivate_wos_journals_api.`;
         setPlaybookText(guidelineHeader);
       };
       reader.readAsArrayBuffer(file);

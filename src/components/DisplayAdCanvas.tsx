@@ -22,9 +22,9 @@ import {
 import { countCharacterWidth, formatCharCountLabel } from '../utils/textUtils';
 import { deriveDisplayUrl } from '../utils/csvExporter';
 import {
+  formatJifClaim,
   trustedCasZone,
   trustedFirstDecisionDays,
-  trustedImpactFactor,
 } from '../utils/metricClaims';
 
 interface Props {
@@ -42,7 +42,7 @@ export const DisplayAdCanvas: React.FC<Props> = ({
 }) => {
   const [selectedFormat, setSelectedFormat] = useState<string>('all');
   const [copiedBrief, setCopiedBrief] = useState(false);
-  const impactFactor = trustedImpactFactor(facts);
+  const jifClaim = formatJifClaim(facts);
   const casZone = trustedCasZone(facts);
   const firstDecisionDays = trustedFirstDecisionDays(facts);
 
@@ -170,7 +170,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
                   {/* Body Content */}
                   <div className="space-y-1.5 my-auto">
                     <div className="text-xs text-amber-300 font-semibold truncate">
-                      {journalName}{impactFactor != null ? ` · IF ${impactFactor}` : ''}
+                      {journalName}{jifClaim ? ` · ${jifClaim}` : ''}
                     </div>
                     <h4 className="text-sm font-bold leading-snug line-clamp-2 text-white">
                       {shortH}
@@ -258,7 +258,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
               <div className="flex items-center gap-3 shrink-0">
                 <div className="text-right hidden sm:block">
                   <div className="text-[10px] text-amber-300 font-bold">
-                    {impactFactor != null ? `IF ${impactFactor}` : journalName}
+                    {jifClaim || journalName}
                   </div>
                   <div className="text-[9px] text-slate-400">
                     {firstDecisionDays != null ? `${firstDecisionDays} Days Review` : 'Peer-Reviewed'}
@@ -349,9 +349,9 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
                   {/* Bottom Row */}
                   <div className="flex items-center justify-between pt-3 border-t border-white/10 relative z-10">
                     <div className="flex items-center gap-3 text-xs">
-                      {impactFactor != null && (
+                      {jifClaim && (
                         <span className="bg-amber-400/20 text-amber-300 border border-amber-400/30 px-2 py-0.5 rounded text-[11px] font-bold">
-                          Impact Factor {impactFactor}
+                          {jifClaim}
                         </span>
                       )}
                       {casZone && (
@@ -394,7 +394,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
                     <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5">
                       <div className="text-[11px] font-semibold text-slate-300">Journal Highlights:</div>
                       <div className="text-[11px] text-slate-400 space-y-1">
-                        {impactFactor != null && <div>• Impact Factor: <strong className="text-white">{impactFactor}</strong></div>}
+                        {jifClaim && <div>• <strong className="text-white">{jifClaim}</strong></div>}
                         {casZone && <div>• Ranking: <strong className="text-white">{casZone}</strong></div>}
                         {firstDecisionDays != null && <div>• First Decision: <strong className="text-white">{firstDecisionDays} days</strong></div>}
                         {facts.openAccessType && <div>• Publishing: <strong className="text-white">{facts.openAccessType}</strong></div>}
@@ -461,7 +461,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
                 <div>
                   <div className="text-xs font-bold text-slate-900">{longH}</div>
                   <div className="text-[11px] text-slate-500">
-                    {facts.journalName}{impactFactor != null ? ` · IF ${impactFactor}` : ''}
+                    {facts.journalName}{jifClaim ? ` · ${jifClaim}` : ''}
                   </div>
                 </div>
                 <ExternalLink className="w-4 h-4 text-slate-400 shrink-0" />

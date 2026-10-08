@@ -24,7 +24,7 @@ import { AlertCircle, AlertTriangle, Sparkles } from 'lucide-react';
 import { apiFetch } from './auth/api';
 import { pickEditableJournalFacts } from './utils/editableJournalFacts';
 import { NATURE_HOMEPAGE_URL } from './utils/journalUrl';
-import { trustedApcUsd, trustedCasZone, trustedImpactFactor, trustedQuartile } from './utils/metricClaims';
+import { formatJifClaim, trustedApcUsd, trustedCasZone, trustedQuartile } from './utils/metricClaims';
 
 const DEFAULT_LANDING_URL = NATURE_HOMEPAGE_URL;
 
@@ -67,7 +67,11 @@ export default function App() {
     try {
       const res = await apiFetch('/api/fetch-clarivate-facts', {
         method: 'POST',
-        body: JSON.stringify({ url: url.trim(), forceRefresh }),
+        body: JSON.stringify({
+          url: url.trim(),
+          forceRefresh,
+          issn: clarivateFacts?.issn || clarivateFacts?.eIssn,
+        }),
       });
       const data = await res.json();
       if (data.facts) {
@@ -153,6 +157,7 @@ export default function App() {
           outputLanguage: lang,
           channels: activeChannels,
           customPlaybook: playbook,
+          issn: (manualFacts || clarivateFacts)?.issn || (manualFacts || clarivateFacts)?.eIssn,
           userProvidedFacts: browserFacts ? pickEditableJournalFacts(browserFacts) : null,
         }),
       });
@@ -289,7 +294,7 @@ export default function App() {
 **Author Stage:** ${cfg.name}
 **Author Mindset:** ${cfg.authorMindset}
 **Campaign Objective:** ${cfg.campaignObjective}
-**Impact factor:** ${trustedImpactFactor(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
+**Impact factor:** ${formatJifClaim(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **Quartile:** ${trustedQuartile(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **CAS zone:** ${trustedCasZone(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **APC (USD):** ${trustedApcUsd(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}

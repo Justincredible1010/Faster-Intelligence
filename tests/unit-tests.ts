@@ -477,6 +477,10 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert(!/clarivate/i.test(guardedText), guardedText);
   assert((guardedAi.metricClaimFlags || []).length > 0);
 
+  assert.strictEqual(nature.issn, '0028-0836');
+  assert.strictEqual(nature.eIssn, '1476-4687');
+  const previousClarivateKey = process.env.CLARIVATE_API_KEY;
+  delete process.env.CLARIVATE_API_KEY;
   const homeHtml = fs.readFileSync(new URL('./fixtures/landing-pages/nature-portfolio-nature.html', import.meta.url), 'utf8');
   const homeFacts = await lookupClarivateFacts('https://www.nature.com/', true, {
     persist: false,
@@ -508,6 +512,16 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert.strictEqual(nature.impactFactor, null);
   assert.strictEqual(nature.fiveYearImpactFactor, null);
   assert.strictEqual(await lookupMetricsByIssn('0028-0836'), null);
+  if (previousClarivateKey) process.env.CLARIVATE_API_KEY = previousClarivateKey;
+  assert.strictEqual(await pageFacts.extractFromPage('https://www.nature.com'), null);
+  const { setPageFactsClientForTests } = await import('../src/utils/metricSources.ts');
+  setPageFactsClientForTests({
+    async extractFromPage() {
+      return { journalName: 'From page', publisher: 'Nature Portfolio', impactFactor: null, verificationStatus: 'page_sourced', sourceAttribution: 'page' };
+    },
+  });
+  assert.strictEqual((await pageFacts.extractFromPage('https://www.nature.com'))?.journalName, 'From page');
+  setPageFactsClientForTests(null);
   assert.strictEqual(await pageFacts.extractFromPage('https://www.nature.com'), null);
 
   const retrievedAt = new Date('2026-10-08T00:00:00.000Z');
@@ -615,7 +629,13 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   console.log('✓ Test Suite 6 Passed: URLs stay canonical and untrusted figures stay out of copy.');
 }
 
-await runLandingPageTests();
+const landingPageKey = process.env.CLARIVATE_API_KEY;
+delete process.env.CLARIVATE_API_KEY;
+try {
+  await runLandingPageTests();
+} finally {
+  if (landingPageKey) process.env.CLARIVATE_API_KEY = landingPageKey;
+}
 
 console.log('\n=======================================');
 console.log('ALL TEST SUITES PASSED WITHOUT ERRORS');
