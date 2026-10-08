@@ -99,10 +99,10 @@ export const GoogleAdPreview: React.FC<Props> = ({
         <div>
           <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
             <Search className="w-4 h-4 text-blue-600" />
-            <span>Google Responsive Search Ads (RSA) Studio</span>
+            <span>Search ads</span>
           </h3>
           <p className="text-xs text-slate-500">
-            15 Headlines &amp; 4 Descriptions meeting Google Ads machine-learning diversity requirements
+            15 headlines and 4 descriptions. Google may mix them when the ad runs.
           </p>
         </div>
 
@@ -117,7 +117,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Realistic SERP Mockup
+              Preview on Google
             </button>
             <button
               onClick={() => setActiveTab('assets')}
@@ -127,7 +127,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              All Assets &amp; Purity ({headlines.length}H / {descriptions.length}D)
+              Edit the lines ({headlines.length} headlines, {descriptions.length} descriptions)
             </button>
           </div>
         </div>
@@ -151,7 +151,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
           {/* Filter & Action Bar */}
           <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
             <div className="flex items-center gap-1.5">
-              <span className="text-slate-500 font-medium">Filter Language:</span>
+              <span className="text-slate-500 font-medium">Show:</span>
               {(['all', 'EN', 'ZH'] as const).map((l) => (
                 <button
                   key={l}

@@ -120,11 +120,11 @@ export const ManualJournalModal: React.FC<Props> = ({
             <div>
               <h3 className="text-sm font-bold text-slate-900">
                 {initialFacts?.verificationStatus === 'missing'
-                  ? 'Complete Missing Journal Metrics'
-                  : 'Add / Edit Journal Metrics'}
+                  ? 'Enter the missing figures'
+                  : 'Type the journal figures'}
               </h3>
               <p className="text-[11px] text-slate-500">
-                Saved as manually entered (unverified). They are not labeled as a Clarivate API result.
+                Saved as figures you entered. They can appear in the ads, and they are not described as Clarivate.
               </p>
             </div>
           </div>

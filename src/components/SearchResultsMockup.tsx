@@ -10,7 +10,6 @@ import {
   Info,
   CheckCircle2,
   AlertTriangle,
-  Globe,
   Sliders,
 } from 'lucide-react';
 import {
@@ -22,7 +21,7 @@ import {
 } from '../types';
 import { countCharacterWidth, formatCharCountLabel } from '../utils/textUtils';
 import { deriveDisplayUrl } from '../utils/csvExporter';
-import { metricsFromClarivateWos, trustedImpactFactor } from '../utils/metricClaims';
+import { trustedImpactFactor } from '../utils/metricClaims';
 
 interface Props {
   ads: GoogleSearchAds;
@@ -147,7 +146,7 @@ export const SearchResultsMockup: React.FC<Props> = ({
               }`}
             >
               <Monitor className="w-3.5 h-3.5" />
-              <span>Desktop SERP</span>
+              <span>Desktop</span>
             </button>
             <button
               onClick={() => setDeviceMode('mobile')}
@@ -158,7 +157,7 @@ export const SearchResultsMockup: React.FC<Props> = ({
               }`}
             >
               <Smartphone className="w-3.5 h-3.5" />
-              <span>Mobile SERP (375px)</span>
+              <span>Phone</span>
             </button>
           </div>
 
@@ -166,10 +165,10 @@ export const SearchResultsMockup: React.FC<Props> = ({
           <button
             onClick={handleShuffle}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg shadow-2xs transition"
-            title="Simulate Google Ads Responsive Search Ad rotation"
+            title="Show a different mix of headlines and descriptions"
           >
             <Shuffle className="w-3.5 h-3.5 text-blue-600" />
-            <span>Shuffle RSA Rotation</span>
+            <span>Show another mix</span>
           </button>
         </div>
 
@@ -300,50 +299,24 @@ export const SearchResultsMockup: React.FC<Props> = ({
             )}
           </div>
 
-          {/* 2. Realistic Organic Search Results (Contextual Backdrop) */}
-          <div className="space-y-5 opacity-75">
+          <p className="text-[11px] text-slate-500 pt-2">
+            The lines under the ad are a backdrop so you can see the ad on a results page. They are not links, and they are not part of the campaign.
+          </p>
+          <div className="space-y-4 opacity-70">
             <div className="space-y-1">
-              <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                <Globe className="w-3 h-3 text-slate-400" />
-                <span>www.nature.com &gt; articles</span>
-              </div>
-              <h3 className="text-sm font-normal text-[#1a0dab] hover:underline cursor-pointer">
-                {facts.journalName} - Latest Published Research &amp; Articles
+              <h3 className="text-sm font-normal text-slate-600">
+                {facts.journalName} research articles
               </h3>
-              <p className="text-xs text-[#4d5156] leading-relaxed">
-                Browse open-access and original research articles recently accepted in{' '}
-                {facts.journalName}. Featuring peer-reviewed findings in{' '}
-                {facts.primaryDiscipline || 'scientific research'}.
+              <p className="text-xs text-slate-500 leading-relaxed">
+                A sample result beside the ad. This tool did not create this page.
               </p>
             </div>
-
             <div className="space-y-1">
-              <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                <Globe className="w-3 h-3 text-slate-400" />
-                <span>clarivate.com &gt; jcr &gt; browse</span>
-              </div>
-              <h3 className="text-sm font-normal text-[#1a0dab] hover:underline cursor-pointer">
-                {facts.journalName} journal information
+              <h3 className="text-sm font-normal text-slate-600">
+                Author information for {facts.journalName}
               </h3>
-              <p className="text-xs text-[#4d5156] leading-relaxed">
-                {trustedImpactFactor(facts) != null
-                  ? `${facts.journalName} impact factor ${trustedImpactFactor(facts)}${metricsFromClarivateWos(facts) ? ` (clarivate_wos_journals_api JCR ${facts.jcrYear ?? ''})` : ''}.`
-                  : `${facts.journalName}. Aims, scope, and author information.`}
-                {facts.indexing?.length ? ` Indexed in ${facts.indexing.join(', ')}.` : ''}
-              </p>
-            </div>
-
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                <Globe className="w-3 h-3 text-slate-400" />
-                <span>springer.com &gt; authors &gt; submission-guide</span>
-              </div>
-              <h3 className="text-sm font-normal text-[#1a0dab] hover:underline cursor-pointer">
-                Author Guidelines &amp; Formatting Guide for {facts.journalName}
-              </h3>
-              <p className="text-xs text-[#4d5156] leading-relaxed">
-                Prepare your manuscript for peer review. Download article templates, check open
-                access APC details (${facts.apcUsd || 'standard'}), and view submission checklists.
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Another sample result. Open the journal page itself for fees, scope, and guidelines.
               </p>
             </div>
           </div>

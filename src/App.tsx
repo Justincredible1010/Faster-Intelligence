@@ -19,16 +19,22 @@ import {
 } from './types';
 import { runComplianceAudit, autoFixComplianceIssues } from './utils/complianceValidator';
 import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
-import { AlertCircle, AlertTriangle, Sparkles } from 'lucide-react';
+import { AlertCircle, AlertTriangle } from 'lucide-react';
 import { apiFetch } from './auth/api';
 import { pickEditableJournalFacts } from './utils/editableJournalFacts';
-import { NATURE_HOMEPAGE_URL } from './utils/journalUrl';
+import { journalUrlsMatch, normalizeJournalUrl } from './utils/journalUrl';
 import { trustedApcUsd, trustedCasZone, trustedImpactFactor, trustedQuartile } from './utils/metricClaims';
 
-const DEFAULT_LANDING_URL = NATURE_HOMEPAGE_URL;
+interface GeneratedFor {
+  url: string;
+  stage: StageCode;
+  search: boolean;
+  display: boolean;
+  language: OutputLanguage;
+}
 
 export default function App() {
-  const [landingPageUrl, setLandingPageUrl] = useState<string>(DEFAULT_LANDING_URL);
+  const [landingPageUrl, setLandingPageUrl] = useState<string>('');
   const [selectedChannels, setSelectedChannels] = useState<{ search: boolean; display: boolean }>({
     search: true,
     display: true,
@@ -47,17 +53,21 @@ export default function App() {
   const [isComplianceModalOpen, setIsComplianceModalOpen] = useState<boolean>(false);
   const [customPlaybook, setCustomPlaybook] = useState<string>(PRESET_SKILLS.default);
   const [hasManualEdits, setHasManualEdits] = useState<boolean>(false);
-  const [pendingStageChange, setPendingStageChange] = useState<StageCode | null>(null);
+  const [confirmReplaceEdits, setConfirmReplaceEdits] = useState(false);
+  const [generatedFor, setGeneratedFor] = useState<GeneratedFor | null>(null);
 
   // Request race-condition safeguard
   const latestRequestIdRef = useRef<number>(0);
   const activeAbortControllerRef = useRef<AbortController | null>(null);
+  const resultsRef = useRef<HTMLElement | null>(null);
+  const shouldScrollRef = useRef(false);
 
-  // Initial load
   useEffect(() => {
-    fetchClarivateFacts(landingPageUrl);
-    handleGenerateCampaign(landingPageUrl, funnelStage, selectedChannels, outputLanguage, customPlaybook);
-  }, []);
+    if (!shouldScrollRef.current) return;
+    if (!isLoading && !campaign) return;
+    shouldScrollRef.current = false;
+    resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [isLoading, campaign]);
 
   const fetchClarivateFacts = async (url: string, forceRefresh = false) => {
     if (!url || !url.trim()) return;
@@ -71,36 +81,19 @@ export default function App() {
       const data = await res.json();
       if (data.facts) {
         setClarivateFacts(data.facts);
-        if (campaign) {
-          setCampaign((prev) => (prev ? { ...prev, clarivateFacts: data.facts } : null));
-        }
+        setCampaign((prev) => {
+          if (!prev?.clarivateFacts) return prev;
+          const samePage = journalUrlsMatch(
+            normalizeJournalUrl(prev.clarivateFacts.url),
+            normalizeJournalUrl(data.facts.url || url),
+          );
+          return samePage ? { ...prev, clarivateFacts: data.facts } : prev;
+        });
       }
     } catch (err: any) {
       console.error('Failed to fetch Clarivate JCR facts:', err);
     } finally {
       setIsFetchingFacts(false);
-    }
-  };
-
-  const handleStageSelectRequest = (newStage: StageCode) => {
-    if (newStage === funnelStage) return;
-
-    if (hasManualEdits) {
-      setPendingStageChange(newStage);
-      return;
-    }
-
-    setFunnelStage(newStage);
-    setHasManualEdits(false);
-    handleGenerateCampaign(landingPageUrl, newStage, selectedChannels, outputLanguage, customPlaybook);
-  };
-
-  const confirmPendingStageChange = () => {
-    if (pendingStageChange) {
-      setFunnelStage(pendingStageChange);
-      setHasManualEdits(false);
-      handleGenerateCampaign(landingPageUrl, pendingStageChange, selectedChannels, outputLanguage, customPlaybook);
-      setPendingStageChange(null);
     }
   };
 
@@ -117,7 +110,7 @@ export default function App() {
     // Check if facts are missing before generating
     const currentFacts = manualFacts || clarivateFacts;
     if (currentFacts && currentFacts.verificationStatus === 'missing') {
-      setError('Please complete journal metrics before generating campaigns. Key metrics are missing.');
+      setError('Enter the missing journal figures before generating ads.');
       setIsManualJournalOpen(true);
       return;
     }
@@ -134,6 +127,7 @@ export default function App() {
 
     setIsLoading(true);
     setError(null);
+    shouldScrollRef.current = true;
 
     const activeChannels = [];
     if (channels.search) activeChannels.push('search');
@@ -165,7 +159,7 @@ export default function App() {
 
       if (!res.ok) {
         if (data.missingFields) {
-          setError('Please complete journal metrics to continue.');
+          setError('Enter the missing journal figures, then generate the ads.');
           setIsManualJournalOpen(true);
         } else {
           throw new Error(data.error || 'Failed to generate campaign');
@@ -183,7 +177,15 @@ export default function App() {
       if (generated.clarivateFacts) {
         setClarivateFacts(generated.clarivateFacts);
       }
+      setGeneratedFor({
+        url: url.trim(),
+        stage,
+        search: channels.search,
+        display: channels.display,
+        language: lang,
+      });
       setHasManualEdits(false);
+      setConfirmReplaceEdits(false);
     } catch (err: any) {
       if (err.name === 'AbortError') return;
       if (currentRequestId === latestRequestIdRef.current) {
@@ -294,7 +296,7 @@ export default function App() {
 **APC (USD):** ${trustedApcUsd(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **Primary Call-to-Action:** "${campaign.primaryCta || cfg.primaryCta}"
 **Recommended Destination:** ${campaign.recommendedDestination?.url || campaign.clarivateFacts.url} (${campaign.recommendedDestination?.label || cfg.recommendedDestination.label})
-**Generation Engine:** ${campaign.generationSource === 'ai_grounded' ? 'AI-Grounded (Gemini 3.8)' : 'Curated Publishing Strategy Fallback'}
+**How the ads were written:** ${campaign.generationSource === 'ai_grounded' ? 'Drafted with AI' : 'Drafted from saved templates'}
 **Generated Date:** ${new Date().toLocaleDateString()}
 
 ---
@@ -363,9 +365,32 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
     document.body.removeChild(link);
   };
 
+  const requestGenerate = () => {
+    if (!landingPageUrl.trim()) return;
+    if (hasManualEdits) {
+      setConfirmReplaceEdits(true);
+      return;
+    }
+    handleGenerateCampaign();
+  };
+
   const hasPolicyWarnings =
     campaign?.complianceReport?.status === 'has_warnings' ||
     campaign?.complianceReport?.status === 'has_errors';
+
+  const playbookIsCustom = customPlaybook.trim() !== PRESET_SKILLS.default.trim();
+
+  const previewIsStale = !!(
+    campaign &&
+    generatedFor &&
+    (
+      !journalUrlsMatch(normalizeJournalUrl(landingPageUrl), normalizeJournalUrl(generatedFor.url)) ||
+      generatedFor.stage !== funnelStage ||
+      generatedFor.language !== outputLanguage ||
+      generatedFor.search !== selectedChannels.search ||
+      generatedFor.display !== selectedChannels.display
+    )
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
@@ -378,7 +403,7 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
         onExportMarkdown={handleExportBrief}
         onExportCsv={handleExportCsv}
         hasCampaign={!!campaign}
-        hasCustomPlaybook={!!customPlaybook}
+        hasCustomPlaybook={playbookIsCustom}
         hasPolicyWarnings={hasPolicyWarnings}
       />
 
@@ -400,37 +425,37 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
           </div>
         )}
 
-        {/* Unsaved manual edits warning before changing stage */}
-        {pendingStageChange && (
+        {confirmReplaceEdits && (
           <div className="p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs space-y-2">
             <div className="flex items-center gap-2 font-bold">
               <AlertTriangle className="w-4 h-4 text-amber-600" />
-              <span>Unsaved Manual Edits Detected</span>
+              <span>You edited these ads</span>
             </div>
             <p className="text-amber-800 leading-relaxed">
-              You have made custom edits to the current campaign headlines or descriptions. Switching to{' '}
-              <strong>{STAGE_CONFIGS[pendingStageChange].name}</strong> will regenerate stage-tailored copy and discard unsaved edits.
+              Generating again replaces the headlines and descriptions you changed.
             </p>
             <div className="flex items-center gap-2 pt-1">
               <button
                 type="button"
-                onClick={confirmPendingStageChange}
+                onClick={() => {
+                  setConfirmReplaceEdits(false);
+                  handleGenerateCampaign();
+                }}
                 className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition"
               >
-                Proceed &amp; Switch Stage
+                Generate and replace my edits
               </button>
               <button
                 type="button"
-                onClick={() => setPendingStageChange(null)}
+                onClick={() => setConfirmReplaceEdits(false)}
                 className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg transition"
               >
-                Keep Current Edits
+                Keep my edits
               </button>
             </div>
           </div>
         )}
 
-        {/* Step 1 & 2: Input Studio with Clarivate JCR & Rich Stage Selector */}
         <section>
           <InputStudio
             landingPageUrl={landingPageUrl}
@@ -438,96 +463,111 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
             selectedChannels={selectedChannels}
             onChangeChannels={setSelectedChannels}
             funnelStage={funnelStage}
-            onChangeFunnel={handleStageSelectRequest}
+            onChangeFunnel={setFunnelStage}
             outputLanguage={outputLanguage}
-            onChangeOutputLanguage={(l) => {
-              setOutputLanguage(l);
-              handleGenerateCampaign(landingPageUrl, funnelStage, selectedChannels, l, customPlaybook);
-            }}
+            onChangeOutputLanguage={setOutputLanguage}
             clarivateFacts={clarivateFacts}
             onUpdateClarivateFacts={handleUpdateClarivateFacts}
             onFetchFacts={fetchClarivateFacts}
-            onGenerate={() => handleGenerateCampaign()}
+            onGenerate={requestGenerate}
             onOpenPlaybook={() => setIsPlaybookOpen(true)}
             onOpenCompareStages={() => setIsCompareOpen(true)}
             onOpenAddJournal={() => setIsManualJournalOpen(true)}
-            hasCustomPlaybook={!!customPlaybook}
+            hasCustomPlaybook={playbookIsCustom}
             isLoading={isLoading}
             isFetchingFacts={isFetchingFacts}
           />
         </section>
 
-        {/* Compact Strategy Summary Banner above campaign results */}
-        {campaign && !isLoading && (
-          <section>
-            <StrategySummaryBanner
-              campaign={campaign}
-              onOpenCompareStages={() => setIsCompareOpen(true)}
-            />
-          </section>
-        )}
-
-        {/* Loading overlay indicator while generating */}
-        {isLoading && (
-          <div className="py-12 bg-white border border-slate-200 rounded-2xl shadow-xs flex flex-col items-center justify-center gap-3 text-slate-500">
-            <div className="w-8 h-8 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
-            <div className="text-xs font-semibold text-slate-700">
-              Generating {STAGE_CONFIGS[funnelStage].name} campaign copy...
-            </div>
-            <p className="text-[11px] text-slate-400">
-              Applying stage-specific messaging priorities and Google Ads constraints
+        <section id="campaign-results" ref={resultsRef} className="scroll-mt-24 space-y-6">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">Campaign preview</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Search ads, display ads, and the keyword list show up here.
             </p>
           </div>
-        )}
 
-        {/* Step 3: Channel Suite & Ad Previews */}
-        {campaign && !isLoading && (
-          <section>
-            <ChannelSuite
-              campaign={campaign}
-              landingPageUrl={landingPageUrl}
-              selectedChannels={selectedChannels}
-              onEditHeadline={handleEditHeadline}
-              onEditDescription={handleEditDescription}
-              onOpenCompliance={() => setIsComplianceModalOpen(true)}
-            />
-          </section>
-        )}
+          {previewIsStale && campaign && !isLoading && (
+            <div className="p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+              These ads were written for <strong>{campaign.clarivateFacts.journalName}</strong>
+              {' '}({STAGE_CONFIGS[normalizeStage(generatedFor?.stage || campaign.funnelStage)].shortLabel}).
+              The page, stage, language, or channels above have changed. Choose Generate campaign to update this preview.
+            </div>
+          )}
+
+          {isLoading && (
+            <div className="py-12 bg-white border border-slate-200 rounded-2xl shadow-xs flex flex-col items-center justify-center gap-3 text-slate-500">
+              <div className="w-8 h-8 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
+              <div className="text-xs font-semibold text-slate-700">
+                Writing the {STAGE_CONFIGS[funnelStage].shortLabel.toLowerCase()} ads…
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Checking line length and the stage you chose
+              </p>
+            </div>
+          )}
+
+          {!campaign && !isLoading && (
+            <div className="py-10 px-6 bg-white border border-dashed border-slate-300 rounded-2xl text-center">
+              <p className="text-sm font-semibold text-slate-800">Nothing generated yet</p>
+              <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto leading-relaxed">
+                Paste a journal page, choose awareness, consideration, or decision, then choose Generate campaign.
+              </p>
+            </div>
+          )}
+
+          {campaign && !isLoading && (
+            <>
+              <StrategySummaryBanner
+                campaign={campaign}
+                onOpenCompareStages={() => setIsCompareOpen(true)}
+              />
+              <ChannelSuite
+                campaign={campaign}
+                landingPageUrl={landingPageUrl}
+                selectedChannels={selectedChannels}
+                onEditHeadline={handleEditHeadline}
+                onEditDescription={handleEditDescription}
+                onOpenCompliance={() => setIsComplianceModalOpen(true)}
+              />
+            </>
+          )}
+        </section>
       </main>
 
       {/* Footer */}
       <footer className="mt-auto border-t border-slate-200 bg-white py-4 px-6 text-center text-xs text-slate-500">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>
-            Marketing Content Generation Engine · Tailored Google Campaigns across Awareness, Consideration &amp; Decision
+            Marketing Content Generation Engine · Google Search and Display campaigns for awareness, consideration, and decision
           </span>
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsCompareOpen(true)}
               className="text-blue-700 hover:underline font-medium"
             >
-              Compare 3 Stages
+              Compare stages
             </button>
             <span>·</span>
             <button
               onClick={() => setIsPlaybookOpen(true)}
               className="text-blue-700 hover:underline font-medium"
             >
-              Custom Playbook
+              Writing rules
             </button>
             <span>·</span>
             <button
               onClick={() => setIsComplianceModalOpen(true)}
               className="text-blue-700 hover:underline font-medium"
             >
-              Policy Audit
+              Policy check
             </button>
             <span>·</span>
             <button
               onClick={() => setIsGuideOpen(true)}
               className="text-blue-700 hover:underline font-medium"
             >
-              Funnel Framework
+              How the stages differ
             </button>
           </div>
         </div>
@@ -550,7 +590,7 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
         onClose={() => setIsCompareOpen(false)}
         landingPageUrl={landingPageUrl}
         clarivateFacts={clarivateFacts}
-        onSelectStage={(st) => handleStageSelectRequest(st)}
+        onSelectStage={setFunnelStage}
         currentStage={funnelStage}
       />
 

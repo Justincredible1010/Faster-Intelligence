@@ -48,7 +48,7 @@ export const ChannelSuite: React.FC<Props> = ({
               }`}
             >
               <Search className="w-3.5 h-3.5" />
-              <span>Google Search (RSA)</span>
+              <span>Search ads</span>
             </button>
           )}
 
@@ -62,7 +62,7 @@ export const ChannelSuite: React.FC<Props> = ({
               }`}
             >
               <Layout className="w-3.5 h-3.5" />
-              <span>Google Display (RDA)</span>
+              <span>Display ads</span>
             </button>
           )}
 
@@ -75,7 +75,7 @@ export const ChannelSuite: React.FC<Props> = ({
             }`}
           >
             <Target className="w-3.5 h-3.5" />
-            <span>Keywords &amp; Negative Shield</span>
+            <span>Keywords</span>
           </button>
         </div>
 
@@ -88,15 +88,15 @@ export const ChannelSuite: React.FC<Props> = ({
               className="flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold shadow-2xs transition"
             >
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Policy Audit</span>
+              <span>Policy check</span>
             </button>
           )}
 
           <div className="flex items-center gap-2 text-xs text-slate-600 bg-white border border-slate-200 px-3 py-1 rounded-xl shadow-2xs">
-            <span className="font-extrabold text-[#002d62] font-mono">{cfg.code}</span>
+            <span className="font-bold text-[#002d62]">{cfg.shortLabel}</span>
             <span className="text-slate-300">|</span>
-            <span className="truncate max-w-[200px] text-[11px] text-slate-700 font-medium">
-              CTA: "{campaign.primaryCta || cfg.primaryCta}"
+            <span className="truncate max-w-[220px] text-[11px] text-slate-700 font-medium">
+              Button: "{campaign.primaryCta || cfg.primaryCta}"
             </span>
           </div>
         </div>
@@ -120,7 +120,7 @@ export const ChannelSuite: React.FC<Props> = ({
             {/* Display Sub-View Switcher */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                Google Display Network (RDA) Studio
+                Display ads
               </span>
               <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
                 <button
@@ -133,7 +133,7 @@ export const ChannelSuite: React.FC<Props> = ({
                   }`}
                 >
                   <Layout className="w-3.5 h-3.5" />
-                  <span>IAB Multi-Size Units (6 Sizes)</span>
+                  <span>Banner sizes</span>
                 </button>
                 <button
                   type="button"
@@ -145,7 +145,7 @@ export const ChannelSuite: React.FC<Props> = ({
                   }`}
                 >
                   <ImageIcon className="w-3.5 h-3.5" />
-                  <span>Banner Image Studio &amp; PNG Export</span>
+                  <span>Make banner images</span>
                 </button>
               </div>
             </div>

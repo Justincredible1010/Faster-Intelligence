@@ -12,6 +12,7 @@ import { loadMetricsCacheFromDisk } from '../src/utils/metricsCache';
 import { runComplianceAudit, autoFixComplianceIssues } from '../src/utils/complianceValidator';
 import { generateGoogleAdsEditorCsv, deriveDisplayUrl } from '../src/utils/csvExporter';
 import { GeneratedAdCampaign, ClarivateJournalMetrics } from '../src/types';
+import { factSourceCopy, factSourceKind, metricCaption } from '../src/utils/factSourceLabel';
 
 console.log('--- RUNNING ADENGINE UNIT TEST SUITE ---');
 
@@ -586,6 +587,40 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   console.log('✓ Test Suite 6 Passed: URLs stay canonical and untrusted figures stay out of copy.');
 }
 
+console.log('\n[Test Suite 7] Plain labels for where journal figures came from...');
+{
+  const sample = factSourceCopy(factSourceKind({ verificationStatus: 'catalog_snapshot', provenanceSource: 'catalog_snapshot' }));
+  assert.strictEqual(sample.badge, 'Sample figures');
+  assert.strictEqual(sample.usedInAds, false);
+  assert.strictEqual(sample.impactFactorIsClarivate, false);
+  assert.match(metricCaption('sample', 'impact'), /Left out of the ads/);
+
+  const clarivate = factSourceCopy(factSourceKind({
+    verificationStatus: 'clarivate_api',
+    provenanceSource: 'clarivate_wos_journals_api',
+  }));
+  assert.strictEqual(clarivate.badge, 'From Clarivate');
+  assert.strictEqual(clarivate.usedInAds, true);
+  assert.strictEqual(clarivate.impactFactorIsClarivate, true);
+
+  const website = factSourceCopy(factSourceKind({ verificationStatus: 'page_sourced', provenanceSource: 'page_sourced' }));
+  assert.strictEqual(website.badge, 'From the journal website');
+  assert.strictEqual(website.usedInAds, true);
+  assert.strictEqual(website.impactFactorIsClarivate, false);
+  assert.match(metricCaption('website', 'impact'), /Not described as Clarivate/);
+  assert.match(metricCaption('website', 'other'), /journal website/);
+
+  const entered = factSourceCopy(factSourceKind({ verificationStatus: 'user_provided' }));
+  assert.strictEqual(entered.badge, 'You entered these');
+  assert.strictEqual(entered.impactFactorIsClarivate, false);
+
+  const missing = factSourceCopy(factSourceKind({ verificationStatus: 'missing' }));
+  assert.strictEqual(missing.badge, 'Figures missing');
+  assert.strictEqual(missing.usedInAds, false);
+
+  console.log('✓ Test Suite 7 Passed: Sample, website, and Clarivate figures stay distinct.');
+}
+
 console.log('\n=======================================');
-console.log('ALL 6 TEST SUITES PASSED WITHOUT ERRORS');
+console.log('ALL 7 TEST SUITES PASSED WITHOUT ERRORS');
 console.log('=======================================\n');

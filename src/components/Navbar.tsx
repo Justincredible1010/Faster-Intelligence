@@ -1,17 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   BookOpen,
-  Award,
   Download,
   Sparkles,
-  Layers,
-  Sliders,
   ShieldCheck,
   Compass,
   FileSpreadsheet,
   FileText,
   ChevronDown,
   LogOut,
+  BookOpenText,
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthGate';
 
@@ -39,13 +37,18 @@ export const Navbar: React.FC<Props> = ({
   hasPolicyWarnings,
 }) => {
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showGuidesMenu, setShowGuidesMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const guidesRef = useRef<HTMLDivElement | null>(null);
   const { user, logout } = useAuth();
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setShowExportMenu(false);
+      }
+      if (guidesRef.current && !guidesRef.current.contains(event.target as Node)) {
+        setShowGuidesMenu(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -61,47 +64,77 @@ export const Navbar: React.FC<Props> = ({
             <BookOpen className="w-5 h-5 text-sky-300" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <span className="font-extrabold text-slate-900 text-base tracking-tight">
-                Marketing Content Generation Engine
-              </span>
-              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 flex items-center gap-1">
-                <Award className="w-3 h-3 text-blue-600" />
-                <span>Clarivate JCR Verified</span>
-              </span>
+            <div className="font-extrabold text-slate-900 text-sm sm:text-base tracking-tight leading-tight">
+              Marketing Content Generation Engine
             </div>
-            <p className="text-xs text-slate-500 hidden sm:block">
-              Author Acquisition &amp; Multi-Stage Campaign Suite
+            <p className="text-xs text-slate-500 truncate max-w-[220px] sm:max-w-md">
+              <span className="hidden sm:inline">Google Search and Display campaigns · </span>
+              <span title={user.email}>{user.email}</span>
             </p>
           </div>
         </div>
 
         {/* Actions */}
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-medium text-slate-600 max-w-[140px] sm:max-w-[240px] truncate" title={user.email}>
-            {user.email}
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              logout().catch(() => undefined);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 rounded-lg border border-slate-200 transition"
-            title="Sign out"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Sign out</span>
-          </button>
-          {onOpenCompareStages && (
+          <div className="relative" ref={guidesRef}>
             <button
-              onClick={onOpenCompareStages}
-              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200 transition"
-              title="Compare AWA, CON, and DEC side-by-side"
+              type="button"
+              onClick={() => {
+                setShowGuidesMenu(!showGuidesMenu);
+                setShowExportMenu(false);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200 transition"
             >
               <Compass className="w-3.5 h-3.5 text-blue-600" />
-              <span>Compare Stages</span>
+              <span>Guides</span>
+              {hasCustomPlaybook && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
+              <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>
-          )}
+            {showGuidesMenu && (
+              <div className="absolute right-0 mt-1 w-64 bg-white border border-slate-200 rounded-xl shadow-lg p-1.5 z-50 text-xs">
+                {onOpenCompareStages && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenCompareStages();
+                      setShowGuidesMenu(false);
+                    }}
+                    className="w-full flex items-center gap-2 p-2 hover:bg-blue-50 rounded-lg text-slate-700 hover:text-blue-900 font-semibold text-left"
+                  >
+                    <Compass className="w-4 h-4 text-blue-600 shrink-0" />
+                    <span>Compare the three stages</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenGuide();
+                    setShowGuidesMenu(false);
+                  }}
+                  className="w-full flex items-center gap-2 p-2 hover:bg-blue-50 rounded-lg text-slate-700 hover:text-blue-900 font-semibold text-left"
+                >
+                  <BookOpenText className="w-4 h-4 text-slate-600 shrink-0" />
+                  <span>How the stages differ</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenPlaybook();
+                    setShowGuidesMenu(false);
+                  }}
+                  className="w-full flex items-center gap-2 p-2 hover:bg-blue-50 rounded-lg text-slate-700 hover:text-blue-900 font-semibold text-left"
+                >
+                  <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
+                  <div>
+                    <div>Writing rules</div>
+                    <div className="text-[10px] text-slate-400 font-normal">
+                      {hasCustomPlaybook ? 'You changed the standard rules' : 'The standard rules are in use'}
+                    </div>
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
 
           {onOpenCompliance && (
             <button
@@ -111,32 +144,26 @@ export const Navbar: React.FC<Props> = ({
                   ? 'bg-amber-50 text-amber-800 border-amber-300'
                   : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
               }`}
-              title="Audit Google Ads policies (trademarks, superlatives, claims)"
+              title="Check competitor names, overstated claims, and line length"
             >
               <ShieldCheck
                 className={`w-3.5 h-3.5 ${
                   hasPolicyWarnings ? 'text-amber-600' : 'text-emerald-600'
                 }`}
               />
-              <span className="hidden sm:inline">Policy Audit</span>
+              <span className="hidden sm:inline">Policy check</span>
             </button>
           )}
 
           <button
-            onClick={onOpenPlaybook}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-900 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition"
-            title="Upload and configure custom marketing rules & LLM skills"
+            type="button"
+            onClick={() => {
+              logout().catch(() => undefined);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 rounded-lg border border-slate-200 transition"
           >
-            <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-            <span>Playbook</span>
-            {hasCustomPlaybook && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
-          </button>
-
-          <button
-            onClick={onOpenGuide}
-            className="hidden sm:block px-3 py-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200 transition"
-          >
-            Framework
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Sign out</span>
           </button>
 
           {/* Export Dropdown */}
@@ -162,9 +189,9 @@ export const Navbar: React.FC<Props> = ({
                   >
                     <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
                     <div>
-                      <div>Google Ads Editor CSV</div>
+                      <div>Google Ads Editor spreadsheet</div>
                       <div className="text-[10px] text-slate-400 font-normal">
-                        Import-ready columns + README
+                        A file you can import, plus a short note
                       </div>
                     </div>
                   </button>
@@ -178,9 +205,9 @@ export const Navbar: React.FC<Props> = ({
                   >
                     <FileText className="w-4 h-4 text-blue-600 shrink-0" />
                     <div>
-                      <div>Markdown Campaign Brief</div>
+                      <div>Campaign brief</div>
                       <div className="text-[10px] text-slate-400 font-normal">
-                        Complete multi-channel asset brief
+                        A document you can share
                       </div>
                     </div>
                   </button>

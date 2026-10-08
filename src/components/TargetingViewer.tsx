@@ -42,10 +42,10 @@ export const TargetingViewer: React.FC<Props> = ({ keywords, journalName = 'Jour
         <div>
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
             <Target className="w-4 h-4 text-blue-600" />
-            <span>Google Search Keywords & Academic Integrity Negative Shield</span>
+            <span>Keywords</span>
           </h3>
           <p className="text-[11px] text-slate-500">
-            Engineered for high-intent academic researchers & Greater China scholars
+            Search terms to bid on, and terms to block so the ads do not match paper mills.
           </p>
         </div>
         <button
@@ -53,19 +53,19 @@ export const TargetingViewer: React.FC<Props> = ({ keywords, journalName = 'Jour
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg shadow-2xs transition"
         >
           <Download className="w-3.5 h-3.5" />
-          <span>Export Keywords CSV</span>
+          <span>Download keyword list</span>
         </button>
       </div>
 
       {/* Stage Keyword Intent Alignment */}
       <div className="p-3.5 rounded-xl bg-blue-50/60 border border-blue-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2.5">
-          <span className="w-6 h-6 rounded-lg bg-[#002d62] text-white flex items-center justify-center font-mono font-bold text-xs shrink-0">
-            {stageCfg.code}
+          <span className="px-2 h-6 rounded-lg bg-[#002d62] text-white flex items-center justify-center font-bold text-[10px] shrink-0">
+            {stageCfg.shortLabel}
           </span>
           <div>
             <div className="font-semibold text-slate-800 flex items-center gap-1.5">
-              <span>{stageCfg.name} Keyword Intent</span>
+              <span>{stageCfg.shortLabel} keywords</span>
               <span className="text-slate-400">·</span>
               <span className="text-slate-500 font-normal italic">"{stageCfg.authorMindset}"</span>
             </div>
@@ -77,7 +77,7 @@ export const TargetingViewer: React.FC<Props> = ({ keywords, journalName = 'Jour
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0 text-[11px]">
-          <span className="text-slate-500">Destination:</span>
+            <span className="text-slate-500">Page the ad opens:</span>
           <span className="font-semibold text-blue-900 bg-white px-2 py-0.5 rounded border border-blue-200">
             {stageCfg.recommendedDestination.label}
           </span>
@@ -89,7 +89,7 @@ export const TargetingViewer: React.FC<Props> = ({ keywords, journalName = 'Jour
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
             <Search className="w-3.5 h-3.5 text-blue-600" />
-            <span>High-Intent English Academic Search Queries</span>
+            <span>English search terms</span>
           </span>
           <button
             onClick={() =>
@@ -123,7 +123,7 @@ export const TargetingViewer: React.FC<Props> = ({ keywords, journalName = 'Jour
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
             <Search className="w-3.5 h-3.5 text-indigo-600" />
-            <span>Chinese Author High-Intent Queries (中文学术搜索意向)</span>
+            <span>Chinese search terms (中文)</span>
           </span>
           <button
             onClick={() =>
@@ -157,19 +157,19 @@ export const TargetingViewer: React.FC<Props> = ({ keywords, journalName = 'Jour
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-xs font-bold text-rose-900 uppercase tracking-wider">
             <ShieldAlert className="w-4 h-4 text-rose-600" />
-            <span>Academic Integrity Negative Keywords Shield (过滤学术黑产/中介)</span>
+            <span>Terms to block (过滤代写和中介)</span>
           </div>
           <button
             onClick={() => copyToClipboard(keywords.negativeKeywords.join('\n'), 'neg-kw')}
             className="flex items-center gap-1 text-[11px] text-rose-700 hover:text-rose-900 font-medium"
           >
             {copiedKey === 'neg-kw' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-            <span>Copy Negatives</span>
+            <span>Copy the blocked terms</span>
           </button>
         </div>
 
         <p className="text-xs text-rose-800 leading-relaxed">
-          Critical defense for Springer Nature journals: Exclude paper mills and fraud traffic in Greater China to safeguard brand prestige and eliminate wasted ad spend.
+          Block these searches so the ads are not shown to paper mills or agencies that sell authorship.
         </p>
 
         <div className="flex flex-wrap gap-1.5 pt-1">

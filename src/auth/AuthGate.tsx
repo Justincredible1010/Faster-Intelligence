@@ -207,21 +207,26 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               href="/api/auth/login"
               className="w-full inline-flex items-center justify-center rounded-lg bg-[#002d62] text-white text-sm font-semibold py-2.5 hover:bg-[#00224a]"
             >
-              {session.provider === 'google' ? 'Sign in with Google' : 'Sign in with company SSO'}
+              {session.provider === 'google' ? 'Sign in with Google' : 'Sign in with your Springer Nature account'}
             </a>
           )}
           {!magicToken && !session.provider && (
             <p className="text-sm text-slate-600">Sign-in is not configured. Set AUTH_PROVIDER on the server.</p>
           )}
           {session.devBypass && (
-            <button
-              type="button"
-              onClick={continueAsDev}
-              disabled={pending || !session.csrfToken}
-              className="mt-4 w-full rounded-lg border border-slate-300 bg-slate-50 text-slate-800 text-sm font-semibold py-2.5 hover:bg-slate-100 disabled:opacity-60"
-            >
-              Continue as development user
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={continueAsDev}
+                disabled={pending || !session.csrfToken}
+                className="mt-4 w-full rounded-lg border border-slate-300 bg-slate-50 text-slate-800 text-sm font-semibold py-2.5 hover:bg-slate-100 disabled:opacity-60"
+              >
+                Continue as a test user
+              </button>
+              <p className="mt-2 text-xs text-slate-500 text-center">
+                Local development only. This is not a Springer Nature sign-in.
+              </p>
+            </>
           )}
         </div>
       </div>
