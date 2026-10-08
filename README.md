@@ -159,7 +159,7 @@ Each metric stores its own `expireAt`. A cached journal is treated as stale only
                            ▼
   SERVER (Express + Node.js via tsx server.ts)
   ├── Auth gate on every /api route (server session, CSRF, @springernature.com)
-  │   ├── Google OIDC  |  magic link  |  generic OIDC (Entra, Okta, …)
+  │   ├── magic link (current)  |  generic OIDC (planned)  |  Google OIDC
   ├── /api/fetch-clarivate-facts (Cached lookup with Clarivate JCR fallback)
   ├── /api/update-journal-metrics (Known-field schema, audit of who changed what)
   ├── /api/generate-campaign (Gemini 3.8 Flash + deterministic strategy engine)
@@ -290,7 +290,7 @@ Admin means the signed-in email is listed in `AUTH_ADMIN_EMAILS`. Anyone else re
 
 ## 10. Authentication
 
-Sign-in is selected with one environment variable, `AUTH_PROVIDER`. The session layer, CSRF check, and `@springernature.com` rule are the same for every provider. The browser only ever holds an `HttpOnly` session id (`sn_session`, `SameSite=Lax`, `Secure` when `APP_URL` is https in production). The server stores the user, the OAuth transaction, and the CSRF token. The SPA sends that CSRF token as `X-CSRF-Token` on every state-changing request.
+Sign-in is selected with one environment variable, `AUTH_PROVIDER`. The documented default is `magic_link`. Generic OIDC is the planned upgrade once Springer Nature IT registers the app. The session layer, CSRF check, and `@springernature.com` rule are the same for every provider. The browser only ever holds an `HttpOnly` session id (`sn_session`, `SameSite=Lax`, `Secure` when `APP_URL` is https in production). The server stores the user, the OAuth transaction, and the CSRF token. The SPA sends that CSRF token as `X-CSRF-Token` on every state-changing request.
 
 Route matching is case-sensitive. The API guard also normalises the path (percent-decoded, lowercased) and is mounted both globally and on `/api`, so `/API/...` and `/%41PI/...` require a session and cannot reach a handler.
 
@@ -319,9 +319,9 @@ The email domain check runs on the server after the provider has proven the addr
 | User experience | One redirect, if the person has a Google account. | Type the work email, open the message, confirm in the browser. Slower, works wherever mail works. | One redirect through company SSO. Familiar for staff. |
 | Mainland China | Weak choice. `accounts.google.com` is often blocked, so people in mainland China may be unable to sign in without a VPN. | Strongest reach of the three when company mail is reachable from China. The link itself is served by this app, not by Google. | Usually better than Google. `login.microsoftonline.com` (Entra) is often reachable when Google is not, but IT should confirm from a China office network before relying on it. Okta varies by tenant region. |
 
-**Recommendation:** use **generic OIDC against corporate SSO** (Microsoft Entra ID if that is the Springer Nature workforce IdP). IT already owns MFA and account closure, there is no new mail vendor, and the login endpoints are more likely to work for colleagues in mainland China than Google. Keep the app-side domain check on anyway.
+**Decision:** use **magic links** now (`AUTH_PROVIDER=magic_link`). That is the documented default in `.env.example` and in the production instructions below.
 
-If an IdP app registration will take time, ship **magic links** as the interim. Do not make Google the default while a meaningful set of users are in mainland China.
+**Planned upgrade:** switch to **generic OIDC against corporate SSO** (Microsoft Entra ID if that is the Springer Nature workforce IdP) once IT registers the app. IT already owns MFA and account closure, and there is no mail vendor to keep. Keep the app-side domain check on after that switch. Do not make Google the default while a meaningful set of users are in mainland China.
 
 The dev bypass is not a fourth production option. It is registered only when `NODE_ENV` is exactly `development` and `AUTH_DEV_BYPASS` is exactly `true`. Any other environment, including production, responds **404** on `POST /api/auth/dev-login`.
 
@@ -329,7 +329,7 @@ The dev bypass is not a fourth production option. It is registered only when `NO
 
 | Variable | Required | Purpose |
 | :--- | :--- | :--- |
-| `AUTH_PROVIDER` | Yes in production | `google`, `magic_link`, or `oidc`. |
+| `AUTH_PROVIDER` | Yes in production | `magic_link` (current default), `oidc` (planned upgrade), or `google`. |
 | `AUTH_SESSION_SECRET` | Yes in production | At least 32 characters. Signs the session cookie. In local development an ephemeral secret is generated if this is unset. |
 | `APP_URL` | Yes in production | Public origin with no trailing slash, for example `https://mcge.example.com`. Used for OAuth redirects and magic links. Must be `https` except for localhost. Outside production, if this is unset, links use `http://localhost:<port>` and `X-Forwarded-Host` is ignored. |
 | `AUTH_ALLOWED_EMAIL_DOMAINS` | No | Comma-separated apex domains. Default `springernature.com`. |
@@ -363,7 +363,9 @@ AUTH_ADMIN_EMAILS=you@springernature.com
 
 `GOOGLE_ISSUER` defaults to `https://accounts.google.com`. Leave it unset in production.
 
-### Magic links
+### Magic links (current provider)
+
+This is what production runs today. The exact production checklist (mail service, `APP_URL`, session secret) is in [Production](#production).
 
 1. Choose a transport: `smtp` (company relay or a provider such as Amazon SES) or `http` (your own mail webhook). `console` prints the link on the server and is rejected when `NODE_ENV=production`.
 2. Set:
@@ -402,7 +404,9 @@ AUTH_EMAIL_TRANSPORT=console
 
 The link is printed in the server log. It looks like `http://localhost:3000/#magic=...`. Opening it shows a confirm button so inbox scanners that only GET the URL cannot consume the token. `MAGIC_LINK_TTL_SECONDS` defaults to 900. Requests are limited to 5 per email address and 5 per client IP in a 15-minute window. Outside production the client IP is the socket address, not `X-Forwarded-For`.
 
-### Generic OIDC (Azure AD / Entra, Okta, and others)
+### Generic OIDC (planned upgrade: Azure AD / Entra, Okta, and others)
+
+Use this after Springer Nature IT registers the app. Until then leave `AUTH_PROVIDER=magic_link`.
 
 1. Register a confidential web app at the IdP. Redirect URI: `{APP_URL}/api/auth/callback`.
 2. Allow the authorization code flow and PKCE (`S256`). Token endpoint auth method: **client secret basic**.
@@ -450,8 +454,10 @@ Copy `.env.example` to `.env`.
 | :--- | :--- | :--- |
 | `GEMINI_API_KEY` | Only for live Gemini calls | Read by `server.ts`. Without it, the process still starts. Journal lookup uses the built-in catalog, and campaign generation uses the deterministic template engine. |
 | `NODE_ENV` | Production | `production` serves the prebuilt `dist/` assets, requires auth configuration, and disables the dev bypass. Any other value mounts the Vite dev middleware. |
-| `APP_URL` | Production | Public origin used for OAuth redirects and magic links. See the authentication section. |
-| `AUTH_PROVIDER` and `AUTH_SESSION_SECRET` | Production | Select the sign-in provider and sign the session cookie. See the authentication section for every provider variable. |
+| `APP_URL` | Production | Public https origin, no trailing slash. Magic links are `{APP_URL}/#magic=...`. |
+| `AUTH_PROVIDER` | Production | `magic_link`. That is the current default. `oidc` is the planned upgrade after IT registers the app. |
+| `AUTH_SESSION_SECRET` | Production | At least 32 characters. Signs the session cookie. |
+| `AUTH_EMAIL_TRANSPORT` and the mail variables | Production, with magic links | The email-sending service. See Production below. `console` is refused. |
 | `DISABLE_HMR` | No | When `true`, `vite.config.ts` turns off hot module replacement and file watching. |
 
 The server always listens on **port 3000** (`http://0.0.0.0:3000`). `PORT` is not read.
@@ -481,6 +487,51 @@ npm run dev
 Listens on `http://0.0.0.0:3000` with Vite middleware for the SPA and the Express API routes.
 
 ### Production
+
+`AUTH_PROVIDER=magic_link` is the default. Generic OIDC stays available for the upgrade once Springer Nature IT registers the app.
+
+Magic links in production need three things:
+
+1. **An email-sending service.** Set `AUTH_EMAIL_TRANSPORT` to `smtp` or `http`. `console` is refused when `NODE_ENV=production`.
+
+   SMTP:
+
+   | Variable | Required | Purpose |
+   | :--- | :--- | :--- |
+   | `AUTH_EMAIL_TRANSPORT` | Yes | `smtp` |
+   | `SMTP_HOST` | Yes | Relay hostname. |
+   | `SMTP_FROM` | Yes | From address, for example `Marketing Content Engine <noreply@springernature.com>`. |
+   | `SMTP_PORT` | No | Defaults to `587`. |
+   | `SMTP_USER` | When the relay authenticates | Username or API key. |
+   | `SMTP_PASS` | When the relay authenticates | Password or API secret. |
+   | `SMTP_SECURE` | No | `true` for implicit TLS. Port `465` is secure even when this is unset. |
+
+   HTTPS webhook instead of SMTP:
+
+   | Variable | Required | Purpose |
+   | :--- | :--- | :--- |
+   | `AUTH_EMAIL_TRANSPORT` | Yes | `http` |
+   | `AUTH_EMAIL_WEBHOOK_URL` | Yes | Endpoint that accepts JSON `{ "to", "subject", "text", "html" }`. |
+   | `AUTH_EMAIL_WEBHOOK_BEARER` | No | Bearer token sent with the webhook request. |
+
+2. **`APP_URL`.** Public origin with no trailing slash, for example `https://mcge.example.com`. The link in the email is `{APP_URL}/#magic=...`. It must be `https`, except `http` on localhost.
+
+3. **`AUTH_SESSION_SECRET`.** At least 32 characters. It signs the `sn_session` cookie.
+
+```bash
+AUTH_PROVIDER=magic_link
+AUTH_SESSION_SECRET=replace-with-a-random-string-at-least-32-chars
+APP_URL=https://mcge.example.com
+AUTH_EMAIL_TRANSPORT=smtp
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=apikey-or-mailbox
+SMTP_PASS=secret
+SMTP_FROM="Marketing Content Engine <noreply@springernature.com>"
+```
+
+Cloud Run must stay at `max-instances=1` until a shared session store is configured. A restart logs users out.
+
 ```bash
 npm run build
 NODE_ENV=production npm start
