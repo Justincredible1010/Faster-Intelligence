@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Runtime journal-metrics cache. Created on first lookup; the server starts without it.
+metrics-cache.json

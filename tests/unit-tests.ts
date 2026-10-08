@@ -184,9 +184,15 @@ console.log('\n[Test Suite 4] Google Ads Editor CSV Schema...');
   const csv = generateGoogleAdsEditorCsv(testCampaign);
   const lines = csv.split('\n').filter(Boolean);
 
-  // Check required headers
-  const expectedHeader = 'Campaign,Ad Group,Keyword,Match Type,Max CPC,Headline 1,Headline 2,Headline 3,Description 1,Description 2,Final URL,Display URL';
-  assert.strictEqual(lines[0], expectedHeader, 'CSV Header must strictly match Google Ads Editor specifications');
+  // Check required headers (Google Ads Editor columns plus provenance fields)
+  const expectedHeader = 'Campaign,Ad Group,Keyword,Match Type,Max CPC,Headline 1,Headline 2,Headline 3,Description 1,Description 2,Final URL,Display URL,Fact Provenance,Confidence,Quality Notes';
+  assert.strictEqual(lines[0], expectedHeader, 'CSV header must include the 12 editor columns plus Fact Provenance, Confidence, and Quality Notes');
+  assert.strictEqual(lines[0].split(',').length, 15, 'CSV header must have 15 columns');
+
+  // source_verified rows record Clarivate provenance, confidence 0.95, and quality notes
+  assert(lines[1].includes('Clarivate IF 6.9 (2024, source_verified)'), 'Fact Provenance should cite the impact factor and verification status');
+  assert(lines[1].includes('"0.95"'), 'source_verified confidence should be 0.95');
+  assert(lines[1].includes('Source-grounded via Clarivate JCR & Web of Science'), 'Quality Notes should describe source-verified metrics');
 
   // Check row count (2 English + 1 Chinese keywords = 3 data rows)
   assert.strictEqual(lines.length, 4, 'CSV must contain 1 header line and 3 keyword rows');
