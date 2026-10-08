@@ -288,7 +288,7 @@ export default function App() {
 **Author Stage:** ${cfg.name}
 **Author Mindset:** ${cfg.authorMindset}
 **Campaign Objective:** ${cfg.campaignObjective}
-**Clarivate JCR Impact Factor:** ${campaign.clarivateFacts.impactFactor ?? 'N/A'} (5-Year IF: ${campaign.clarivateFacts.fiveYearImpactFactor ?? 'N/A'})
+**Impact factor (${campaign.clarivateFacts.provenanceMap?.impactFactor?.source || campaign.clarivateFacts.verificationStatus}):** ${campaign.clarivateFacts.impactFactor ?? 'N/A'} (5-Year IF: ${campaign.clarivateFacts.fiveYearImpactFactor ?? 'N/A'})
 **JCR Quartile & CAS Zone:** ${campaign.clarivateFacts.jcrQuartile ?? 'N/A'} · ${campaign.clarivateFacts.casZone ?? 'N/A'}
 **Publishing Model & APC:** ${campaign.clarivateFacts.openAccessType ?? 'Open Access'} ($${campaign.clarivateFacts.apcUsd ?? 'N/A'} USD)
 **Primary Call-to-Action:** "${campaign.primaryCta || cfg.primaryCta}"

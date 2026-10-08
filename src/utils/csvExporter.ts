@@ -46,21 +46,26 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
   const displayUrl = deriveDisplayUrl(finalUrl);
 
   // Provenance string
-  const pageSourcedIf = facts.provenanceMap?.impactFactor?.source === 'landing_page';
+  const ifSource = facts.provenanceMap?.impactFactor?.source;
+  const pageSourcedIf = ifSource === 'landing_page';
+  const catalogSnapshotIf = ifSource === 'catalog_snapshot';
   const ifProv = !facts.impactFactor
     ? 'No IF Reported'
     : pageSourcedIf
       ? `Page-sourced IF ${facts.impactFactor} (${facts.reportingYear || 'landing page'}, page-sourced)`
-      : facts.verificationStatus === 'source_verified'
-        ? `Clarivate IF ${facts.impactFactor} (${facts.reportingYear || '2024'}, ${facts.verificationStatus})`
-        : `Unverified IF ${facts.impactFactor} (${facts.reportingYear || 'unverified'}, ${facts.verificationStatus})`;
+      : catalogSnapshotIf
+        ? `Catalog snapshot IF ${facts.impactFactor} (${facts.reportingYear || 'catalog snapshot'}, catalog_snapshot)`
+        : facts.verificationStatus === 'source_verified'
+          ? `Clarivate IF ${facts.impactFactor} (${facts.reportingYear || '2024'}, ${facts.verificationStatus})`
+          : `Unverified IF ${facts.impactFactor} (${facts.reportingYear || 'unverified'}, ${facts.verificationStatus})`;
   const portalProv = facts.submissionPortalUrl
     ? `Extracted Portal URL (${facts.submissionPortalUrl})`
     : 'Verified Portal Default';
   const factProvenance = `${ifProv} | ${portalProv}`;
 
-  const confidenceScore =
-    facts.verificationStatus === 'source_verified'
+  const confidenceScore = catalogSnapshotIf
+    ? 0.5
+    : facts.verificationStatus === 'source_verified'
       ? 0.95
       : facts.verificationStatus === 'user_provided'
       ? 0.85
@@ -69,6 +74,8 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
   const qualityNotes =
     facts.verificationStatus === 'user_provided'
       ? 'User-provided metrics; verify before scale'
+      : catalogSnapshotIf
+      ? 'Catalog snapshot; not Clarivate-verified'
       : facts.verificationStatus === 'source_verified'
       ? 'Source-grounded via Clarivate JCR & Web of Science'
       : pageSourcedIf
@@ -206,17 +213,24 @@ export function downloadGoogleAdsEditorPackage(campaign: GeneratedAdCampaign) {
   // 2. Generate and download README instructions with Provenance details
   const usedFactsSummary = `
 - Journal Title: ${facts.journalName} (${facts.publisher})
-- Clarivate Impact Factor: ${facts.impactFactor ?? 'None'} (Provenance: ${facts.sourceAttribution})
+- Impact factor: ${facts.impactFactor ?? 'None'} (Provenance: ${facts.provenanceMap?.impactFactor?.source || facts.verificationStatus}; ${facts.sourceAttribution})
 - CAS Zone Ranking: ${facts.casZone ?? 'None'}
 - Peer Review Turnaround: ${facts.firstDecisionDays ? `${facts.firstDecisionDays} days` : 'Not stated'}
 - Publishing Model & APC: ${facts.openAccessType ?? 'Open Access'} ($${facts.apcUsd ?? 'None'})
 - Submission Portal: ${facts.submissionPortalUrl ?? `${facts.url}/submit`}
 `;
 
+  const impactSource = facts.provenanceMap?.impactFactor?.source;
   const qualityWarnings =
     facts.verificationStatus === 'user_provided'
       ? '⚠️ Quality Notice: 3 facts are user-provided. Confirm institutional metrics before campaign launch.'
-      : '✅ Provenance Notice: All metrics verified via official Clarivate JCR & Web of Science records.';
+      : impactSource === 'catalog_snapshot'
+      ? 'Catalog snapshot metrics. Not a Clarivate lookup and not verified.'
+      : impactSource === 'landing_page'
+      ? 'Page-sourced metrics from the journal landing page. Not Clarivate-verified.'
+      : facts.verificationStatus === 'source_verified'
+      ? '✅ Provenance Notice: All metrics verified via official Clarivate JCR & Web of Science records.'
+      : 'Estimated web data; review before launch.';
 
   const readmeText = `# Google Ads Editor Import Package & Quality Audit
 Campaign: ${facts.journalName} (${stage})

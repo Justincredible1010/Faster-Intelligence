@@ -321,6 +321,8 @@ export const InputStudio: React.FC<Props> = ({
                           ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                           : clarivateFacts.verificationStatus === 'user_provided'
                           ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                          : clarivateFacts.provenanceMap?.impactFactor?.source === 'catalog_snapshot'
+                          ? 'bg-slate-200 text-slate-800 border border-slate-300'
                           : 'bg-amber-100 text-amber-800 border border-amber-300'
                       }`}
                     >
@@ -330,6 +332,8 @@ export const InputStudio: React.FC<Props> = ({
                         ? 'User Provided'
                         : clarivateFacts.provenanceMap?.impactFactor?.source === 'landing_page'
                         ? 'Page-sourced'
+                        : clarivateFacts.provenanceMap?.impactFactor?.source === 'catalog_snapshot'
+                        ? 'Catalog snapshot'
                         : 'Unverified'}
                     </span>
                   </div>
@@ -487,12 +491,14 @@ export const InputStudio: React.FC<Props> = ({
                 <span>
                   {clarivateFacts.verificationStatus === 'source_verified'
                     ? clarivateFacts.isFromCache
-                      ? 'Cached Clarivate catalog record'
-                      : 'Clarivate catalog record'
+                      ? 'Cached Clarivate record'
+                      : 'Clarivate record'
                     : clarivateFacts.verificationStatus === 'user_provided'
                     ? 'User-provided metrics'
                     : clarivateFacts.provenanceMap?.impactFactor?.source === 'landing_page'
                     ? 'Page-sourced from the landing page (not Clarivate-verified)'
+                    : clarivateFacts.provenanceMap?.impactFactor?.source === 'catalog_snapshot'
+                    ? 'Catalog snapshot (not Clarivate-verified)'
                     : 'Not Clarivate-verified'}
                 </span>
                 {clarivateFacts.reportingYear && (

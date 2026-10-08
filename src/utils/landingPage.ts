@@ -55,10 +55,12 @@ export interface HttpExchange {
 }
 
 export interface FetchLandingPageDeps {
-  /** Test double. Production connects to the vetted public address with the original Host / SNI. */
-  httpGet?: (url: URL, timeoutMs: number) => Promise<HttpExchange>;
+  /** Test double. Production connects to each vetted public address with the original Host / SNI. */
+  httpGet?: (url: URL, timeoutMs: number, pinnedIp?: string, signal?: AbortSignal) => Promise<HttpExchange>;
   /** Test double. Production uses DNS and refuses private or reserved answers. */
-  resolveHost?: (hostname: string) => Promise<string[]>;
+  resolveHost?: (hostname: string, signal?: AbortSignal) => Promise<string[]>;
+  /** Hard deadline for the whole fetch, including redirects. Defaults to FETCH_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
 
 export interface MergeableJournalFacts {
@@ -92,24 +94,51 @@ export function isAllowedSpringerNatureHost(hostname: string): boolean {
   return ALLOWED_DOMAIN_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
 }
 
+function isPrivateIpv4(a: number, b: number, c: number): boolean {
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  if (a === 198 && b === 51 && c === 100) return true;
+  if (a === 203 && b === 0 && c === 113) return true;
+  if (a >= 224) return true;
+  return false;
+}
+
+/** Eight hextets, expanding "::" and a trailing dotted IPv4. */
+function ipv6Hextets(address: string): number[] | null {
+  let ip = address.toLowerCase().split('%')[0];
+  if (net.isIP(ip) !== 6) return null;
+  const dotted = ip.match(/^(.*:)(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (dotted) {
+    const octets = dotted[2].split('.').map((part) => Number(part));
+    if (octets.some((octet) => octet > 255)) return null;
+    const hi = ((octets[0] << 8) | octets[1]).toString(16);
+    const lo = ((octets[2] << 8) | octets[3]).toString(16);
+    ip = `${dotted[1]}${hi}:${lo}`;
+  }
+  const halves = ip.split('::');
+  if (halves.length > 2) return null;
+  const parseSide = (side: string) => (side ? side.split(':').map((part) => parseInt(part, 16)) : []);
+  const head = parseSide(halves[0]);
+  const tail = halves.length === 2 ? parseSide(halves[1]) : [];
+  if ([...head, ...tail].some((part) => Number.isNaN(part) || part > 0xffff)) return null;
+  const missing = 8 - head.length - tail.length;
+  if (missing < 0) return null;
+  return [...head, ...Array(missing).fill(0), ...tail];
+}
+
 export function isPrivateOrReservedIp(address: string): boolean {
-  let ip = address.toLowerCase().replace(/^\[|\]$/g, '');
+  let ip = address.toLowerCase().replace(/^\[|\]$/g, '').split('%')[0];
   const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   if (mapped) ip = mapped[1];
 
   if (net.isIP(ip) === 4) {
     const [a, b, c] = ip.split('.').map((part) => Number(part));
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
-    if (a === 198 && (b === 18 || b === 19)) return true;
-    if (a === 198 && b === 51 && c === 100) return true;
-    if (a === 203 && b === 0 && c === 113) return true;
-    if (a >= 224) return true;
-    return false;
+    return isPrivateIpv4(a, b, c);
   }
 
   if (net.isIP(ip) === 6) {
@@ -118,10 +147,30 @@ export function isPrivateOrReservedIp(address: string): boolean {
     if (/^fc|^fd/.test(head)) return true;
     if (/^fe[89ab]/.test(head)) return true;
     if (/^ff/.test(head)) return true;
+
+    const hextets = ipv6Hextets(ip);
+    if (!hextets) return true;
+    // IPv4-mapped IPv6, including the hex form ::ffff:7f00:1.
+    if (hextets.slice(0, 5).every((part) => part === 0) && hextets[5] === 0xffff) {
+      return isPrivateIpv4(hextets[6] >> 8, hextets[6] & 0xff, hextets[7] >> 8);
+    }
+    // NAT64 well-known prefix 64:ff9b::/96 and 6to4 2002::/16.
+    if (hextets[0] === 0x64 && hextets[1] === 0xff9b && hextets.slice(2, 6).every((part) => part === 0)) return true;
+    if (hextets[0] === 0x2002) return true;
     return false;
   }
 
   return true;
+}
+
+/** IPv4 first so an IPv6-first DNS answer is not the only attempt. */
+export function preferIpv4(addresses: string[]): string[] {
+  return [...addresses].sort((left, right) => {
+    const leftV4 = net.isIP(left) === 4;
+    const rightV4 = net.isIP(right) === 4;
+    if (leftV4 === rightV4) return 0;
+    return leftV4 ? -1 : 1;
+  });
 }
 
 export function parseAllowedJournalUrl(raw: string): URL {
@@ -141,6 +190,9 @@ export function parseAllowedJournalUrl(raw: string): URL {
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new LandingPageError('Only http and https journal URLs can be read.', 'ssrf');
+  }
+  if (url.port && url.port !== '80' && url.port !== '443') {
+    throw new LandingPageError('Only ports 80 and 443 are allowed.', 'ssrf');
   }
   if (!isAllowedSpringerNatureHost(url.hostname)) {
     throw new LandingPageError(
@@ -222,24 +274,32 @@ export function normalizedRequestUrl(raw: string): string {
   return url.toString();
 }
 
-async function defaultResolveHost(hostname: string): Promise<string[]> {
+async function defaultResolveHost(hostname: string, signal?: AbortSignal): Promise<string[]> {
+  if (signal?.aborted) throw new LandingPageError('Landing page request timed out.', 'timeout');
   try {
-    const records = await dnsLookup(hostname, { all: true, verbatim: true });
-    return records.map((record) => record.address);
-  } catch {
+    const records = await dnsLookup(hostname, { all: true, verbatim: false });
+    if (signal?.aborted) throw new LandingPageError('Landing page request timed out.', 'timeout');
+    return preferIpv4(records.map((record) => record.address));
+  } catch (err) {
+    if (err instanceof LandingPageError) throw err;
+    if (signal?.aborted) throw new LandingPageError('Landing page request timed out.', 'timeout');
     throw new LandingPageError(`Could not resolve ${hostname}.`, 'http');
   }
 }
 
-async function assertPublicResolution(hostname: string, resolveHost?: (hostname: string) => Promise<string[]>): Promise<string[]> {
-  const addresses = await (resolveHost ?? defaultResolveHost)(hostname);
+async function assertPublicResolution(
+  hostname: string,
+  resolveHost: ((hostname: string, signal?: AbortSignal) => Promise<string[]>) | undefined,
+  signal: AbortSignal
+): Promise<string[]> {
+  const addresses = await (resolveHost ?? defaultResolveHost)(hostname, signal);
   if (!addresses.length) {
     throw new LandingPageError(`Could not resolve ${hostname}.`, 'http');
   }
   if (addresses.some((address) => isPrivateOrReservedIp(address))) {
     throw new LandingPageError('Refusing to fetch a host that resolves to a private or reserved address.', 'ssrf');
   }
-  return addresses;
+  return preferIpv4(addresses);
 }
 
 function headerValue(headers: Record<string, string | string[] | undefined>, name: string): string | undefined {
@@ -248,14 +308,36 @@ function headerValue(headers: Record<string, string | string[] | undefined>, nam
   return direct;
 }
 
-function nodeHttpGet(url: URL, pinnedIp: string, timeoutMs: number): Promise<HttpExchange> {
+function nodeHttpGet(url: URL, pinnedIp: string, timeoutMs: number, signal: AbortSignal): Promise<HttpExchange> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+    const succeed = (value: HttpExchange) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const port = url.port ? Number(url.port) : url.protocol === 'https:' ? 443 : 80;
+    if (port !== 80 && port !== 443) {
+      fail(new LandingPageError('Only ports 80 and 443 are allowed.', 'ssrf'));
+      return;
+    }
+    if (signal.aborted) {
+      fail(new LandingPageError('Landing page request timed out.', 'timeout'));
+      return;
+    }
+
     const lib = url.protocol === 'https:' ? https : http;
     const req = lib.request(
       {
         host: pinnedIp,
         servername: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
+        port,
         method: 'GET',
         path: `${url.pathname || '/'}${url.search}`,
         headers: {
@@ -265,6 +347,7 @@ function nodeHttpGet(url: URL, pinnedIp: string, timeoutMs: number): Promise<Htt
           'Accept-Language': 'en',
         },
         timeout: timeoutMs,
+        signal,
       },
       (res) => {
         const status = res.statusCode || 0;
@@ -273,14 +356,14 @@ function nodeHttpGet(url: URL, pinnedIp: string, timeoutMs: number): Promise<Htt
 
         if (status >= 300 && status < 400) {
           res.resume();
-          resolve({ status, headers, body: '' });
+          succeed({ status, headers, body: '' });
           return;
         }
 
         const contentLength = Number(headerValue(headers, 'content-length') || 0);
         if (contentLength > MAX_HTML_BYTES) {
           res.resume();
-          reject(new LandingPageError('Landing page exceeded the size limit.', 'size'));
+          fail(new LandingPageError('Landing page exceeded the size limit.', 'size'));
           return;
         }
 
@@ -290,42 +373,74 @@ function nodeHttpGet(url: URL, pinnedIp: string, timeoutMs: number): Promise<Htt
           received += chunk.length;
           if (received > MAX_HTML_BYTES) {
             req.destroy();
-            reject(new LandingPageError('Landing page exceeded the size limit.', 'size'));
+            fail(new LandingPageError('Landing page exceeded the size limit.', 'size'));
             return;
           }
           chunks.push(chunk);
         });
-        res.on('end', () => resolve({ status, headers, body: Buffer.concat(chunks).toString('utf8') }));
-        res.on('error', (err) => reject(err));
+        res.on('end', () => succeed({ status, headers, body: Buffer.concat(chunks).toString('utf8') }));
+        res.on('error', (err) => fail(err));
       }
     );
 
+    signal.addEventListener(
+      'abort',
+      () => {
+        req.destroy();
+        fail(new LandingPageError('Landing page request timed out.', 'timeout'));
+      },
+      { once: true }
+    );
     req.on('timeout', () => {
       req.destroy();
-      reject(new LandingPageError('Landing page request timed out.', 'timeout'));
+      fail(new LandingPageError('Landing page request timed out.', 'timeout'));
     });
     req.on('error', (err) => {
-      if (err instanceof LandingPageError) reject(err);
-      else reject(new LandingPageError('Landing page request failed.', 'http'));
+      if (signal.aborted || err.name === 'AbortError') {
+        fail(new LandingPageError('Landing page request timed out.', 'timeout'));
+        return;
+      }
+      if (err instanceof LandingPageError) fail(err);
+      else fail(new LandingPageError('Landing page request failed.', 'http'));
     });
     req.end();
   });
 }
 
-export async function fetchLandingPage(rawUrl: string, deps: FetchLandingPageDeps = {}): Promise<FetchedLandingPage> {
+async function requestVettedAddress(
+  url: URL,
+  addresses: string[],
+  deps: FetchLandingPageDeps,
+  signal: AbortSignal
+): Promise<HttpExchange> {
+  let lastError: Error | null = null;
+  for (const address of addresses) {
+    if (signal.aborted) throw new LandingPageError('Landing page request timed out.', 'timeout');
+    try {
+      if (deps.httpGet) return await deps.httpGet(url, FETCH_TIMEOUT_MS, address, signal);
+      return await nodeHttpGet(url, address, FETCH_TIMEOUT_MS, signal);
+    } catch (err) {
+      if (signal.aborted) throw new LandingPageError('Landing page request timed out.', 'timeout');
+      if (err instanceof LandingPageError && err.code !== 'timeout' && err.code !== 'http') throw err;
+      lastError = err instanceof LandingPageError ? err : new LandingPageError('Landing page request failed.', 'http');
+    }
+  }
+  throw lastError ?? new LandingPageError('Landing page request failed.', 'http');
+}
+
+async function readLandingPage(rawUrl: string, deps: FetchLandingPageDeps, signal: AbortSignal): Promise<FetchedLandingPage> {
   let current = parseAllowedJournalUrl(rawUrl);
   const seen = new Set<string>();
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    if (signal.aborted) throw new LandingPageError('Landing page request timed out.', 'timeout');
     current.hash = '';
     const fingerprint = current.toString();
     if (seen.has(fingerprint)) throw new LandingPageError('Landing page redirected to itself.', 'http');
     seen.add(fingerprint);
 
-    const addresses = await assertPublicResolution(current.hostname, deps.resolveHost);
-    const response = deps.httpGet
-      ? await deps.httpGet(current, FETCH_TIMEOUT_MS)
-      : await nodeHttpGet(current, addresses[0], FETCH_TIMEOUT_MS);
+    const addresses = await assertPublicResolution(current.hostname, deps.resolveHost, signal);
+    const response = await requestVettedAddress(current, addresses, deps, signal);
 
     if (response.status >= 300 && response.status < 400) {
       const location = headerValue(response.headers, 'location');
@@ -350,6 +465,33 @@ export async function fetchLandingPage(rawUrl: string, deps: FetchLandingPageDep
   }
 
   throw new LandingPageError('Landing page redirected too many times.', 'http');
+}
+
+export async function fetchLandingPage(rawUrl: string, deps: FetchLandingPageDeps = {}): Promise<FetchedLandingPage> {
+  const timeoutMs = deps.timeoutMs ?? FETCH_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const deadline = new Promise<never>((_, reject) => {
+    if (controller.signal.aborted) {
+      reject(new LandingPageError('Landing page request timed out.', 'timeout'));
+      return;
+    }
+    controller.signal.addEventListener(
+      'abort',
+      () => reject(new LandingPageError('Landing page request timed out.', 'timeout')),
+      { once: true }
+    );
+  });
+  const work = readLandingPage(rawUrl, deps, controller.signal);
+  // The loser of the race can still reject after the winner settles.
+  work.catch(() => {});
+  deadline.catch(() => {});
+
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const NAMED_ENTITIES: Record<string, string> = {
@@ -609,13 +751,30 @@ function openAccess(html: string): string | null {
   return null;
 }
 
+function visiblePageText(html: string): string {
+  const withoutHidden = html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ');
+  return decodeHtml(withoutHidden);
+}
+
 function apcUsd(html: string): number | null {
-  const window = html.match(/(?:article processing charges?|\bAPC\b)[\s\S]{0,500}/i);
-  if (!window) return null;
-  const dollar = window[0].match(/\$\s*([\d,]+(?:\.\d+)?)/);
-  if (!dollar) return null;
-  const amount = Number(dollar[1].replace(/,/g, ''));
-  return Number.isFinite(amount) ? Math.round(amount) : null;
+  const text = visiblePageText(html);
+  const cue = /(?:article processing charges?|\bAPCs?\b)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = cue.exec(text)) !== null) {
+    const window = text.slice(match.index, match.index + match[0].length + 160);
+    for (const dollar of window.matchAll(/\$\s*([\d,]+(?:\.\d+)?)/g)) {
+      const amount = Number(dollar[1].replace(/,/g, ''));
+      if (!Number.isFinite(amount) || amount < 100 || amount > 20000) continue;
+      const before = window.slice(Math.max(0, (dollar.index ?? 0) - 24), dollar.index ?? 0);
+      if (/subscri|donation|membership|shipping|grant|million|billion/i.test(before)) continue;
+      return Math.round(amount);
+    }
+  }
+  return null;
 }
 
 function apcInfoUrl(pageAnchors: Anchor[], pageUrl: string): string | null {
@@ -826,8 +985,38 @@ function metric(page: ExtractedPageFacts, kind: PageSourcedMetric['kind']): Page
   return page.pageMetrics.find((item) => item.kind === kind);
 }
 
+export const CATALOG_SNAPSHOT_NOTE = 'Hardcoded catalog snapshot. Not a Clarivate lookup and not verified.';
+
+type NumberFactKey = 'impactFactor' | 'fiveYearImpactFactor' | 'firstDecisionDays' | 'apcUsd';
+
 /**
- * Page facts override model guesses. Catalog and user-provided numbers stay in place.
+ * The hardcoded catalog is still stored as source_verified until the catalog_snapshot
+ * relabel lands. Live Clarivate API rows should use a different provenance source.
+ */
+function isHardcodedCatalogRecord(base: MergeableJournalFacts): boolean {
+  if (base.verificationStatus === 'user_provided') return false;
+  const provenance = Object.values(base.provenanceMap || {});
+  if (provenance.some((item) => item?.source === 'catalog_snapshot')) return true;
+  const claimsClarivate = provenance.some((item) => item?.source === 'Clarivate' || item?.source === 'Clarivate JCR');
+  const hardcodedAttribution = /verified via clarivate/i.test(base.sourceAttribution || '');
+  return (
+    base.verificationStatus === 'source_verified' &&
+    base.isVerifiedClarivate === true &&
+    (claimsClarivate || hardcodedAttribution || provenance.length === 0)
+  );
+}
+
+function writeNumber(result: MergeableJournalFacts, factKey: NumberFactKey, value: number) {
+  if (factKey === 'impactFactor') result.impactFactor = value;
+  if (factKey === 'fiveYearImpactFactor') result.fiveYearImpactFactor = value;
+  if (factKey === 'firstDecisionDays') result.firstDecisionDays = value;
+  if (factKey === 'apcUsd') result.apcUsd = value;
+}
+
+/**
+ * Page facts override model guesses and stale catalog snapshot numbers.
+ * A non-null user-provided or live source-verified value stays.
+ * Null catalog and user-provided fields are filled from the page.
  * Nothing read from the page, and nothing guessed, is marked source_verified.
  */
 export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
@@ -835,23 +1024,42 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
   page: ExtractedPageFacts | null,
   notes?: { fetchError?: string }
 ): T {
+  const catalogSnapshot = isHardcodedCatalogRecord(base);
+  const userProvided = base.verificationStatus === 'user_provided';
+  const verifiedLive = base.verificationStatus === 'source_verified' && !catalogSnapshot;
   const result: T = { ...base, provenanceMap: { ...(base.provenanceMap || {}) } };
-  if (!page && !notes?.fetchError) return result;
+  const provenance: Record<string, Provenance> = { ...(result.provenanceMap || {}) };
+
+  if (catalogSnapshot) {
+    result.verificationStatus = 'unverified';
+    result.isVerifiedClarivate = false;
+    result.reportingYear = 'Catalog snapshot';
+    result.sourceAttribution = CATALOG_SNAPSHOT_NOTE;
+    for (const factKey of ['impactFactor', 'fiveYearImpactFactor', 'firstDecisionDays', 'apcUsd'] as const) {
+      const existing = base[factKey];
+      if (existing === null || existing === undefined) continue;
+      provenance[factKey] = {
+        source: 'catalog_snapshot',
+        confidence: 0.5,
+        year: base.provenanceMap?.[factKey]?.year,
+        note: CATALOG_SNAPSHOT_NOTE,
+      };
+    }
+    if (!provenance.journalName || provenance.journalName.source === 'Clarivate' || provenance.journalName.source === 'Clarivate JCR') {
+      provenance.journalName = { source: 'catalog_snapshot', confidence: 0.5, note: CATALOG_SNAPSHOT_NOTE };
+    }
+  }
 
   if (notes?.fetchError) {
-    result.provenanceMap = {
-      ...result.provenanceMap,
-      landingPage: { source: 'landing_page', confidence: 0, note: notes.fetchError },
-    };
+    provenance.landingPage = { source: 'landing_page', confidence: 0, note: notes.fetchError };
   }
+  result.provenanceMap = provenance;
   if (!page) return result;
 
   result.extractedFacts = page;
-  const provenance: Record<string, Provenance> = { ...(result.provenanceMap || {}) };
-  const numbersLocked = base.verificationStatus === 'source_verified' || base.verificationStatus === 'user_provided';
-  const textLocked = base.verificationStatus === 'user_provided';
+  const textLocked = userProvided;
 
-  if (page.journalTitle.value && !textLocked && base.verificationStatus !== 'source_verified') {
+  if (page.journalTitle.value && !textLocked && !verifiedLive) {
     result.journalName = page.journalTitle.value;
     provenance.journalName = { source: 'landing_page', confidence: page.journalTitle.confidence };
   }
@@ -870,37 +1078,43 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
     result.authorGuidelinesUrl = page.authorGuidelinesUrl.value;
     provenance.authorGuidelinesUrl = { source: 'landing_page', confidence: page.authorGuidelinesUrl.confidence };
   }
-  if (page.publisherName.value && !numbersLocked) {
+  if (page.publisherName.value && !textLocked && !verifiedLive) {
     result.publisher = page.publisherName.value;
     provenance.publisher = { source: 'landing_page', confidence: page.publisherName.confidence };
   }
-  if (page.openAccessPolicy.value && !numbersLocked) {
+  if (page.openAccessPolicy.value && !textLocked && !verifiedLive) {
     result.openAccessType = page.openAccessPolicy.value;
     provenance.openAccessType = { source: 'landing_page', confidence: page.openAccessPolicy.confidence, note: 'page-sourced' };
   }
 
-  const applyNumber = (
-    factKey: 'impactFactor' | 'fiveYearImpactFactor' | 'firstDecisionDays' | 'apcUsd',
-    value: number | null | undefined,
-    year?: number | null,
-    note?: string
-  ) => {
+  const applyNumber = (factKey: NumberFactKey, value: number | null | undefined, year?: number | null, note?: string) => {
     if (value === null || value === undefined || Number.isNaN(value)) return;
+    const existing = base[factKey];
+    const hasExisting = existing !== null && existing !== undefined && !Number.isNaN(existing);
     const pageNote = note || 'page-sourced';
-    if (numbersLocked) {
+
+    if ((userProvided || verifiedLive) && hasExisting) {
       const kept = provenance[factKey];
       provenance[factKey] = {
-        source: base.verificationStatus === 'user_provided' ? 'user_provided' : 'Clarivate',
-        confidence: base.verificationStatus === 'source_verified' ? 0.95 : 0.85,
+        source: userProvided ? 'user_provided' : kept?.source || 'source_verified',
+        confidence: userProvided ? 0.85 : kept?.confidence ?? 0.95,
         year: kept?.year,
-        note: `Catalog or user value kept. Landing page also stated ${value}${year ? ` (${year})` : ''}, labelled page-sourced.`,
+        note: `Existing value kept. Landing page also stated ${value}${year ? ` (${year})` : ''}, labelled page-sourced.`,
       };
       return;
     }
-    if (factKey === 'impactFactor') result.impactFactor = value;
-    if (factKey === 'fiveYearImpactFactor') result.fiveYearImpactFactor = value;
-    if (factKey === 'firstDecisionDays') result.firstDecisionDays = value;
-    if (factKey === 'apcUsd') result.apcUsd = value;
+
+    if (catalogSnapshot && hasExisting) {
+      const prior = provenance[factKey];
+      provenance[`${factKey}CatalogSnapshot`] = {
+        source: 'catalog_snapshot',
+        confidence: 0.5,
+        year: prior?.year,
+        note: `Catalog snapshot value ${existing} is not the displayed figure.`,
+      };
+    }
+
+    writeNumber(result, factKey, value);
     provenance[factKey] = { source: 'landing_page', confidence: 0.8, year: year ?? undefined, note: pageNote };
   };
 
@@ -913,20 +1127,27 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
   applyNumber('firstDecisionDays', decision?.numericValue, decision?.year, 'page-sourced');
   applyNumber('apcUsd', apc?.numericValue, apc?.year, 'page-sourced');
 
-  if (!numbersLocked) {
+  if (!userProvided && !verifiedLive) {
     result.isVerifiedClarivate = false;
     if (provenance.impactFactor?.source === 'landing_page') {
       result.verificationStatus = 'unverified';
       result.missingFields = undefined;
       result.reportingYear = impact?.year ? `Page-sourced (${impact.year})` : 'Page-sourced';
-      result.sourceAttribution = 'Page-sourced from the journal landing page. Not Clarivate-verified.';
+      result.sourceAttribution = provenance.impactFactorCatalogSnapshot
+        ? 'Page-sourced from the journal landing page. The catalog snapshot figure is kept only in provenance and is not Clarivate-verified.'
+        : 'Page-sourced from the journal landing page. Not Clarivate-verified.';
+    } else if (catalogSnapshot) {
+      result.verificationStatus = 'unverified';
+      result.missingFields = undefined;
+      result.reportingYear = 'Catalog snapshot';
+      result.sourceAttribution = CATALOG_SNAPSHOT_NOTE;
     } else if (base.verificationStatus === 'unverified') {
       result.verificationStatus = 'unverified';
       result.isVerifiedClarivate = false;
     } else if (page.journalTitle.value || page.issnPrint.value || page.issnElectronic.value) {
       result.verificationStatus = 'missing';
       result.isVerifiedClarivate = false;
-      result.sourceAttribution = 'Journal landing page was read, but it did not state Clarivate metrics. Nothing on this record is verified.';
+      result.sourceAttribution = 'Journal landing page was read, but it did not state an impact factor. Nothing on this record is verified.';
       result.missingFields = [
         result.impactFactor === null ? 'impactFactor' : '',
         'casZone',

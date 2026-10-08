@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { loadMetricsCacheFromDisk } from './src/utils/metricsCache';
 import type { ExtractedPageFacts } from './src/types';
 import {
+  CATALOG_SNAPSHOT_NOTE,
   LandingPageError,
   extractLandingPageFacts,
   fetchLandingPage,
@@ -512,7 +513,34 @@ function readFreshCache(cache: Map<string, CachedJournal>, key: string): JCRJour
   };
 }
 
-// Lookup Clarivate facts, then ground them in the journal landing page when it can be read.
+function catalogSnapshotRecord(entry: JCRJournalEntry, url: string): JCRJournalEntry {
+  const number = (value: number | null | undefined, year?: number) =>
+    value === null || value === undefined
+      ? undefined
+      : { source: 'catalog_snapshot', confidence: 0.5, year, note: CATALOG_SNAPSHOT_NOTE };
+  const provenanceMap: NonNullable<JCRJournalEntry['provenanceMap']> = {
+    journalName: { source: 'catalog_snapshot', confidence: 0.5, note: CATALOG_SNAPSHOT_NOTE },
+  };
+  const impactFactor = number(entry.impactFactor, entry.provenanceMap?.impactFactor?.year ?? 2024);
+  const fiveYearImpactFactor = number(entry.fiveYearImpactFactor, entry.provenanceMap?.fiveYearImpactFactor?.year ?? 2024);
+  const firstDecisionDays = number(entry.firstDecisionDays);
+  const apcUsd = number(entry.apcUsd);
+  if (impactFactor) provenanceMap.impactFactor = impactFactor;
+  if (fiveYearImpactFactor) provenanceMap.fiveYearImpactFactor = fiveYearImpactFactor;
+  if (firstDecisionDays) provenanceMap.firstDecisionDays = firstDecisionDays;
+  if (apcUsd) provenanceMap.apcUsd = apcUsd;
+  return {
+    ...entry,
+    url,
+    verificationStatus: 'unverified',
+    isVerifiedClarivate: false,
+    reportingYear: 'Catalog snapshot',
+    sourceAttribution: CATALOG_SNAPSHOT_NOTE,
+    provenanceMap,
+  };
+}
+
+// Lookup journal facts, then ground them in the landing page when it can be read.
 export async function lookupClarivateFacts(
   url: string,
   forceRefresh = false,
@@ -561,24 +589,19 @@ export async function lookupClarivateFacts(
   });
 
   if (!forceRefresh && primaryKey !== urlKey) {
-    const cached = readFreshCache(cache, primaryKey);
-    if (cached) {
-      console.log(`[Cache HIT] Retrieved ${primaryKey} (${cached.journalName})`);
-      return cached;
+    const cachedEntry = cache.get(primaryKey);
+    if (cachedEntry?.fullFacts && !isCachedJournalExpired(cachedEntry)) {
+      console.log(`[Cache HIT] Retrieved ${primaryKey} (${cachedEntry.journalName})`);
+      rememberCachedJournal(cache, [urlKey], cachedEntry, persist);
+      const cached = readFreshCache(cache, primaryKey);
+      if (cached) return cached;
     }
   }
 
   let base: JCRJournalEntry;
   if (catalog) {
-    console.log(`[Catalog MATCH] Found verified record for ${catalog.journalName}`);
-    base = {
-      ...catalog,
-      url: norm.full,
-      provenanceMap: {
-        impactFactor: { source: 'Clarivate', confidence: 0.95, year: 2024 },
-        journalName: { source: 'Clarivate', confidence: 0.95 },
-      },
-    };
+    console.log(`[Catalog MATCH] Using catalog snapshot for ${catalog.journalName}`);
+    base = catalogSnapshotRecord(catalog, norm.full);
   } else {
     const aiFacts = await lookupWithGemini(norm.full, options);
     base = aiFacts ?? missingJournalFacts(norm);
@@ -596,7 +619,14 @@ export async function lookupClarivateFacts(
         metric: 'impactFactor',
         value: merged.impactFactor,
         year: 2024,
-        source: merged.provenanceMap?.impactFactor?.source === 'landing_page' ? 'landing_page' : merged.verificationStatus === 'source_verified' ? 'Clarivate JCR' : 'Web Lookup',
+        source:
+          merged.provenanceMap?.impactFactor?.source === 'landing_page'
+            ? 'landing_page'
+            : merged.provenanceMap?.impactFactor?.source === 'catalog_snapshot'
+              ? 'catalog_snapshot'
+              : merged.verificationStatus === 'source_verified'
+                ? 'Clarivate JCR'
+                : 'Web Lookup',
         cachedAt: nowStr,
         expireAt: calculateMetricExpiry('impactFactor'),
       },
@@ -604,7 +634,12 @@ export async function lookupClarivateFacts(
         metric: 'casZone',
         value: merged.casZone || null,
         year: 2024,
-        source: merged.verificationStatus === 'source_verified' ? 'CAS Ranking' : 'Web Lookup',
+        source:
+          merged.provenanceMap?.impactFactor?.source === 'catalog_snapshot' || merged.provenanceMap?.impactFactorCatalogSnapshot
+            ? 'catalog_snapshot'
+            : merged.verificationStatus === 'source_verified'
+              ? 'CAS Ranking'
+              : 'Web Lookup',
         cachedAt: nowStr,
         expireAt: calculateMetricExpiry('casZone'),
       },
@@ -612,7 +647,12 @@ export async function lookupClarivateFacts(
         metric: 'firstDecisionDays',
         value: merged.firstDecisionDays || null,
         year: 2024,
-        source: merged.provenanceMap?.firstDecisionDays?.source === 'landing_page' ? 'landing_page' : 'Publisher Average',
+        source:
+          merged.provenanceMap?.firstDecisionDays?.source === 'landing_page'
+            ? 'landing_page'
+            : merged.provenanceMap?.firstDecisionDays?.source === 'catalog_snapshot'
+              ? 'catalog_snapshot'
+              : 'Publisher Average',
         cachedAt: nowStr,
         expireAt: calculateMetricExpiry('firstDecisionDays'),
       },
@@ -620,7 +660,12 @@ export async function lookupClarivateFacts(
         metric: 'apcUsd',
         value: merged.apcUsd || null,
         year: 2024,
-        source: merged.provenanceMap?.apcUsd?.source === 'landing_page' ? 'landing_page' : 'Publisher Price List',
+        source:
+          merged.provenanceMap?.apcUsd?.source === 'landing_page'
+            ? 'landing_page'
+            : merged.provenanceMap?.apcUsd?.source === 'catalog_snapshot'
+              ? 'catalog_snapshot'
+              : 'Publisher Price List',
         cachedAt: nowStr,
         expireAt: calculateMetricExpiry('apcUsd'),
       },
@@ -926,6 +971,18 @@ interface HeadlineSeed {
   positionRecommendation: string;
 }
 
+function labelledImpactFactor(facts: any): string | null {
+  if (facts.impactFactor === null || facts.impactFactor === undefined || facts.impactFactor === '') return null;
+  const source = facts.provenanceMap?.impactFactor?.source;
+  if (source === 'landing_page') return `Page-sourced IF ${facts.impactFactor}`;
+  if (source === 'catalog_snapshot') return `Catalog IF ${facts.impactFactor}`;
+  if (facts.verificationStatus === 'source_verified') {
+    const quartile = facts.jcrQuartile ? ` ${facts.jcrQuartile}` : '';
+    return `Clarivate IF ${facts.impactFactor}${quartile}`;
+  }
+  return `IF ${facts.impactFactor}`;
+}
+
 function stageDestination(facts: any, stage: StageCode, stageConfig: any) {
   const norm = normalizeUrlComponents(facts.url || '');
   const baseUrl = (norm.full || 'https://www.nature.com').replace(/\/$/, '');
@@ -992,12 +1049,13 @@ export function generateStageHeadlines(
 
   // CON (Consideration) - Includes Journal Comparison
   if (stage === 'CON') {
+    const ifLabel = labelledImpactFactor(facts);
     const en: HeadlineSeed[] = [
       { text: smartClamp(`Is Your Manuscript a Fit?`, 30), sourceFact: 'Fit Evaluation', language: 'EN', category: 'Scope & Community', positionRecommendation: 'Position 1' },
       { text: smartClamp(`${shortName} Aims & Scope`, 30), sourceFact: 'Scope Criteria', language: 'EN', category: 'Scope & Community', positionRecommendation: 'Position 1' },
       { text: smartClamp(`Evaluate ${shortName}`, 30), sourceFact: facts.journalName, language: 'EN', category: 'Journal Identity', positionRecommendation: 'Position 1' },
       // Conditional metrics (NO nulls)
-      ...(facts.impactFactor ? [{ text: smartClamp(`Clarivate IF ${facts.impactFactor} ${facts.jcrQuartile || ''}`.trim(), 30), sourceFact: `IF ${facts.impactFactor}`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(ifLabel ? [{ text: smartClamp(ifLabel, 30), sourceFact: `IF ${facts.impactFactor}`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       { text: smartClamp(`Indexed in ${facts.indexing?.slice(0, 2).join(' & ') || 'SCIE & Scopus'}`, 30), sourceFact: 'Indexing', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' },
       { text: smartClamp(`Rigorous Peer Review Standards`, 30), sourceFact: 'Editorial Standards', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' },
       ...(facts.firstDecisionDays ? [{ text: smartClamp(`Avg ${facts.firstDecisionDays} Days to 1st Decision`, 30), sourceFact: `${facts.firstDecisionDays} Days Decision`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' }] : []),
@@ -1100,7 +1158,8 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
   }
 
   if (stage === 'CON') {
-    const ifText = facts.impactFactor ? `Clarivate IF ${facts.impactFactor}, ` : '';
+    const ifLabel = labelledImpactFactor(facts);
+    const ifText = ifLabel ? `${ifLabel}, ` : '';
     const daysText = facts.firstDecisionDays ? `First decision in ${facts.firstDecisionDays} days.` : 'Prompt editorial turnaround.';
     const feeText = facts.apcUsd ? `APC ($${facts.apcUsd})` : 'publishing options';
     const casText = facts.casZone ? `（${facts.casZone.slice(0, 10)}）` : '';
@@ -1217,7 +1276,7 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
   }
 
   if (stage === 'CON') {
-    const metricStr = facts.impactFactor ? `Clarivate IF ${facts.impactFactor}` : 'Indexed Research';
+    const metricStr = labelledImpactFactor(facts) || 'Indexed Research';
     return {
       shortHeadline: smartClamp(`Check ${shortName} Fit`, 30),
       shortHeadlineCharCount: 0,
@@ -1272,6 +1331,7 @@ export function generateDeterministicCampaign(
   const baseUrl = (norm.full || 'https://www.nature.com').replace(/\/$/, '');
   const destination = stageDestination(facts, stage, stageConfig);
   const submissionUrl = facts.submissionPortalUrl || facts.extractedFacts?.submissionPortalUrl?.value || null;
+  const guidelinesUrl = facts.authorGuidelinesUrl || facts.extractedFacts?.authorGuidelinesUrl?.value || null;
 
   const sitelinks =
     stage === 'AWA'
@@ -1289,7 +1349,7 @@ export function generateDeterministicCampaign(
           { title: 'Publishing Options & Fees', desc: `Transparent APC & OA publishing`, urlPath: `${baseUrl}/open-access` },
         ]
       : [
-          { title: 'Author Guidelines', desc: 'Manuscript preparation and style guide', urlPath: `${baseUrl}/for-authors` },
+          { title: 'Author Guidelines', desc: 'Manuscript preparation and style guide', urlPath: guidelinesUrl || `${baseUrl}/for-authors` },
           { title: 'Submission Checklist', desc: 'Required documentation before submitting', urlPath: `${baseUrl}/checklist` },
           { title: 'APC & Waiver Criteria', desc: 'Fee policy and funding guidelines', urlPath: `${baseUrl}/apc-waivers` },
           { title: 'Online Submission Portal', desc: 'Submit paper for peer review', urlPath: submissionUrl || `${baseUrl}/submit` },
@@ -1299,7 +1359,7 @@ export function generateDeterministicCampaign(
     stage === 'AWA'
       ? [`Published by ${facts.publisher}`, (facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), 'Global Readership', 'Peer-Reviewed Science']
       : stage === 'CON'
-      ? [facts.impactFactor ? `Clarivate IF ${facts.impactFactor}` : 'Indexed in SCIE', facts.casZone ? facts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', facts.firstDecisionDays ? `1st Decision: ${facts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
+      ? [labelledImpactFactor(facts) || 'Indexed in SCIE', facts.casZone ? facts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', facts.firstDecisionDays ? `1st Decision: ${facts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
       : ['Author Guidelines Ready', 'Standard Preparation Checklist', facts.firstDecisionDays ? `First Decision: ${facts.firstDecisionDays} Days` : 'Prompt Review', 'Official Submission Portal'];
 
   return {
@@ -1388,7 +1448,7 @@ ${
 
 FACTUAL METRICS (Strict source attribution, NO invented numbers):
 - Journal: ${facts.journalName} (${facts.publisher})
-- Clarivate Impact Factor: ${facts.impactFactor || 'Not reported'}
+- Impact factor: ${labelledImpactFactor(facts) || 'Not reported'} (${facts.provenanceMap?.impactFactor?.source || facts.verificationStatus})
 - CAS Zone: ${facts.casZone || 'Not reported'}
 - Turnaround: ${facts.firstDecisionDays ? `${facts.firstDecisionDays} days` : 'Not reported'}
 - Indexing: ${facts.indexing?.join(', ') || 'SCIE, Scopus'}

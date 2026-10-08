@@ -11,9 +11,11 @@ import {
   isPrivateOrReservedIp,
   isPublisherHomepage,
   journalCacheKey,
+  mergeLandingPageFacts,
   parseAllowedJournalUrl,
+  type MergeableJournalFacts,
 } from '../src/utils/landingPage';
-import { lookupClarivateFacts, type JournalLookupOptions } from '../server';
+import { generateDeterministicCampaign, lookupClarivateFacts, type JournalLookupOptions } from '../server';
 
 const fixtureDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'landing-pages');
 
@@ -49,7 +51,24 @@ export async function runLandingPageTests() {
     assert.equal(isPrivateOrReservedIp('169.254.169.254'), true);
     assert.equal(isPrivateOrReservedIp('::1'), true);
     assert.equal(isPrivateOrReservedIp('::ffff:127.0.0.1'), true);
+    assert.equal(isPrivateOrReservedIp('::ffff:7f00:1'), true);
+    assert.equal(isPrivateOrReservedIp('::ffff:a9fe:a9fe'), true);
+    assert.equal(isPrivateOrReservedIp('::ffff:9765:101'), false);
+    assert.equal(isPrivateOrReservedIp('64:ff9b::1'), true);
+    assert.equal(isPrivateOrReservedIp('64:ff9b::8.8.8.8'), true);
+    assert.equal(isPrivateOrReservedIp('64:ff9b::808:808'), true);
+    assert.equal(isPrivateOrReservedIp('2002::'), true);
+    assert.equal(isPrivateOrReservedIp('2002:7f00:1::'), true);
+    assert.equal(isPrivateOrReservedIp('2002:c000:201::'), true);
     assert.equal(isPrivateOrReservedIp('151.101.1.1'), false);
+    assert.equal(isPrivateOrReservedIp('2001:4860:4860::8888'), false);
+
+    assert.throws(() => parseAllowedJournalUrl('https://www.nature.com:8443/ncomms'), LandingPageError);
+    assert.throws(() => parseAllowedJournalUrl('http://www.nature.com:8080/ncomms'), LandingPageError);
+    assert.equal(parseAllowedJournalUrl('https://www.nature.com:443/ncomms').hostname, 'www.nature.com');
+    assert.equal(parseAllowedJournalUrl('http://www.nature.com:80/ncomms').hostname, 'www.nature.com');
+    assert.equal(parseAllowedJournalUrl('http://www.nature.com:443/ncomms').port, '443');
+    assert.equal(parseAllowedJournalUrl('https://www.nature.com:80/ncomms').port, '80');
 
     assert.equal(isPublisherHomepage('https://www.springer.com/'), true);
     assert.equal(isPublisherHomepage('https://link.springer.com/'), true);
@@ -72,6 +91,71 @@ export async function runLandingPageTests() {
       (err: unknown) => err instanceof LandingPageError && err.code === 'ssrf'
     );
     assert.equal(calls, 0, 'A private DNS answer must not open a connection');
+
+    for (const reserved of ['::ffff:7f00:1', '64:ff9b::1', '2002:7f00:1::']) {
+      calls = 0;
+      await assert.rejects(
+        () =>
+          fetchLandingPage('https://www.nature.com/ncomms', {
+            resolveHost: async () => [reserved],
+            httpGet: async () => {
+              calls += 1;
+              throw new Error('should not connect');
+            },
+          }),
+        (err: unknown) => err instanceof LandingPageError && err.code === 'ssrf'
+      );
+      assert.equal(calls, 0, `${reserved} must not open a connection`);
+    }
+
+    await assert.rejects(
+      () =>
+        fetchLandingPage('https://www.nature.com:8443/ncomms', {
+          resolveHost: async () => {
+            throw new Error('dns should not run');
+          },
+          httpGet: async () => {
+            throw new Error('should not connect');
+          },
+        }),
+      (err: unknown) => err instanceof LandingPageError && err.code === 'ssrf'
+    );
+
+    const triedAddresses: string[] = [];
+    const ipv4First = await fetchLandingPage('https://www.nature.com/ncomms', {
+      resolveHost: async () => ['2001:4860:4860::8888', '151.101.1.1'],
+      httpGet: async (_url, timeoutMs, address) => {
+        assert.equal(timeoutMs, FETCH_TIMEOUT_MS);
+        triedAddresses.push(address || '');
+        return { status: 200, headers: { 'content-type': 'text/html' }, body: '<title>From IPv4</title>' };
+      },
+    });
+    assert.deepEqual(triedAddresses, ['151.101.1.1']);
+    assert.match(ipv4First.html, /From IPv4/);
+
+    const fallbackOrder: string[] = [];
+    const recovered = await fetchLandingPage('https://www.nature.com/ncomms', {
+      resolveHost: async () => ['2001:4860:4860::8888', '151.101.2.1'],
+      httpGet: async (_url, _timeoutMs, address) => {
+        fallbackOrder.push(address || '');
+        if (address === '151.101.2.1') throw new LandingPageError('Landing page request failed.', 'http');
+        return { status: 200, headers: { 'content-type': 'text/html' }, body: '<title>From IPv6</title>' };
+      },
+    });
+    assert.deepEqual(fallbackOrder, ['151.101.2.1', '2001:4860:4860::8888']);
+    assert.match(recovered.html, /From IPv6/);
+
+    const started = Date.now();
+    await assert.rejects(
+      () =>
+        fetchLandingPage('https://www.nature.com/ncomms', {
+          timeoutMs: 40,
+          resolveHost: publicDns(),
+          httpGet: () => new Promise(() => {}),
+        }),
+      (err: unknown) => err instanceof LandingPageError && err.code === 'timeout'
+    );
+    assert.ok(Date.now() - started < 1500, 'The overall deadline aborts a request that keeps the socket busy');
 
     calls = 0;
     await assert.rejects(
@@ -215,6 +299,16 @@ export async function runLandingPageTests() {
     assert.equal(fees.articleProcessingChargeUsd.value, 7350);
     assert.equal(fees.pageMetrics.find((metric) => metric.kind === 'apc')?.provenance, 'page-sourced');
 
+    const decoyApc = extractLandingPageFacts(
+      `<script>var APC = "$12.00";</script>
+       <style>.apc { content: "$99.00"; }</style>
+       <p>Membership is $49. The article processing charge policy mentions a $2 million grant.</p>
+       <p>The current APC, subject to VAT or local taxes where applicable, is: £5490.00/$7350.00/€6150.00</p>
+       <p>Print subscription $199 per year.</p>`,
+      'https://www.nature.com/ncomms/open-access'
+    );
+    assert.equal(decoyApc.articleProcessingChargeUsd.value, 7350);
+
     assert.equal(journalCacheKey({ issnPrint: '0028-0836', issnElectronic: '1476-4687' }), 'issn:0028-0836');
     assert.equal(journalCacheKey({ issnElectronic: '2041-1723' }), 'issn:2041-1723');
     assert.notEqual(
@@ -240,15 +334,23 @@ export async function runLandingPageTests() {
     };
 
     const natureCache = new Map();
+    let natureFetches = 0;
     const homepage = await lookupClarivateFacts('https://www.nature.com/', false, {
       ...quiet,
       cache: natureCache,
-      fetchPage: async () => ({ html: natureHtml, finalUrl: 'https://www.nature.com/' }),
+      fetchPage: async () => {
+        natureFetches += 1;
+        return { html: natureHtml, finalUrl: 'https://www.nature.com/' };
+      },
     });
+    assert.equal(natureFetches, 1);
     assert.equal(homepage.journalName, 'Nature');
-    assert.equal(homepage.verificationStatus, 'source_verified');
-    assert.equal(homepage.isVerifiedClarivate, true);
-    assert.equal(homepage.impactFactor, 50.5, 'Catalog impact factor stays when the page does not state one');
+    assert.equal(homepage.verificationStatus, 'unverified');
+    assert.equal(homepage.isVerifiedClarivate, false);
+    assert.equal(homepage.impactFactor, 50.5, 'Catalog snapshot impact factor stays when the page does not state one');
+    assert.equal(homepage.provenanceMap?.impactFactor?.source, 'catalog_snapshot');
+    assert.match(homepage.sourceAttribution, /catalog snapshot/i);
+    assert.doesNotMatch(homepage.sourceAttribution, /Verified via Clarivate/);
     assert.match(homepage.aimsAndScopeSummary || '', /1869/);
     assert.equal(homepage.submissionPortalUrl, 'https://mts-nature.nature.com/');
     assert.equal(homepage.provenanceMap?.aimsAndScopeSummary?.source, 'landing_page');
@@ -260,10 +362,36 @@ export async function runLandingPageTests() {
     const sameJournal = await lookupClarivateFacts('https://www.nature.com/nature', false, {
       ...quiet,
       cache: natureCache,
-      fetchPage: async () => ({ html: natureHtml, finalUrl: 'https://www.nature.com/nature' }),
+      fetchPage: async () => {
+        natureFetches += 1;
+        return { html: natureHtml, finalUrl: 'https://www.nature.com/nature' };
+      },
     });
+    assert.equal(natureFetches, 2, 'The first request for a new URL still reads the page to learn the ISSN');
     assert.equal(sameJournal.journalName, 'Nature');
     assert.equal(sameJournal.isFromCache, true);
+    assert.equal(natureCache.has('url:nature.com/nature'), true);
+
+    const aliased = await lookupClarivateFacts('https://www.nature.com/nature', false, {
+      ...quiet,
+      cache: natureCache,
+      fetchPage: async () => {
+        natureFetches += 1;
+        return { html: natureHtml, finalUrl: 'https://www.nature.com/nature' };
+      },
+    });
+    assert.equal(natureFetches, 2, 'The saved URL alias is reused and the page is not fetched again');
+    assert.equal(aliased.isFromCache, true);
+
+    const homepageCopy = generateDeterministicCampaign(homepage, 'CON', 'EN');
+    const homepageText = [
+      ...homepageCopy.searchAds.headlines.map((item) => item.text),
+      ...homepageCopy.searchAds.descriptions.map((item) => item.text),
+      ...homepageCopy.searchAds.callouts,
+      homepageCopy.displayAds.longHeadline,
+    ].join('\n');
+    assert.match(homepageText, /Catalog IF 50\.5/);
+    assert.doesNotMatch(homepageText, /Clarivate/);
 
     const ncommsCache = new Map();
     const ncomms = await lookupClarivateFacts('https://www.nature.com/ncomms', false, {
@@ -271,13 +399,109 @@ export async function runLandingPageTests() {
       cache: ncommsCache,
       fetchPage: async () => ({ html: ncommsHtml, finalUrl: 'https://www.nature.com/ncomms' }),
     });
-    assert.equal(ncomms.impactFactor, 14.7, 'Catalog impact factor is kept when both the catalog and the page state one');
-    assert.match(ncomms.provenanceMap?.impactFactor?.note || '', /18\.1/);
+    assert.equal(ncomms.impactFactor, 18.1, 'The page-sourced impact factor is the displayed value');
+    assert.equal(ncomms.provenanceMap?.impactFactor?.source, 'landing_page');
+    assert.equal(ncomms.provenanceMap?.impactFactorCatalogSnapshot?.source, 'catalog_snapshot');
+    assert.match(ncomms.provenanceMap?.impactFactorCatalogSnapshot?.note || '', /14\.7/);
+    assert.equal(ncomms.firstDecisionDays, 9);
+    assert.equal(ncomms.provenanceMap?.firstDecisionDays?.source, 'landing_page');
+    assert.match(ncomms.provenanceMap?.firstDecisionDaysCatalogSnapshot?.note || '', /28/);
+    assert.equal(ncomms.fiveYearImpactFactor, 16.2);
+    assert.equal(ncomms.provenanceMap?.fiveYearImpactFactor?.source, 'catalog_snapshot');
+    assert.equal(ncomms.apcUsd, 6790);
+    assert.equal(ncomms.provenanceMap?.apcUsd?.source, 'catalog_snapshot');
     assert.match(ncomms.aimsAndScopeSummary || '', /biological, health/);
-    assert.equal(ncomms.verificationStatus, 'source_verified');
-    assert.equal(ncomms.isVerifiedClarivate, true);
+    assert.notEqual(ncomms.verificationStatus, 'source_verified');
+    assert.equal(ncomms.isVerifiedClarivate, false);
+    assert.doesNotMatch(ncomms.sourceAttribution, /Verified via Clarivate/);
     assert.equal(ncommsCache.has('ncomms'), false);
     assert.equal(ncommsCache.has('issn:2041-1723'), true);
+
+    const ncommsCopy = generateDeterministicCampaign(ncomms, 'CON', 'EN');
+    const ncommsText = [
+      ...ncommsCopy.searchAds.headlines.map((item) => item.text),
+      ...ncommsCopy.searchAds.descriptions.map((item) => item.text),
+      ...ncommsCopy.searchAds.callouts,
+      ncommsCopy.displayAds.longHeadline,
+    ].join('\n');
+    assert.match(ncommsText, /Page-sourced IF 18\.1/);
+    assert.doesNotMatch(ncommsText, /Clarivate IF/);
+    assert.doesNotMatch(ncommsText, /14\.7/);
+
+    const guidelinesCampaign = generateDeterministicCampaign(ncomms, 'DEC');
+    const guidelinesLink = guidelinesCampaign.searchAds.sitelinks.find((link) => link.title === 'Author Guidelines');
+    assert.equal(guidelinesLink?.urlPath, 'https://www.nature.com/ncomms/submit');
+    const guidelinesFallback = generateDeterministicCampaign(
+      { ...ncomms, authorGuidelinesUrl: null, extractedFacts: undefined },
+      'DEC'
+    );
+    const fallbackLink = guidelinesFallback.searchAds.sitelinks.find((link) => link.title === 'Author Guidelines');
+    assert.equal(fallbackLink?.urlPath, 'https://www.nature.com/ncomms/for-authors');
+
+    const catalogWithGaps = mergeLandingPageFacts(
+      {
+        journalName: 'Nature Communications',
+        publisher: 'Nature Portfolio',
+        impactFactor: 14.7,
+        fiveYearImpactFactor: 16.2,
+        firstDecisionDays: null,
+        apcUsd: null,
+        verificationStatus: 'source_verified',
+        isVerifiedClarivate: true,
+        reportingYear: 'JCR 2024 (Clarivate Journal Citation Reports)',
+        sourceAttribution: 'Verified via Clarivate Journal Citation Reports (JCR 2024/2025) & Web of Science Index',
+        provenanceMap: {
+          impactFactor: { source: 'Clarivate', confidence: 0.95, year: 2024 },
+          journalName: { source: 'Clarivate', confidence: 0.95 },
+        },
+      } as MergeableJournalFacts,
+      extractLandingPageFacts(ncommsHtml, 'https://www.nature.com/ncomms')
+    );
+    assert.equal(catalogWithGaps.firstDecisionDays, 9);
+    assert.equal(catalogWithGaps.provenanceMap?.firstDecisionDays?.source, 'landing_page');
+    assert.equal(catalogWithGaps.impactFactor, 18.1);
+    assert.equal(catalogWithGaps.provenanceMap?.impactFactorCatalogSnapshot?.source, 'catalog_snapshot');
+    assert.equal(catalogWithGaps.isVerifiedClarivate, false);
+    assert.notEqual(catalogWithGaps.verificationStatus, 'source_verified');
+
+    const catalogMissingApc = mergeLandingPageFacts(
+      {
+        journalName: 'Nature Communications',
+        publisher: 'Nature Portfolio',
+        impactFactor: 14.7,
+        apcUsd: null,
+        verificationStatus: 'unverified',
+        isVerifiedClarivate: false,
+        sourceAttribution: 'Hardcoded catalog snapshot. Not a Clarivate lookup and not verified.',
+        provenanceMap: {
+          impactFactor: { source: 'catalog_snapshot', confidence: 0.5, year: 2024 },
+        },
+      } as MergeableJournalFacts,
+      extractLandingPageFacts(fixture('nature-portfolio-open-access-fees.html'), 'https://www.nature.com/ncomms/open-access')
+    );
+    assert.equal(catalogMissingApc.apcUsd, 7350);
+    assert.equal(catalogMissingApc.provenanceMap?.apcUsd?.source, 'landing_page');
+    assert.equal(catalogMissingApc.impactFactor, 14.7);
+    assert.equal(catalogMissingApc.provenanceMap?.impactFactor?.source, 'catalog_snapshot');
+
+    const userKept = mergeLandingPageFacts(
+      {
+        journalName: 'Nature Communications',
+        publisher: 'Nature Portfolio',
+        impactFactor: 15,
+        firstDecisionDays: null,
+        verificationStatus: 'user_provided',
+        isVerifiedClarivate: false,
+        sourceAttribution: 'Manually supplied by user',
+        provenanceMap: {},
+      } as MergeableJournalFacts,
+      extractLandingPageFacts(ncommsHtml, 'https://www.nature.com/ncomms')
+    );
+    assert.equal(userKept.impactFactor, 15);
+    assert.equal(userKept.provenanceMap?.impactFactor?.source, 'user_provided');
+    assert.match(userKept.provenanceMap?.impactFactor?.note || '', /18\.1/);
+    assert.equal(userKept.firstDecisionDays, 9);
+    assert.equal(userKept.provenanceMap?.firstDecisionDays?.source, 'landing_page');
 
     const jbeCache = new Map();
     const jbe = await lookupClarivateFacts('https://link.springer.com/journal/10551', false, {
@@ -354,7 +578,11 @@ export async function runLandingPageTests() {
       },
     });
     assert.equal(offline.journalName, 'Nature');
-    assert.equal(offline.verificationStatus, 'source_verified');
+    assert.equal(offline.verificationStatus, 'unverified');
+    assert.equal(offline.isVerifiedClarivate, false);
+    assert.equal(offline.impactFactor, 50.5);
+    assert.equal(offline.provenanceMap?.impactFactor?.source, 'catalog_snapshot');
+    assert.doesNotMatch(offline.sourceAttribution, /Verified via Clarivate/);
     assert.match(offline.provenanceMap?.landingPage?.note || '', /timed out/);
 
     await assert.rejects(
