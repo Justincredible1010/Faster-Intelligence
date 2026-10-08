@@ -328,6 +328,8 @@ export const InputStudio: React.FC<Props> = ({
                         ? '✓ Clarivate Verified'
                         : clarivateFacts.verificationStatus === 'user_provided'
                         ? 'User Provided'
+                        : clarivateFacts.provenanceMap?.impactFactor?.source === 'landing_page'
+                        ? 'Page-sourced'
                         : 'Unverified'}
                     </span>
                   </div>
@@ -483,9 +485,15 @@ export const InputStudio: React.FC<Props> = ({
               <div className="flex items-center gap-1.5">
                 <Clock className="w-3 h-3 text-slate-400" />
                 <span>
-                  {clarivateFacts.isFromCache
-                    ? 'Cached record (refreshed automatically)'
-                    : 'Real-time verified source'}
+                  {clarivateFacts.verificationStatus === 'source_verified'
+                    ? clarivateFacts.isFromCache
+                      ? 'Cached Clarivate catalog record'
+                      : 'Clarivate catalog record'
+                    : clarivateFacts.verificationStatus === 'user_provided'
+                    ? 'User-provided metrics'
+                    : clarivateFacts.provenanceMap?.impactFactor?.source === 'landing_page'
+                    ? 'Page-sourced from the landing page (not Clarivate-verified)'
+                    : 'Not Clarivate-verified'}
                 </span>
                 {clarivateFacts.reportingYear && (
                   <span>· {clarivateFacts.reportingYear}</span>
@@ -505,7 +513,21 @@ export const InputStudio: React.FC<Props> = ({
               <div className="pt-2 border-t border-slate-200 space-y-1.5 text-[11px] text-slate-600">
                 <p>
                   <strong>Aims &amp; Scope Summary:</strong> {clarivateFacts.aimsAndScopeSummary}
+                  {clarivateFacts.provenanceMap?.aimsAndScopeSummary?.source === 'landing_page' ? ' (landing page)' : ''}
                 </p>
+                {(clarivateFacts.extractedFacts?.issnPrint?.value || clarivateFacts.extractedFacts?.issnElectronic?.value) && (
+                  <p>
+                    ISSN:
+                    {clarivateFacts.extractedFacts?.issnPrint?.value ? ` print ${clarivateFacts.extractedFacts.issnPrint.value}` : ''}
+                    {clarivateFacts.extractedFacts?.issnElectronic?.value ? ` electronic ${clarivateFacts.extractedFacts.issnElectronic.value}` : ''}
+                    {' '}(landing page)
+                  </p>
+                )}
+                {clarivateFacts.submissionPortalUrl && (
+                  <p>
+                    Submission URL: <strong>{clarivateFacts.submissionPortalUrl}</strong> (landing page)
+                  </p>
+                )}
                 <div className="flex flex-wrap items-center gap-4 text-slate-500">
                   <span>
                     Indexing: <strong>{clarivateFacts.indexing?.join(', ') || 'SCIE, Scopus'}</strong>

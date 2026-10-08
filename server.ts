@@ -6,6 +6,20 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { loadMetricsCacheFromDisk } from './src/utils/metricsCache';
+import type { ExtractedPageFacts } from './src/types';
+import {
+  LandingPageError,
+  extractLandingPageFacts,
+  fetchLandingPage,
+  formatLandingPagePromptSection,
+  isNatureFlagshipHome,
+  isPublisherHomepage,
+  journalCacheKey,
+  mergeLandingPageFacts,
+  normalizedRequestUrl,
+  parseAllowedJournalUrl,
+  type FetchLandingPageDeps,
+} from './src/utils/landingPage';
 
 dotenv.config();
 
@@ -58,6 +72,12 @@ export interface JCRJournalEntry {
   isFromCache?: boolean;
   cachedAt?: string;
   cacheExpiresAt?: string;
+  issnPrint?: string | null;
+  issnElectronic?: string | null;
+  submissionPortalUrl?: string | null;
+  authorGuidelinesUrl?: string | null;
+  extractedFacts?: ExtractedPageFacts;
+  provenanceMap?: Record<string, { source: string; confidence: number; year?: number; note?: string }>;
 }
 
 export interface CachedMetricEntry {
@@ -232,6 +252,8 @@ export const CLARIVATE_JCR_CATALOG: JCRJournalEntry[] = [
   {
     url: 'https://www.nature.com/nature',
     slugs: ['nature', 'flagship', 'default'],
+    issnPrint: '0028-0836',
+    issnElectronic: '1476-4687',
     journalName: 'Nature',
     publisher: 'Nature Portfolio',
     impactFactor: 50.5,
@@ -253,6 +275,7 @@ export const CLARIVATE_JCR_CATALOG: JCRJournalEntry[] = [
   {
     url: 'https://www.nature.com/ncomms',
     slugs: ['ncomms', 'nature-communications'],
+    issnElectronic: '2041-1723',
     journalName: 'Nature Communications',
     publisher: 'Nature Portfolio',
     impactFactor: 14.7,
@@ -274,6 +297,8 @@ export const CLARIVATE_JCR_CATALOG: JCRJournalEntry[] = [
   {
     url: 'https://www.nature.com/aps',
     slugs: ['aps', 'acta-pharmacologica-sinica'],
+    issnPrint: '1671-4083',
+    issnElectronic: '1745-7254',
     journalName: 'Acta Pharmacologica Sinica',
     publisher: 'Nature Portfolio',
     impactFactor: 6.9,
@@ -295,6 +320,8 @@ export const CLARIVATE_JCR_CATALOG: JCRJournalEntry[] = [
   {
     url: 'https://www.nature.com/cr',
     slugs: ['cr', 'cell-research'],
+    issnPrint: '1001-0602',
+    issnElectronic: '1748-7838',
     journalName: 'Cell Research',
     publisher: 'Nature Portfolio',
     impactFactor: 28.1,
@@ -316,6 +343,7 @@ export const CLARIVATE_JCR_CATALOG: JCRJournalEntry[] = [
   {
     url: 'https://www.nature.com/srep',
     slugs: ['srep', 'scientific-reports'],
+    issnElectronic: '2045-2322',
     journalName: 'Scientific Reports',
     publisher: 'Nature Portfolio',
     impactFactor: 3.8,
@@ -337,6 +365,8 @@ export const CLARIVATE_JCR_CATALOG: JCRJournalEntry[] = [
   {
     url: 'https://www.nature.com/onc',
     slugs: ['onc', 'oncogene'],
+    issnPrint: '0950-9232',
+    issnElectronic: '1476-5594',
     journalName: 'Oncogene',
     publisher: 'Nature Portfolio',
     impactFactor: 6.9,
@@ -358,6 +388,7 @@ export const CLARIVATE_JCR_CATALOG: JCRJournalEntry[] = [
   {
     url: 'https://bmcbiol.biomedcentral.com',
     slugs: ['bmc-biology', 'bmcbiol'],
+    issnElectronic: '1741-7007',
     journalName: 'BMC Biology',
     publisher: 'BMC (Part of Springer Nature)',
     impactFactor: 5.4,
@@ -396,103 +427,231 @@ export function normalizeUrlComponents(rawUrl: string): { host: string; slug: st
   }
 }
 
-// Lookup Clarivate facts with Persistent Cache + Fallback Safeguards
-export async function lookupClarivateFacts(url: string, forceRefresh = false): Promise<JCRJournalEntry> {
-  const norm = normalizeUrlComponents(url);
-  const journalId = norm.journalId;
+function hostsEquivalent(left: string, right: string): boolean {
+  const normalize = (host: string) => host.toLowerCase().replace(/^www\./, '');
+  return normalize(left) === normalize(right);
+}
 
-  // 1. Check persistent in-memory cache first (unless forceRefresh)
-  if (!forceRefresh && metricsCache.has(journalId)) {
-    const cached = metricsCache.get(journalId)!;
-    if (!isCachedJournalExpired(cached) && cached.fullFacts) {
-      console.log(`[Cache HIT] Retrieved ${journalId} (${cached.journalName}) from metrics-cache.json`);
-      return {
-        ...cached.fullFacts,
-        isFromCache: true,
-        cachedAt: cached.lastAccess,
-        cacheExpiresAt: cached.metrics['impactFactor']?.expireAt,
-      };
-    }
-    console.log(`[Cache EXPIRED] Cached data for ${journalId} is stale. Refreshing...`);
+function findCatalogEntry(rawUrl: string, page: ExtractedPageFacts | null): JCRJournalEntry | undefined {
+  const norm = normalizeUrlComponents(rawUrl);
+  const issns = [page?.issnPrint.value, page?.issnElectronic.value]
+    .map((value) => (value || '').toUpperCase())
+    .filter(Boolean);
+  if (issns.length > 0) {
+    const byIssn = CLARIVATE_JCR_CATALOG.find((entry) =>
+      [entry.issnPrint, entry.issnElectronic].some((value) => value && issns.includes(value.toUpperCase()))
+    );
+    if (byIssn) return byIssn;
   }
 
-  // 2. Direct exact catalog match
-  const exact = CLARIVATE_JCR_CATALOG.find((entry) => {
+  return CLARIVATE_JCR_CATALOG.find((entry) => {
     const entryNorm = normalizeUrlComponents(entry.url);
-    if (norm.slug && entry.slugs.includes(norm.slug)) return true;
-    if (!norm.slug && (norm.host.includes('nature.com') || norm.full === 'https://www.nature.com') && entry.slugs.includes('nature')) {
+    if (hostsEquivalent(entryNorm.host, norm.host) && norm.slug && entry.slugs.includes(norm.slug)) return true;
+    if (isNatureFlagshipHome(norm.full) && entry.slugs.includes('nature') && hostsEquivalent(entryNorm.host, 'nature.com')) {
       return true;
     }
-    return entryNorm.full === norm.full || entryNorm.host === norm.host && entryNorm.slug === norm.slug;
+    return entryNorm.full === norm.full;
   });
+}
 
-  if (exact) {
-    console.log(`[Catalog MATCH] Found verified record for ${exact.journalName}`);
-    // Save into cache
-    const nowStr = new Date().toISOString();
-    const cachedEntry: CachedJournal = {
-      journalId,
-      journalName: exact.journalName,
-      publisher: exact.publisher,
-      lastAccess: nowStr,
-      metrics: {
-        impactFactor: {
-          metric: 'impactFactor',
-          value: exact.impactFactor,
-          year: 2024,
-          source: 'Clarivate JCR',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('impactFactor'),
-        },
-        casZone: {
-          metric: 'casZone',
-          value: exact.casZone || null,
-          year: 2024,
-          source: 'CAS Ranking',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('casZone'),
-        },
-        firstDecisionDays: {
-          metric: 'firstDecisionDays',
-          value: exact.firstDecisionDays || null,
-          year: 2024,
-          source: 'Publisher Average',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('firstDecisionDays'),
-        },
-        apcUsd: {
-          metric: 'apcUsd',
-          value: exact.apcUsd || null,
-          year: 2024,
-          source: 'Publisher Price List',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('apcUsd'),
-        },
-      },
-      fullFacts: exact,
-    };
-    metricsCache.set(journalId, cachedEntry);
-    saveCacheToDisk();
+function publisherHomepageFacts(rawUrl: string): JCRJournalEntry {
+  const norm = normalizeUrlComponents(rawUrl);
+  return {
+    url: norm.full,
+    slugs: [],
+    journalName: 'Publisher homepage',
+    publisher: 'Springer Nature',
+    impactFactor: null,
+    fiveYearImpactFactor: null,
+    jcrQuartile: null,
+    casZone: null,
+    firstDecisionDays: null,
+    indexing: [],
+    openAccessType: null,
+    apcUsd: null,
+    chinaWaiverAvailable: false,
+    aimsAndScopeSummary: 'This URL is a publisher homepage, not a journal landing page.',
+    primaryDiscipline: 'Not a journal',
+    isVerifiedClarivate: false,
+    verificationStatus: 'missing',
+    missingFields: ['impactFactor', 'casZone', 'jcrQuartile', 'firstDecisionDays', 'apcUsd', 'indexing'],
+    reportingYear: 'Not a journal',
+    sourceAttribution: 'Enter a journal landing page, for example https://www.nature.com/ncomms. https://www.nature.com/ is the Nature journal; other Springer Nature homepages are not journals.',
+    provenanceMap: {
+      journalName: { source: 'landing_page', confidence: 0.9, note: 'Publisher homepage, not a journal' },
+    },
+  };
+}
 
-    return {
-      ...exact,
-      isFromCache: false,
-      cachedAt: nowStr,
-      cacheExpiresAt: cachedEntry.metrics['impactFactor']?.expireAt,
-    };
+export interface JournalLookupOptions {
+  cache?: Map<string, CachedJournal>;
+  persist?: boolean;
+  fetchPage?: (url: string) => Promise<{ html: string; finalUrl: string }>;
+  fetchDeps?: FetchLandingPageDeps;
+  /** Replaces the Gemini metrics lookup. Return null to skip it. */
+  aiLookup?: (url: string) => Promise<Partial<JCRJournalEntry> | null>;
+}
+
+function rememberCachedJournal(cache: Map<string, CachedJournal>, keys: string[], entry: CachedJournal, persist: boolean) {
+  const primary = entry.journalId;
+  cache.set(primary, entry);
+  for (const key of keys) {
+    if (key && key !== primary) cache.set(key, { ...entry, journalId: primary });
+  }
+  if (persist) saveCacheToDisk();
+}
+
+function readFreshCache(cache: Map<string, CachedJournal>, key: string): JCRJournalEntry | null {
+  const cached = cache.get(key);
+  if (!cached?.fullFacts || isCachedJournalExpired(cached)) return null;
+  return {
+    ...cached.fullFacts,
+    isFromCache: true,
+    cachedAt: cached.lastAccess,
+    cacheExpiresAt: cached.metrics['impactFactor']?.expireAt,
+  };
+}
+
+// Lookup Clarivate facts, then ground them in the journal landing page when it can be read.
+export async function lookupClarivateFacts(
+  url: string,
+  forceRefresh = false,
+  options: JournalLookupOptions = {}
+): Promise<JCRJournalEntry> {
+  parseAllowedJournalUrl(url);
+  const norm = normalizeUrlComponents(normalizedRequestUrl(url));
+
+  if (isPublisherHomepage(norm.full)) {
+    console.log(`[Landing Page] ${norm.full} is a publisher homepage, not a journal.`);
+    return publisherHomepageFacts(norm.full);
   }
 
-  // 3. AI Lookup via Gemini if available
-  if (ai) {
-    try {
-      console.log(`[AI Lookup] Querying Gemini for journal metrics: ${norm.full}`);
-      const timeoutPromise = new Promise<null>((_, reject) =>
-        setTimeout(() => reject(new Error('AI lookup timed out')), 5000)
-      );
+  const cache = options.cache ?? metricsCache;
+  const persist = options.persist ?? options.cache === undefined;
+  const urlKey = journalCacheKey({ requestUrl: norm.full });
 
-      const aiQuery = ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: `You are an academic publishing metrics database. Find the verified Clarivate JCR metrics for this journal URL: "${norm.full}".
+  if (!forceRefresh) {
+    const cached = readFreshCache(cache, urlKey);
+    if (cached) {
+      console.log(`[Cache HIT] Retrieved ${urlKey} (${cached.journalName})`);
+      return cached;
+    }
+  }
+
+  let page: ExtractedPageFacts | null = null;
+  let fetchError: string | undefined;
+  try {
+    const fetched = options.fetchPage
+      ? await options.fetchPage(norm.full)
+      : await fetchLandingPage(norm.full, options.fetchDeps);
+    page = extractLandingPageFacts(fetched.html, fetched.finalUrl);
+    console.log(`[Landing Page] Read ${fetched.finalUrl} (${page.layout}, title ${page.journalTitle.value || 'unknown'})`);
+  } catch (err) {
+    if (err instanceof LandingPageError && err.code === 'ssrf') throw err;
+    fetchError = err instanceof Error ? err.message : 'Landing page could not be read.';
+    console.warn(`[Landing Page] ${norm.full}: ${fetchError}`);
+  }
+
+  const catalog = findCatalogEntry(norm.full, page);
+  const primaryKey = journalCacheKey({
+    issnPrint: page?.issnPrint.value || catalog?.issnPrint,
+    issnElectronic: page?.issnElectronic.value || catalog?.issnElectronic,
+    canonicalUrl: page?.canonicalUrl.value || norm.full,
+    requestUrl: norm.full,
+  });
+
+  if (!forceRefresh && primaryKey !== urlKey) {
+    const cached = readFreshCache(cache, primaryKey);
+    if (cached) {
+      console.log(`[Cache HIT] Retrieved ${primaryKey} (${cached.journalName})`);
+      return cached;
+    }
+  }
+
+  let base: JCRJournalEntry;
+  if (catalog) {
+    console.log(`[Catalog MATCH] Found verified record for ${catalog.journalName}`);
+    base = {
+      ...catalog,
+      url: norm.full,
+      provenanceMap: {
+        impactFactor: { source: 'Clarivate', confidence: 0.95, year: 2024 },
+        journalName: { source: 'Clarivate', confidence: 0.95 },
+      },
+    };
+  } else {
+    const aiFacts = await lookupWithGemini(norm.full, options);
+    base = aiFacts ?? missingJournalFacts(norm);
+  }
+
+  const merged = mergeLandingPageFacts(base, page, { fetchError });
+  const nowStr = new Date().toISOString();
+  const cachedEntry: CachedJournal = {
+    journalId: primaryKey,
+    journalName: merged.journalName,
+    publisher: merged.publisher,
+    lastAccess: nowStr,
+    metrics: {
+      impactFactor: {
+        metric: 'impactFactor',
+        value: merged.impactFactor,
+        year: 2024,
+        source: merged.provenanceMap?.impactFactor?.source === 'landing_page' ? 'landing_page' : merged.verificationStatus === 'source_verified' ? 'Clarivate JCR' : 'Web Lookup',
+        cachedAt: nowStr,
+        expireAt: calculateMetricExpiry('impactFactor'),
+      },
+      casZone: {
+        metric: 'casZone',
+        value: merged.casZone || null,
+        year: 2024,
+        source: merged.verificationStatus === 'source_verified' ? 'CAS Ranking' : 'Web Lookup',
+        cachedAt: nowStr,
+        expireAt: calculateMetricExpiry('casZone'),
+      },
+      firstDecisionDays: {
+        metric: 'firstDecisionDays',
+        value: merged.firstDecisionDays || null,
+        year: 2024,
+        source: merged.provenanceMap?.firstDecisionDays?.source === 'landing_page' ? 'landing_page' : 'Publisher Average',
+        cachedAt: nowStr,
+        expireAt: calculateMetricExpiry('firstDecisionDays'),
+      },
+      apcUsd: {
+        metric: 'apcUsd',
+        value: merged.apcUsd || null,
+        year: 2024,
+        source: merged.provenanceMap?.apcUsd?.source === 'landing_page' ? 'landing_page' : 'Publisher Price List',
+        cachedAt: nowStr,
+        expireAt: calculateMetricExpiry('apcUsd'),
+      },
+    },
+    fullFacts: merged,
+  };
+  rememberCachedJournal(cache, [primaryKey, urlKey], cachedEntry, persist);
+
+  return {
+    ...merged,
+    isFromCache: false,
+    cachedAt: nowStr,
+    cacheExpiresAt: cachedEntry.metrics['impactFactor']?.expireAt,
+  };
+}
+
+async function lookupWithGemini(url: string, options: JournalLookupOptions): Promise<JCRJournalEntry | null> {
+  if (options.aiLookup) {
+    const parsed = await options.aiLookup(url);
+    return parsed ? geminiFacts(url, parsed) : null;
+  }
+  if (!ai) return null;
+
+  try {
+    console.log(`[AI Lookup] Querying Gemini for journal metrics: ${url}`);
+    const timeoutPromise = new Promise<null>((_, reject) =>
+      setTimeout(() => reject(new Error('AI lookup timed out')), 5000)
+    );
+    const aiQuery = ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: `You are an academic publishing metrics database. Find the verified Clarivate JCR metrics for this journal URL: "${url}".
 Return strictly a JSON object with:
 {
   "journalName": string,
@@ -510,60 +669,52 @@ Return strictly a JSON object with:
   "primaryDiscipline": string
 }
 If this is not a known scholarly journal or impact factor cannot be verified, return null for impactFactor.`,
-        config: {
-          responseMimeType: 'application/json',
-        },
-      });
-
-      const res: any = await Promise.race([aiQuery, timeoutPromise]);
-      if (res && res.text) {
-        const parsed = JSON.parse(res.text);
-        if (parsed.journalName && parsed.impactFactor !== null && parsed.impactFactor !== undefined) {
-          const aiFacts: JCRJournalEntry = {
-            url: norm.full,
-            slugs: [norm.slug],
-            ...parsed,
-            isVerifiedClarivate: false,
-            verificationStatus: 'unverified',
-            reportingYear: 'Estimated Web Knowledge (Review in Step 1)',
-            sourceAttribution: 'Retrieved via Web Knowledge Engine — Please verify against official Clarivate JCR',
-          };
-
-          // Cache AI result
-          const nowStr = new Date().toISOString();
-          metricsCache.set(journalId, {
-            journalId,
-            journalName: parsed.journalName,
-            publisher: parsed.publisher || 'Springer Nature',
-            lastAccess: nowStr,
-            metrics: {
-              impactFactor: {
-                metric: 'impactFactor',
-                value: parsed.impactFactor,
-                year: 2024,
-                source: 'Web Lookup',
-                cachedAt: nowStr,
-                expireAt: calculateMetricExpiry('impactFactor'),
-              },
-            },
-            fullFacts: aiFacts,
-          });
-          saveCacheToDisk();
-
-          return aiFacts;
-        }
-      }
-    } catch (e: any) {
-      console.warn('[AI Lookup Failed]:', e.message);
-    }
+      config: { responseMimeType: 'application/json' },
+    });
+    const res: any = await Promise.race([aiQuery, timeoutPromise]);
+    if (!res?.text) return null;
+    const parsed = JSON.parse(res.text);
+    if (!parsed.journalName || parsed.impactFactor === null || parsed.impactFactor === undefined) return null;
+    return geminiFacts(url, parsed);
+  } catch (err: any) {
+    console.warn('[AI Lookup Failed]:', err.message);
+    return null;
   }
+}
 
-  // 4. UNKNOWN JOURNAL / LOOKUP FAILED:
-  // Return missing verificationStatus with null metrics and missingFields list.
-  // NO INVENTED NUMBERS!
+function geminiFacts(url: string, parsed: Partial<JCRJournalEntry>): JCRJournalEntry {
+  const norm = normalizeUrlComponents(url);
+  return {
+    url: norm.full,
+    slugs: norm.slug ? [norm.slug] : [],
+    journalName: parsed.journalName || 'Unknown Journal',
+    publisher: parsed.publisher || 'Springer Nature',
+    impactFactor: parsed.impactFactor ?? null,
+    fiveYearImpactFactor: parsed.fiveYearImpactFactor ?? null,
+    jcrQuartile: parsed.jcrQuartile ?? null,
+    casZone: parsed.casZone ?? null,
+    firstDecisionDays: parsed.firstDecisionDays ?? null,
+    indexing: parsed.indexing || [],
+    openAccessType: parsed.openAccessType ?? null,
+    apcUsd: parsed.apcUsd ?? null,
+    chinaWaiverAvailable: parsed.chinaWaiverAvailable ?? false,
+    aimsAndScopeSummary: parsed.aimsAndScopeSummary || 'Aims and scope not verified.',
+    primaryDiscipline: parsed.primaryDiscipline || 'Research Fields Unverified',
+    isVerifiedClarivate: false,
+    verificationStatus: 'unverified',
+    reportingYear: 'Estimated Web Knowledge (Review in Step 1)',
+    sourceAttribution: 'Retrieved via Web Knowledge Engine — not verified. Confirm against the journal page or Clarivate JCR.',
+    provenanceMap: {
+      impactFactor: { source: 'gemini', confidence: 0.4, note: 'Model guess; not verified' },
+      journalName: { source: 'gemini', confidence: 0.4, note: 'Model guess; not verified' },
+      aimsAndScopeSummary: { source: 'gemini', confidence: 0.3, note: 'Model guess; not verified' },
+    },
+  };
+}
+
+function missingJournalFacts(norm: { host: string; slug: string; full: string }): JCRJournalEntry {
   let guessedName = 'Unknown Journal';
   let guessedPublisher = 'Springer Nature';
-
   if (norm.host.includes('nature.com')) {
     guessedPublisher = 'Nature Portfolio';
     guessedName = norm.slug ? `Nature ${norm.slug.charAt(0).toUpperCase() + norm.slug.slice(1)}` : 'Nature Portfolio Journal';
@@ -576,7 +727,6 @@ If this is not a known scholarly journal or impact factor cannot be verified, re
   }
 
   console.log(`[Metrics Missing] Journal ${norm.full} is unknown. Returning null fields and prompting user verification.`);
-
   return {
     url: norm.full,
     slugs: norm.slug ? [norm.slug] : [],
@@ -598,6 +748,9 @@ If this is not a known scholarly journal or impact factor cannot be verified, re
     missingFields: ['impactFactor', 'casZone', 'jcrQuartile', 'firstDecisionDays', 'apcUsd', 'indexing'],
     reportingYear: 'Missing Data',
     sourceAttribution: 'Please manually verify and add journal metrics before generating campaigns.',
+    provenanceMap: {
+      journalName: { source: 'url_guess', confidence: 0, note: 'Name guessed from the URL path; not verified' },
+    },
   };
 }
 
@@ -613,6 +766,9 @@ app.post('/api/fetch-clarivate-facts', async (req, res) => {
     const facts = await lookupClarivateFacts(url, forceRefresh);
     res.json({ success: true, facts });
   } catch (err: any) {
+    if (err instanceof LandingPageError && err.code === 'ssrf') {
+      return res.status(400).json({ error: err.message });
+    }
     console.error('Clarivate lookup error:', err);
     res.status(500).json({ error: 'Failed to retrieve Clarivate metrics' });
   }
@@ -688,8 +844,12 @@ app.post('/api/update-journal-metrics', (req, res) => {
       return res.status(400).json({ error: 'Valid journal metrics object is required.' });
     }
 
-    const norm = normalizeUrlComponents(facts.url || '');
-    const journalId = norm.slug || facts.journalName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const journalId = journalCacheKey({
+      issnPrint: facts.issnPrint || facts.extractedFacts?.issnPrint?.value,
+      issnElectronic: facts.issnElectronic || facts.extractedFacts?.issnElectronic?.value,
+      canonicalUrl: facts.extractedFacts?.canonicalUrl?.value || facts.url,
+      requestUrl: facts.url,
+    });
     const nowStr = new Date().toISOString();
 
     const userProvidedFacts: JCRJournalEntry = {
@@ -764,6 +924,18 @@ interface HeadlineSeed {
   language: 'EN' | 'ZH';
   category: string;
   positionRecommendation: string;
+}
+
+function stageDestination(facts: any, stage: StageCode, stageConfig: any) {
+  const norm = normalizeUrlComponents(facts.url || '');
+  const baseUrl = (norm.full || 'https://www.nature.com').replace(/\/$/, '');
+  const submissionUrl = facts.submissionPortalUrl || facts.extractedFacts?.submissionPortalUrl?.value || null;
+  const useSubmission = stage === 'DEC' && submissionUrl;
+  return {
+    label: useSubmission ? 'Submission portal' : stageConfig.recommendedDestination.label,
+    url: useSubmission ? submissionUrl : `${baseUrl}${stageConfig.recommendedDestination.urlPath}`,
+    description: stageConfig.recommendedDestination.description,
+  };
 }
 
 // Stage Headlines with language purity & null-metrics defenses
@@ -907,8 +1079,11 @@ export function generateStageHeadlines(
 // Stage Descriptions with language purity
 export function generateStageDescriptions(facts: any, stage: StageCode, outputLanguage: 'all' | 'EN' | 'ZH' = 'all') {
   if (stage === 'AWA') {
+    const aimsSentence = facts.aimsAndScopeSummary && !/not verified|publisher homepage/i.test(facts.aimsAndScopeSummary)
+      ? facts.aimsAndScopeSummary
+      : '';
     const en = [
-      { text: smartClamp(`Explore research published in ${facts.journalName}. Serving the global scientific community.`, 90), sourceFact: 'Journal Overview', language: 'EN' as const, theme: 'Scope & Relevance' },
+      { text: smartClamp(aimsSentence ? `${facts.journalName}: ${aimsSentence}` : `Explore research published in ${facts.journalName}. Serving the global scientific community.`, 90), sourceFact: aimsSentence ? 'landing_page aims and scope' : 'Journal Overview', language: 'EN' as const, theme: 'Scope & Relevance' },
       { text: smartClamp(`Discover multidisciplinary advances and innovative discoveries across ${facts.primaryDiscipline}.`, 90), sourceFact: facts.primaryDiscipline, language: 'EN' as const, theme: 'Scope & Relevance' },
       { text: smartClamp(`Published by ${facts.publisher}. Connect with global readership and open scholarship.`, 90), sourceFact: facts.publisher, language: 'EN' as const, theme: 'Scope & Relevance' },
       { text: smartClamp(`Browse recent articles, view journal scope, and explore research topics today.`, 90), sourceFact: 'Discovery CTA', language: 'EN' as const, theme: 'Scope & Relevance' },
@@ -1094,7 +1269,9 @@ export function generateDeterministicCampaign(
   displayAd.descriptionCharCount = displayAd.description.length;
 
   const norm = normalizeUrlComponents(facts.url || '');
-  const baseUrl = norm.full || 'https://www.nature.com';
+  const baseUrl = (norm.full || 'https://www.nature.com').replace(/\/$/, '');
+  const destination = stageDestination(facts, stage, stageConfig);
+  const submissionUrl = facts.submissionPortalUrl || facts.extractedFacts?.submissionPortalUrl?.value || null;
 
   const sitelinks =
     stage === 'AWA'
@@ -1115,7 +1292,7 @@ export function generateDeterministicCampaign(
           { title: 'Author Guidelines', desc: 'Manuscript preparation and style guide', urlPath: `${baseUrl}/for-authors` },
           { title: 'Submission Checklist', desc: 'Required documentation before submitting', urlPath: `${baseUrl}/checklist` },
           { title: 'APC & Waiver Criteria', desc: 'Fee policy and funding guidelines', urlPath: `${baseUrl}/apc-waivers` },
-          { title: 'Online Submission Portal', desc: 'Submit paper for peer review', urlPath: `${baseUrl}/submit` },
+          { title: 'Online Submission Portal', desc: 'Submit paper for peer review', urlPath: submissionUrl || `${baseUrl}/submit` },
         ];
 
   const callouts =
@@ -1131,11 +1308,7 @@ export function generateDeterministicCampaign(
     clarivateFacts: facts,
     funnelStrategyNote: `${stageConfig.name}: ${stageConfig.campaignObjective}`,
     primaryCta: stageConfig.primaryCta,
-    recommendedDestination: {
-      label: stageConfig.recommendedDestination.label,
-      url: `${baseUrl}${stageConfig.recommendedDestination.urlPath}`,
-      description: stageConfig.recommendedDestination.description,
-    },
+    recommendedDestination: destination,
     generationSource: 'template_fallback' as const,
     searchAds: {
       headlines,
@@ -1143,14 +1316,16 @@ export function generateDeterministicCampaign(
       sitelinks,
       callouts,
       structuredSnippet: {
-        header: 'Disciplines',
-        values: [(facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), facts.publisher, 'Peer-Reviewed Research'],
+        header: stage === 'CON' && facts.extractedFacts?.acceptedArticleTypes?.value?.length ? 'Article types' : 'Disciplines',
+        values: facts.extractedFacts?.acceptedArticleTypes?.value?.length
+          ? facts.extractedFacts.acceptedArticleTypes.value.slice(0, 3)
+          : [(facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), facts.publisher, 'Peer-Reviewed Research'],
       },
-      recommendedFinalUrl: `${baseUrl}${stageConfig.recommendedDestination.urlPath}`,
+      recommendedFinalUrl: destination.url,
     },
     displayAds: {
       ...displayAd,
-      recommendedFinalUrl: `${baseUrl}${stageConfig.recommendedDestination.urlPath}`,
+      recommendedFinalUrl: destination.url,
     },
     keywords,
   };
@@ -1219,6 +1394,8 @@ FACTUAL METRICS (Strict source attribution, NO invented numbers):
 - Indexing: ${facts.indexing?.join(', ') || 'SCIE, Scopus'}
 - Open Access: ${facts.openAccessType || 'Hybrid Open Access'} (APC: $${facts.apcUsd || 'Transparent'})
 - Output Language: ${outputLanguage}
+
+${formatLandingPagePromptSection(facts)}
 
 ${customPlaybook ? `PLAYBOOK RULES:\n${customPlaybook}\n` : ''}
 
@@ -1321,9 +1498,6 @@ GOOGLE ADS REQUIREMENTS:
       campaignOutput.displayAds.targetPlacements = campaignOutput.displayAds.targetPlacements || fallback.displayAds.targetPlacements;
     }
 
-    const norm = normalizeUrlComponents(facts.url || '');
-    const baseUrl = norm.full || 'https://www.nature.com';
-
     res.json({
       success: true,
       campaign: {
@@ -1332,18 +1506,17 @@ GOOGLE ADS REQUIREMENTS:
         clarivateFacts: facts,
         funnelStrategyNote: `${stageConfig.name}: ${stageConfig.campaignObjective}`,
         primaryCta: campaignOutput.primaryCta || stageConfig.primaryCta,
-        recommendedDestination: {
-          label: stageConfig.recommendedDestination.label,
-          url: `${baseUrl}${stageConfig.recommendedDestination.urlPath}`,
-          description: stageConfig.recommendedDestination.description,
-        },
         generationSource,
         outputLanguage,
         generatedAt: new Date().toISOString(),
         ...campaignOutput,
+        recommendedDestination: stageDestination(facts, normalizedStage, stageConfig),
       },
     });
   } catch (error: any) {
+    if (error instanceof LandingPageError && error.code === 'ssrf') {
+      return res.status(400).json({ error: error.message });
+    }
     console.error('Campaign generation failed:', error);
     res.status(500).json({ error: error.message || 'Server error' });
   }
@@ -1369,6 +1542,9 @@ app.post('/api/compare-stages', async (req, res) => {
       },
     });
   } catch (err: any) {
+    if (err instanceof LandingPageError && err.code === 'ssrf') {
+      return res.status(400).json({ error: err.message });
+    }
     console.error('Compare stages failed:', err);
     res.status(500).json({ error: err.message || 'Failed to compare stages' });
   }
@@ -1393,7 +1569,10 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('Server failed to start:', err);
-  process.exit(1);
-});
+const entryScript = process.argv[1] ? path.resolve(process.argv[1]) : '';
+if (entryScript === __filename || entryScript.endsWith(`${path.sep}server.ts`)) {
+  startServer().catch((err) => {
+    console.error('Server failed to start:', err);
+    process.exit(1);
+  });
+}

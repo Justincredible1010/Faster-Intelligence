@@ -66,11 +66,15 @@ export default function App() {
         body: JSON.stringify({ url: url.trim(), forceRefresh }),
       });
       const data = await res.json();
-      if (data.facts) {
-        setClarivateFacts(data.facts);
-        if (campaign) {
-          setCampaign((prev) => (prev ? { ...prev, clarivateFacts: data.facts } : null));
-        }
+      if (!res.ok || !data.facts) {
+        setClarivateFacts(null);
+        setCampaign(null);
+        setError(data.error || 'That URL could not be read as a Springer Nature journal page.');
+        return;
+      }
+      setClarivateFacts(data.facts);
+      if (campaign) {
+        setCampaign((prev) => (prev ? { ...prev, clarivateFacts: data.facts } : null));
       }
     } catch (err: any) {
       console.error('Failed to fetch Clarivate JCR facts:', err);

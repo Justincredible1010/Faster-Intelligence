@@ -16,17 +16,37 @@ export interface ExtractedFactField<T> {
   provenanceLabel?: string;
 }
 
+/** A number or labelled figure taken from the journal page itself, not from Clarivate or a model guess. */
+export interface PageSourcedMetric {
+  label: string;
+  value: string;
+  numericValue?: number | null;
+  year?: number | null;
+  kind: 'impact_factor' | 'five_year_impact_factor' | 'first_decision_days' | 'downloads' | 'apc' | 'other';
+  provenance: 'page-sourced';
+}
+
 export interface ExtractedPageFacts {
+  journalTitle: ExtractedFactField<string | null>;
+  issnPrint: ExtractedFactField<string | null>;
+  issnElectronic: ExtractedFactField<string | null>;
+  canonicalUrl: ExtractedFactField<string | null>;
+  publisherName: ExtractedFactField<string | null>;
   submissionPortalUrl: ExtractedFactField<string | null>;
   authorGuidelinesUrl: ExtractedFactField<string | null>;
   aimsAndScopeSummary: ExtractedFactField<string | null>;
   articleProcessingChargeUsd: ExtractedFactField<number | null>;
+  /** Link to an APC explainer when the page mentions fees but does not state an amount. */
+  apcInfoUrl: ExtractedFactField<string | null>;
   firstDecisionDays: ExtractedFactField<number | null>;
   acceptedArticleTypes: ExtractedFactField<string[]>;
   editorInChief: ExtractedFactField<string | null>;
   peerReviewModel: ExtractedFactField<string | null>;
   openAccessPolicy: ExtractedFactField<string | null>;
   specialIssuesAvailable: ExtractedFactField<boolean>;
+  /** Metrics the page itself states. Each item is labelled page-sourced. */
+  pageMetrics: PageSourcedMetric[];
+  layout: 'nature_portfolio' | 'springer_link' | 'unknown';
   rawConfidenceAverage: number;
   extractedDate: string;
 }

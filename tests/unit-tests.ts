@@ -12,6 +12,7 @@ import { loadMetricsCacheFromDisk } from '../src/utils/metricsCache';
 import { runComplianceAudit, autoFixComplianceIssues } from '../src/utils/complianceValidator';
 import { generateGoogleAdsEditorCsv, deriveDisplayUrl } from '../src/utils/csvExporter';
 import { GeneratedAdCampaign, ClarivateJournalMetrics } from '../src/types';
+import { runLandingPageTests } from './landing-page';
 
 console.log('--- RUNNING ADENGINE UNIT TEST SUITE ---');
 
@@ -294,6 +295,8 @@ console.log('\n[Test Suite 5] Metrics cache loading...');
   console.log('✓ Test Suite 5 Passed: Cache loader handles missing, invalid, and non-object files.');
 }
 
+await runLandingPageTests();
+
 console.log('\n=======================================');
-console.log('ALL 5 TEST SUITES PASSED WITHOUT ERRORS');
+console.log('ALL TEST SUITES PASSED WITHOUT ERRORS');
 console.log('=======================================\n');

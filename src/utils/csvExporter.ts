@@ -46,9 +46,14 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
   const displayUrl = deriveDisplayUrl(finalUrl);
 
   // Provenance string
-  const ifProv = facts.impactFactor
-    ? `Clarivate IF ${facts.impactFactor} (${facts.reportingYear || '2024'}, ${facts.verificationStatus})`
-    : 'No IF Reported';
+  const pageSourcedIf = facts.provenanceMap?.impactFactor?.source === 'landing_page';
+  const ifProv = !facts.impactFactor
+    ? 'No IF Reported'
+    : pageSourcedIf
+      ? `Page-sourced IF ${facts.impactFactor} (${facts.reportingYear || 'landing page'}, page-sourced)`
+      : facts.verificationStatus === 'source_verified'
+        ? `Clarivate IF ${facts.impactFactor} (${facts.reportingYear || '2024'}, ${facts.verificationStatus})`
+        : `Unverified IF ${facts.impactFactor} (${facts.reportingYear || 'unverified'}, ${facts.verificationStatus})`;
   const portalProv = facts.submissionPortalUrl
     ? `Extracted Portal URL (${facts.submissionPortalUrl})`
     : 'Verified Portal Default';
@@ -66,6 +71,8 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
       ? 'User-provided metrics; verify before scale'
       : facts.verificationStatus === 'source_verified'
       ? 'Source-grounded via Clarivate JCR & Web of Science'
+      : pageSourcedIf
+      ? 'Page-sourced from the journal landing page; not Clarivate-verified'
       : 'Estimated web data; review in editor';
 
   // Extract first 3 headlines and 2 descriptions (clamped strictly)
