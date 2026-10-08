@@ -121,8 +121,7 @@ function valueOf(field: FactValue | null | undefined): string {
   return clean(field?.value);
 }
 
-/** Landing URL from the catalog when the ISSN matches, otherwise a canonical journal home. */
-function journalLandingUrl(facts: StageUrlFacts): string {
+function catalogByIssn(facts: StageUrlFacts): string {
   const issns = [
     facts.issn,
     facts.eIssn,
@@ -134,9 +133,48 @@ function journalLandingUrl(facts: StageUrlFacts): string {
   const catalog = JOURNAL_CATALOG.find(
     (journal) => issns.includes(journal.issn || '') || issns.includes(journal.eIssn || '')
   );
-  if (catalog) return clean(catalog.url);
+  return catalog ? clean(catalog.url) : '';
+}
+
+/**
+ * A catalog landing URL that actually contains this path.
+ * An empty-path home is used only when that host has a single catalog journal,
+ * so https://www.nature.com is not treated as the parent of every Nature journal.
+ */
+function catalogByPath(current: NormalizedJournalUrl): string {
+  if (!current.hostKey) return '';
+  const sameHost = JOURNAL_CATALOG.map((journal) => normalizeJournalUrl(journal.url)).filter(
+    (journal) => journal.hostKey === current.hostKey && journal.canonical
+  );
+  const prefixed = sameHost
+    .filter((journal) => journal.pathname && (journalUrlsMatch(journal, current) || isPathChild(journal, current)))
+    .sort((a, b) => b.pathname.length - a.pathname.length);
+  if (prefixed[0]) return prefixed[0].canonical;
+  if (sameHost.length === 1 && !sameHost[0].pathname) return sameHost[0].canonical;
+  return '';
+}
+
+function flagshipLandingApplies(landing: string, current: NormalizedJournalUrl): boolean {
+  const home = normalizeJournalUrl(landing);
+  if (!home.canonical || home.hostKey !== current.hostKey) return false;
+  if (journalUrlsMatch(home, current) || isPathChild(home, current)) return true;
+  if (home.pathname) return false;
+  if (catalogByPath(current)) return false;
+  return current.segments.length === 0 || current.segments[0] === 'nature';
+}
+
+/** Landing URL from the pasted path, a matching ISSN, or a canonical journal home. */
+function journalLandingUrl(facts: StageUrlFacts, currentRaw: string): string {
+  const current = normalizeJournalUrl(currentRaw);
+  const byPath = catalogByPath(current);
+  if (byPath) return byPath;
+  const byIssn = catalogByIssn(facts);
+  if (byIssn && flagshipLandingApplies(byIssn, current)) return byIssn;
   const canonical = valueOf(facts.extractedFacts?.canonicalUrl);
-  if (canonical && pageKind(canonical) === 'home') return canonical;
+  if (!canonical || pageKind(canonical) !== 'home') return '';
+  const home = normalizeJournalUrl(canonical);
+  if (journalUrlsMatch(home, current) || isPathChild(home, current)) return canonical;
+  if (!home.pathname && flagshipLandingApplies(canonical, current)) return canonical;
   return '';
 }
 
@@ -154,15 +192,29 @@ function samePage(a: string, b: string): boolean {
  * or a page under the journal home. An empty-path Nature home is not the
  * parent of every nature.com journal.
  */
+function onThisJournal(url: string, landing: string): boolean {
+  const home = normalizeJournalUrl(landing);
+  const target = normalizeJournalUrl(url);
+  if (!home.canonical || !target.canonical || home.hostKey !== target.hostKey) return false;
+  if (journalUrlsMatch(home, target) || isPathChild(home, target)) return true;
+  if (!home.pathname) return target.segments.length === 0 || target.segments[0] === 'nature';
+  return false;
+}
+
+function portalBelongsToJournal(facts: StageUrlFacts, landing: string): boolean {
+  const byIssn = catalogByIssn(facts);
+  if (byIssn && samePage(byIssn, landing)) return true;
+  return Boolean(facts.url && onThisJournal(facts.url, landing));
+}
+
 function factsMatchUrl(currentRaw: string, facts: StageUrlFacts): boolean {
   const current = normalizeJournalUrl(currentRaw);
   if (!current.canonical) return false;
+  if (catalogByPath(current) || (catalogByIssn(facts) && flagshipLandingApplies(catalogByIssn(facts), current))) return true;
 
-  const landing = normalizeJournalUrl(journalLandingUrl(facts));
   const canonical = normalizeJournalUrl(valueOf(facts.extractedFacts?.canonicalUrl));
   const known = [
     facts.url,
-    landing.canonical,
     canonical.canonical,
     facts.authorGuidelinesUrl,
     facts.submissionPortalUrl,
@@ -176,14 +228,7 @@ function factsMatchUrl(currentRaw: string, facts: StageUrlFacts): boolean {
     valueOf(facts.extractedFacts?.submissionPortalUrl),
   ];
   if (known.some((url) => url && samePage(url, current.canonical))) return true;
-
-  const home = landing.pathname ? landing : canonical.pathname && pageKind(canonical.canonical) === 'home' ? canonical : null;
-  if (home?.pathname && isPathChild(home, current)) return true;
-
-  if (landing.canonical && !landing.pathname && landing.hostKey === current.hostKey) {
-    if (current.segments.length === 0) return true;
-    if (current.segments[0] === 'nature') return true;
-  }
+  if (canonical.pathname && pageKind(canonical.canonical) === 'home' && isPathChild(canonical, current)) return true;
   return false;
 }
 
@@ -263,15 +308,19 @@ export function suggestStageUrl(
   if (stageAccepts(current, stage)) return null;
 
   const page = facts.extractedFacts;
-  const landing = journalLandingUrl(facts);
-  const about = valueOf(page?.aboutUrl);
-  const articles = valueOf(page?.articlesUrl);
-  const aims = valueOf(page?.aimsUrl);
-  const fees = valueOf(page?.apcInfoUrl);
-  const metrics = valueOf(page?.metricsUrl);
-  const checklist = valueOf(page?.checklistUrl);
-  const guidelines = clean(facts.authorGuidelinesUrl) || valueOf(page?.authorGuidelinesUrl);
-  const portal = clean(facts.submissionPortalUrl) || valueOf(page?.submissionPortalUrl);
+  const landing = journalLandingUrl(facts, current);
+  const keep = (url: string) => (url && onThisJournal(url, landing) ? url : '');
+  const crossHost = (url: string) => (url && portalBelongsToJournal(facts, landing) && isPortalHost(normalizeJournalUrl(url).host) ? url : '');
+  const about = keep(valueOf(page?.aboutUrl));
+  const articles = keep(valueOf(page?.articlesUrl));
+  const aims = keep(valueOf(page?.aimsUrl));
+  const fees = keep(valueOf(page?.apcInfoUrl));
+  const metrics = keep(valueOf(page?.metricsUrl));
+  const checklist = keep(valueOf(page?.checklistUrl));
+  const guidelinesRaw = clean(facts.authorGuidelinesUrl) || valueOf(page?.authorGuidelinesUrl);
+  const portalRaw = clean(facts.submissionPortalUrl) || valueOf(page?.submissionPortalUrl);
+  const guidelines = keep(guidelinesRaw) || crossHost(guidelinesRaw);
+  const portal = keep(portalRaw) || crossHost(portalRaw);
 
   const allowed = new Set(
     [landing, about, articles, aims, fees, metrics, checklist, guidelines, portal, valueOf(page?.canonicalUrl), clean(facts.url)].filter(

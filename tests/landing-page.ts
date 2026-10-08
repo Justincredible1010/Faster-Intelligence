@@ -724,18 +724,55 @@ export async function runLandingPageTests() {
     assert.equal(natureAwareness?.url, 'https://www.nature.com');
     assert.match(natureAwareness?.reason || '', /Awareness is for people who do not know the journal/);
     assert.doesNotMatch(natureAwareness?.url || '', guessedPath);
-    assert.equal(suggestStageUrl('https://www.nature.com/ncomms/submission-guidelines', 'AWA', natureStageFacts), null);
+    const staleNatureFacts = suggestStageUrl(
+      'https://www.nature.com/ncomms/submission-guidelines',
+      'AWA',
+      natureStageFacts
+    );
+    assert.equal(staleNatureFacts?.url, 'https://www.nature.com/ncomms');
+    assert.notEqual(staleNatureFacts?.url, 'https://www.nature.com');
     const natureDecision = suggestStageUrl('https://www.nature.com', 'DEC', natureStageFacts);
     assert.equal(natureDecision?.url, 'https://www.nature.com/nature/for-authors');
     assert.equal(suggestStageUrl('https://www.nature.com/nature/for-authors', 'DEC', natureStageFacts), null);
 
-    const invented = suggestStageUrl('https://www.nature.com/ncomms/submission-guidelines', 'AWA', {
+    const catalogOnly = suggestStageUrl('https://www.nature.com/ncomms/submission-guidelines', 'AWA', {
       url: 'https://www.nature.com/ncomms/submission-guidelines',
-      extractedFacts: {
-        canonicalUrl: { value: 'https://www.nature.com/ncomms/submission-guidelines' },
-      },
     });
-    assert.equal(invented, null);
+    assert.equal(catalogOnly?.url, 'https://www.nature.com/ncomms');
+    assert.match(catalogOnly?.reason || '', /submission guidelines/);
+    assert.doesNotMatch(catalogOnly?.url || '', guessedPath);
+    assert.equal(
+      suggestStageUrl('https://www.nature.com/ncomms/submission-guidelines', 'CON', {
+        url: 'https://www.nature.com/ncomms/submission-guidelines',
+      }),
+      null
+    );
+    assert.equal(
+      suggestStageUrl('https://www.nature.com/ncomms/submission-guidelines', 'DEC', {
+        url: 'https://www.nature.com/ncomms/submission-guidelines',
+      }),
+      null
+    );
+    assert.equal(
+      suggestStageUrl('https://www.nature.com/not-a-journal/submission-guidelines', 'AWA', {
+        url: 'https://www.nature.com/not-a-journal/submission-guidelines',
+      }),
+      null
+    );
+    assert.equal(
+      suggestStageUrl('https://www.nature.com/ncomms-extra/submission-guidelines', 'AWA', {
+        url: 'https://www.nature.com/ncomms-extra/submission-guidelines',
+      }),
+      null
+    );
+    const withAims = {
+      ...ncommsStageFacts,
+      extractedFacts: {
+        ...ncommsPage,
+        aimsUrl: { ...ncommsPage.aimsUrl, value: 'https://www.nature.com/ncomms/aims' },
+      },
+    };
+    assert.equal(suggestStageUrl('https://www.nature.com/ncomms', 'CON', withAims)?.url, 'https://www.nature.com/ncomms/aims');
     assert.doesNotMatch(awarenessGuidelines?.reason || '', /impact factor|18\.1|14\.7/i);
     assert.doesNotMatch(decisionHome?.reason || '', /impact factor|18\.1|14\.7/i);
 

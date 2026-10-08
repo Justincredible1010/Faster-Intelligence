@@ -765,7 +765,9 @@ export const InputStudio: React.FC<Props> = ({
             <div className="flex-1 space-y-1 min-w-0">
               <p className="text-xs text-amber-950 leading-relaxed">{stageUrlSuggestion.reason}</p>
               <p className="text-[11px] font-mono text-amber-900 break-all">{stageUrlSuggestion.url}</p>
-              <p className="text-[11px] text-amber-800">You can still generate with the current URL.</p>
+              {!isMissingMetrics && (
+                <p className="text-[11px] text-amber-800">You can still generate with the current URL.</p>
+              )}
             </div>
             <button
               type="button"
