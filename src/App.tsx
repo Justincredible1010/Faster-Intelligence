@@ -494,7 +494,7 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
       <footer className="mt-auto border-t border-slate-200 bg-white py-4 px-6 text-center text-xs text-slate-500">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>
-            Springer Nature AdEngine · Tailored Google Campaigns across Awareness, Consideration &amp; Decision
+            Marketing Content Generation Engine · Tailored Google Campaigns across Awareness, Consideration &amp; Decision
           </span>
           <div className="flex items-center gap-3">
             <button
