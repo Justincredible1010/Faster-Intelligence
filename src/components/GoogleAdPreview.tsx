@@ -44,7 +44,7 @@ interface Props {
 
 export const GoogleAdPreview: React.FC<Props> = ({
   content,
-  displayUrl = 'https://www.nature.com/nature',
+  displayUrl = 'https://www.nature.com',
   stage = 'CON',
   facts,
   onEditHeadline,

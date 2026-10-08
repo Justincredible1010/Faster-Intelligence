@@ -43,8 +43,9 @@ describe('journal metrics schema', () => {
     assert.equal(facts.impactFactor, 4.2);
     assert.equal(facts.casZone, '中科院1区');
     assert.deepEqual(facts.indexing, ['SCIE', 'Scopus']);
-    assert.equal('verificationStatus' in facts, false);
-    assert.equal('isVerifiedClarivate' in facts, false);
+    assert.equal(facts.verificationStatus, 'user_provided');
+    assert.equal(facts.provenanceSource, 'user_provided');
+    assert.equal(facts.isVerifiedClarivate, false);
     assert.equal(facts.jcrYear, 2024);
     assert.equal(facts.sourceAttribution, 'Manually entered (unverified)');
     assert.equal(facts.reportingYear, 'JCR 2024');
@@ -59,7 +60,8 @@ describe('journal metrics schema', () => {
     expectReject({ facts: validFacts({ firstDecisionDays: 1.5 }) }, /integer/);
     expectReject({ facts: validFacts({ chinaWaiverAvailable: 'yes' }) }, /boolean/);
     expectReject({ facts: validFacts({ verificationStatus: 'source_verified' }) }, /verificationStatus/);
-    expectReject({ facts: validFacts({ isVerifiedClarivate: true }) }, /isVerifiedClarivate/);
+    expectReject({ facts: validFacts({ provenanceSource: 'invented' }) }, /provenanceSource/);
+    expectReject({ facts: validFacts({ isVerifiedClarivate: 'yes' }) }, /isVerifiedClarivate/);
     expectReject({ facts: validFacts({ url: 'javascript:alert(1)' }) }, /http/);
     expectReject({ facts: validFacts({ journalName: '' }) }, /journalName/);
     expectReject({ facts: validFacts({ jcrYear: undefined }) }, /jcrYear/);
@@ -72,6 +74,28 @@ describe('journal metrics schema', () => {
       { facts: { ...validFacts(), constructor: { prototype: { admin: true } } } },
       /Unknown journal metric fields/
     );
+  });
+
+  it('forces user-entered provenance when the client sends a Clarivate label', () => {
+    const facts = validateJournalMetricsUpdate({
+      facts: validFacts({
+        verificationStatus: 'clarivate_api',
+        provenanceSource: 'clarivate_wos_journals_api',
+        isVerifiedClarivate: true,
+        retrievedAt: '2024-06-01T00:00:00.000Z',
+        wosJournalId: 'NATURE',
+        issn: '0028-0836',
+        catalogDataYear: 2024,
+        jifRanks: [{ category: 'Multidisciplinary', quartile: 'Q1' }],
+      }),
+    });
+    assert.equal(facts.verificationStatus, 'user_provided');
+    assert.equal(facts.provenanceSource, 'user_provided');
+    assert.equal(facts.isVerifiedClarivate, false);
+    assert.equal(facts.issn, '0028-0836');
+    assert.equal('retrievedAt' in facts, false);
+    assert.equal('wosJournalId' in facts, false);
+    assert.equal(facts.sourceAttribution, 'Manually entered (unverified)');
   });
 
   it('allows null metrics but not strings that only look numeric', () => {

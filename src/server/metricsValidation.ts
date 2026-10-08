@@ -17,9 +17,34 @@ const ALLOWED_FACT_FIELDS = [
   'reportingYear',
   'jcrYear',
   'verificationStatus',
+  'provenanceSource',
   'isVerifiedClarivate',
   'missingFields',
+  'retrievedAt',
+  'wosJournalId',
+  'issn',
+  'eIssn',
+  'jifRanks',
+  'immediacyIndex',
+  'journalCitationIndicator',
+  'catalogDataYear',
 ] as const;
+
+const VERIFICATION_STATUSES = new Set([
+  'user_provided',
+  'page_sourced',
+  'clarivate_api',
+  'catalog_snapshot',
+  'missing',
+]);
+
+const PROVENANCE_SOURCES = new Set([
+  'user_provided',
+  'page_sourced',
+  'clarivate_wos_journals_api',
+  'catalog_snapshot',
+  'missing',
+]);
 
 const ALLOWED = new Set<string>(ALLOWED_FACT_FIELDS);
 
@@ -51,6 +76,11 @@ export interface SanitizedJournalMetrics {
   sourceAttribution: string;
   reportingYear: string;
   jcrYear: number;
+  verificationStatus: 'user_provided';
+  provenanceSource: 'user_provided';
+  isVerifiedClarivate: false;
+  issn?: string;
+  eIssn?: string;
 }
 
 function fail(message: string): never {
@@ -114,13 +144,44 @@ function readIndexing(value: unknown): string[] {
   });
 }
 
-export function validateJournalMetricsUpdate(body: unknown): SanitizedJournalMetrics {
-  if (!isPlainObject(body)) fail('A journal metrics object is required');
-  const topKeys = Object.keys(body);
-  if (topKeys.some((key) => key !== 'facts') || !Object.prototype.hasOwnProperty.call(body, 'facts')) {
-    fail('Request must contain only a facts object');
+function assertKnownStatus(facts: Record<string, unknown>): void {
+  if (facts.verificationStatus !== undefined && !VERIFICATION_STATUSES.has(String(facts.verificationStatus))) {
+    fail('verificationStatus is not a known status');
   }
-  const facts = body.facts;
+  if (facts.provenanceSource !== undefined && !PROVENANCE_SOURCES.has(String(facts.provenanceSource))) {
+    fail('provenanceSource is not a known source');
+  }
+  if (facts.isVerifiedClarivate !== undefined && typeof facts.isVerifiedClarivate !== 'boolean') {
+    fail('isVerifiedClarivate must be a boolean');
+  }
+}
+
+function assertOptionalProvenanceShape(facts: Record<string, unknown>): void {
+  if (facts.retrievedAt !== undefined) readString(facts.retrievedAt, 'retrievedAt', 80);
+  if (facts.wosJournalId !== undefined) readString(facts.wosJournalId, 'wosJournalId', 80);
+  if (facts.catalogDataYear !== undefined && facts.catalogDataYear !== null) {
+    readNumber(facts.catalogDataYear, 'catalogDataYear', { min: 1900, max: 2100, integer: true });
+  }
+  if (facts.immediacyIndex !== undefined) {
+    readNumber(facts.immediacyIndex, 'immediacyIndex', { min: 0, max: 500 });
+  }
+  if (facts.journalCitationIndicator !== undefined) {
+    readNumber(facts.journalCitationIndicator, 'journalCitationIndicator', { min: 0, max: 500 });
+  }
+  if (facts.jifRanks !== undefined && facts.jifRanks !== null) {
+    if (!Array.isArray(facts.jifRanks) || facts.jifRanks.length > 40) fail('jifRanks must be an array of up to 40 objects');
+    for (const rank of facts.jifRanks) {
+      if (!isPlainObject(rank)) fail('jifRanks must be an array of objects');
+    }
+  }
+}
+
+/**
+ * Anything a browser submits is stored as user-entered. Client values for
+ * verificationStatus, provenanceSource, and isVerifiedClarivate are ignored
+ * so a hand-edited number cannot keep a Clarivate label.
+ */
+export function sanitizeUserProvidedFacts(facts: unknown): SanitizedJournalMetrics {
   if (!isPlainObject(facts)) fail('facts must be an object');
   if (
     Object.prototype.hasOwnProperty.call(facts, '__proto__') ||
@@ -132,12 +193,8 @@ export function validateJournalMetricsUpdate(body: unknown): SanitizedJournalMet
   const unknown = Object.keys(facts).filter((key) => !ALLOWED.has(key));
   if (unknown.length > 0) fail(`Unknown journal metric fields: ${unknown.sort().join(', ')}`);
 
-  if (facts.verificationStatus !== undefined && facts.verificationStatus !== 'user_provided') {
-    fail('verificationStatus cannot be set by the client');
-  }
-  if (facts.isVerifiedClarivate !== undefined && facts.isVerifiedClarivate !== false) {
-    fail('isVerifiedClarivate cannot be set by the client');
-  }
+  assertKnownStatus(facts);
+  assertOptionalProvenanceShape(facts);
   if (facts.missingFields !== undefined) {
     if (!Array.isArray(facts.missingFields) || facts.missingFields.some((item) => typeof item !== 'string')) {
       fail('missingFields must be an array of strings');
@@ -169,10 +226,24 @@ export function validateJournalMetricsUpdate(body: unknown): SanitizedJournalMet
         : fail('chinaWaiverAvailable must be a boolean'),
     aimsAndScopeSummary: readString(facts.aimsAndScopeSummary, 'aimsAndScopeSummary', 4000) || '',
     primaryDiscipline: readString(facts.primaryDiscipline, 'primaryDiscipline', 200) || '',
+    issn: readString(facts.issn, 'issn', 32) || undefined,
+    eIssn: readString(facts.eIssn, 'eIssn', 32) || undefined,
     sourceAttribution: MANUAL_METRIC_SOURCE,
     reportingYear: `JCR ${jcrYear}`,
     jcrYear,
+    verificationStatus: 'user_provided',
+    provenanceSource: 'user_provided',
+    isVerifiedClarivate: false,
   };
+}
+
+export function validateJournalMetricsUpdate(body: unknown): SanitizedJournalMetrics {
+  if (!isPlainObject(body)) fail('A journal metrics object is required');
+  const topKeys = Object.keys(body);
+  if (topKeys.some((key) => key !== 'facts') || !Object.prototype.hasOwnProperty.call(body, 'facts')) {
+    fail('Request must contain only a facts object');
+  }
+  return sanitizeUserProvidedFacts(body.facts);
 }
 
 function readJcrYear(value: unknown): number {

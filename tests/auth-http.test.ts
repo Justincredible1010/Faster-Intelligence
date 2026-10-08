@@ -217,7 +217,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     const allowed = await api('/api/generate-campaign', {
       jar,
       csrf: authed.csrfToken,
-      body: { landingPageUrl: 'https://www.nature.com/nature', funnelStage: 'CON', channels: ['search'], outputLanguage: 'EN' },
+      body: { landingPageUrl: 'https://www.nature.com', funnelStage: 'CON', channels: ['search'], outputLanguage: 'EN' },
     });
     assert.equal(allowed.status, 200);
     const payload = await allowed.json();
@@ -449,6 +449,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     const body = await saved.json();
     assert.equal(body.audit.actorEmail, 'dev.user@springernature.com');
     assert.equal(body.facts.verificationStatus, 'user_provided');
+    assert.equal(body.facts.provenanceSource, 'user_provided');
     assert.equal(body.facts.isVerifiedClarivate, false);
     assert.equal(body.facts.sourceAttribution, 'Manually entered (unverified)');
     assert.equal(body.facts.reportingYear, 'JCR 2024');
@@ -470,6 +471,37 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(cachedBody.cachedJournal.metrics.impactFactor.source, 'Manually entered (unverified)');
     assert.equal(cachedBody.cachedJournal.fullFacts.sourceAttribution.includes('@'), false);
     assert.equal(String(cachedBody.cachedJournal.metrics.impactFactor.source).includes('@'), false);
+  });
+
+  it('strips a Clarivate label from browser-supplied campaign facts', async () => {
+    const jar: Jar = new Map();
+    const user = await devLogin(jar);
+    const generated = await api('/api/generate-campaign', {
+      jar,
+      csrf: user.csrfToken,
+      body: {
+        landingPageUrl: 'https://www.nature.com/example-journal',
+        funnelStage: 'CON',
+        channels: ['search'],
+        outputLanguage: 'EN',
+        userProvidedFacts: validFacts({
+          impactFactor: 9.9,
+          verificationStatus: 'user_provided',
+          provenanceSource: 'clarivate_wos_journals_api',
+          isVerifiedClarivate: true,
+          sourceAttribution: 'clarivate_wos_journals_api JCR 2024 (retrieved 2024-06-01T00:00:00.000Z)',
+        }),
+      },
+    });
+    assert.equal(generated.status, 200);
+    const body = await generated.json();
+    const facts = body.campaign.clarivateFacts;
+    assert.equal(facts.verificationStatus, 'user_provided');
+    assert.equal(facts.provenanceSource, 'user_provided');
+    assert.equal(facts.isVerifiedClarivate, false);
+    assert.equal(facts.impactFactor, 9.9);
+    assert.equal(facts.sourceAttribution, 'Manually entered (unverified)');
+    assert.equal(String(facts.sourceAttribution).includes('clarivate_wos_journals_api'), false);
   });
 
   it('returns 401 for mixed-case and percent-encoded /api paths', async () => {

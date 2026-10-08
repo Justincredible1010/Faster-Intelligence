@@ -36,6 +36,8 @@ const TRACKED_FIELDS = [
   'primaryDiscipline',
   'reportingYear',
   'jcrYear',
+  'provenanceSource',
+  'verificationStatus',
 ] as const;
 
 export interface AuditLogStore {

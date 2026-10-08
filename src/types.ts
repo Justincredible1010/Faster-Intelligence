@@ -4,7 +4,20 @@ export type FunnelStage = StageCode | 'TOFU' | 'MOFU' | 'BOFU';
 
 export type OutputLanguage = 'all' | 'EN' | 'ZH';
 
-export type FactVerificationStatus = 'source_verified' | 'user_provided' | 'unverified' | 'missing';
+export type FactVerificationStatus =
+  | 'user_provided'
+  | 'page_sourced'
+  | 'clarivate_api'
+  | 'catalog_snapshot'
+  | 'missing';
+
+/** Where a metric value came from. clarivate_api is trusted only with the Web of Science source. */
+export type MetricProvenanceSource =
+  | 'user_provided'
+  | 'page_sourced'
+  | 'clarivate_wos_journals_api'
+  | 'catalog_snapshot'
+  | 'missing';
 
 export type WorkflowStep = 'builder' | 'library' | 'preview' | 'compliance' | 'export';
 
@@ -31,6 +44,14 @@ export interface ExtractedPageFacts {
   extractedDate: string;
 }
 
+export interface WosJifRank {
+  category?: string;
+  /** Category rank as returned by the API, for example "1/140". */
+  rank?: string;
+  quartile?: string;
+  jifPercentile?: string | number;
+}
+
 export interface ClarivateJournalMetrics {
   url?: string;
   journalName: string;
@@ -47,10 +68,29 @@ export interface ClarivateJournalMetrics {
   aimsAndScopeSummary?: string;
   primaryDiscipline?: string;
   sourceAttribution: string;
+  /**
+   * Provenance id. Clarivate attribution is allowed only for
+   * 'clarivate_wos_journals_api', which is the Web of Science Journals API.
+   */
+  provenanceSource?: MetricProvenanceSource;
+  /** True only when provenanceSource is clarivate_wos_journals_api. */
   isVerifiedClarivate?: boolean;
   verificationStatus: FactVerificationStatus;
-  reportingYear?: string; // e.g. "JCR 2024 (released June 2024)"
+  reportingYear?: string;
+  /** JCR edition year. Required when a person enters metrics by hand. */
   jcrYear?: number;
+  /** ISO time the Web of Science Journals API response was retrieved. */
+  retrievedAt?: string;
+  /** Web of Science journal id, for example NATURE. */
+  wosJournalId?: string;
+  issn?: string;
+  eIssn?: string;
+  /** ranks.jif[] from the year report. */
+  jifRanks?: WosJifRank[];
+  immediacyIndex?: number | null;
+  journalCitationIndicator?: number | null;
+  /** Year of an in-repo catalog snapshot. Not a Clarivate release date. */
+  catalogDataYear?: number;
   missingFields?: string[];
   isFromCache?: boolean;
   cachedAt?: string;
