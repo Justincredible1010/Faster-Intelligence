@@ -296,7 +296,7 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
     sanitizeUserProvidedFacts,
   } = await import('../src/utils/metricClaims.ts');
   const {
-    clarivateAdminRefreshEnabled,
+    clarivateAdminRefreshDisabled,
     displayJournalName,
     displayPublisher,
     generateDeterministicCampaign,
@@ -475,9 +475,9 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   assert.strictEqual(resolveJournalIssn({ cached: { issn: '1234-5678' }, catalog: nature }), '1234-5678');
   assert.strictEqual(resolveJournalIssn({ pageIssn: '14764687', catalog: nature }), '1476-4687');
   assert.strictEqual(resolveJournalIssn({ catalog: nature }), '0028-0836');
-  assert.strictEqual(clarivateAdminRefreshEnabled({}), false);
-  assert.strictEqual(clarivateAdminRefreshEnabled({ CLARIVATE_ADMIN_REFRESH_ENABLED: 'true' }), true);
-  assert.strictEqual(clarivateAdminRefreshEnabled({ CLARIVATE_ADMIN_REFRESH_ENABLED: '1' }), false);
+  assert.strictEqual(clarivateAdminRefreshDisabled({}), false);
+  assert.strictEqual(clarivateAdminRefreshDisabled({ CLARIVATE_ADMIN_REFRESH_ENABLED: 'false' }), true);
+  assert.strictEqual(clarivateAdminRefreshDisabled({ CLARIVATE_ADMIN_REFRESH_ENABLED: 'true' }), false);
 }
 
 {
@@ -637,13 +637,33 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   const serverSource = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
   const httpSource = fs.readFileSync(path.join(root, 'src/utils/clarivateHttp.ts'), 'utf8');
   assert(serverSource.includes("facts.provenanceSource !== 'clarivate_wos_journals_api'"));
-  assert(serverSource.includes('/api/admin/clarivate-metrics/refresh'));
-  assert(serverSource.includes('requireAdmin'));
+  assert(serverSource.includes("/api/admin/clarivate-metrics/refresh', apiGuard, requireAdmin"));
   assert(serverSource.includes('CLARIVATE_ADMIN_REFRESH_ENABLED'));
   assert(serverSource.includes('pageIssn'));
   assert(!/console\.\w+\([^)]*apiKey/.test(httpSource));
   assert(!httpSource.includes('${apiKey}'));
   assert(!httpSource.includes('${secret}'));
+}
+
+{
+  const http = await import('node:http');
+  const { app } = await import('../server.ts');
+  const listener = http.createServer(app);
+  await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', () => resolve()));
+  const address = listener.address();
+  if (!address || typeof address === 'string') throw new Error('Admin refresh test failed to bind');
+  try {
+    const anonymous = await fetch(`http://127.0.0.1:${address.port}/api/admin/clarivate-metrics/refresh`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ issn: '0028-0836' }),
+    });
+    assert.strictEqual(anonymous.status, 401);
+    const body = (await anonymous.json()) as { error?: string };
+    assert.strictEqual(body.error, 'Authentication required');
+  } finally {
+    await new Promise<void>((resolve, reject) => listener.close((err) => (err ? reject(err) : resolve())));
+  }
 }
 
 console.log('✓ Clarivate client, store, refresh policy, and claim guard passed.\n');

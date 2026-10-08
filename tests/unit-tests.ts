@@ -485,6 +485,15 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert.strictEqual(await lookupMetricsByIssn('0028-0836'), null);
   if (previousClarivateKey) process.env.CLARIVATE_API_KEY = previousClarivateKey;
   assert.strictEqual(await pageFacts.extractFromPage('https://www.nature.com'), null);
+  const { setPageFactsClientForTests } = await import('../src/utils/metricSources.ts');
+  setPageFactsClientForTests({
+    async extractFromPage() {
+      return { journalName: 'From page', publisher: 'Nature Portfolio', impactFactor: null, verificationStatus: 'page_sourced', sourceAttribution: 'page' };
+    },
+  });
+  assert.strictEqual((await pageFacts.extractFromPage('https://www.nature.com'))?.journalName, 'From page');
+  setPageFactsClientForTests(null);
+  assert.strictEqual(await pageFacts.extractFromPage('https://www.nature.com'), null);
 
   const retrievedAt = new Date('2026-10-08T00:00:00.000Z');
   const fromApi = await lookupMetricsByIssn('0028-0836', {

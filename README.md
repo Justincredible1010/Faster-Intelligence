@@ -276,7 +276,7 @@ The same Export menu also downloads a **Markdown campaign brief** (`handleExport
 | `/api/cache/journal/:id` | `GET` | — | Inspects cached metric details and TTL expiration timestamps for a specific journal. |
 | `/api/cache/refresh/:id` | `POST` | `{ "url"?: string }` | Forces a fresh lookup of the given URL, or the URL already stored on that cache entry. Returns `400` when neither exists. Does not build a URL from the cache id. |
 | `/api/cache/clear` | `POST` | — | Flushes in-memory cache and deletes `metrics-cache.json` on disk. |
-| `/api/admin/clarivate-metrics/refresh` | `POST` | `{ "issn": string }` | Forces a Journals API lookup for that ISSN and writes the metrics store. Returns 404 unless `CLARIVATE_ADMIN_REFRESH_ENABLED=true`. TODO: PR #4 should also gate it with `requireAdmin` from `src/server/auth/guard.ts`, the same middleware used on `/api/cache/refresh` and `/api/cache/clear`. |
+| `/api/admin/clarivate-metrics/refresh` | `POST` | `{ "issn": string }` | Forces a Journals API lookup for that ISSN and writes the metrics store. `apiGuard` returns 401 without a session. `requireAdmin` returns 403 unless the session email is in `AUTH_ADMIN_EMAILS`, the same middleware as `/api/cache/refresh` and `/api/cache/clear`. `CLARIVATE_ADMIN_REFRESH_ENABLED=false` is an extra kill switch and returns 404. |
 
 ---
 
@@ -299,7 +299,7 @@ Copy `.env.example` to `.env`.
 | `METRICS_STORE_PATH` | No | File used when `METRICS_STORE=file`. Default `.data/clarivate-metrics.json`. |
 | `NODE_ENV` | No | `production` serves the prebuilt `dist/` assets. Any other value, including unset, mounts the Vite dev middleware. |
 | `DISABLE_HMR` | No | When `true`, `vite.config.ts` turns off hot module replacement and file watching. |
-| `CLARIVATE_ADMIN_REFRESH_ENABLED` | No | Must be exactly `true` or `POST /api/admin/clarivate-metrics/refresh` returns 404. Leave it unset until `requireAdmin` is wired. |
+| `CLARIVATE_ADMIN_REFRESH_ENABLED` | No | Set to `false` to hide `POST /api/admin/clarivate-metrics/refresh` (404) even for an admin. Unset leaves the route available to `requireAdmin`. |
 
 ### Clarivate Journals API, quota, and refresh
 
@@ -313,7 +313,7 @@ JIF values arrive as strings and are parsed defensively. Missing fields stay nul
 
 The key is shared with another application (about 5 requests/second, plus a quota). This client starts at most 2 requests/second. HTTP 429 and 5xx responses retry with exponential backoff and jitter. A `Retry-After` header replaces that wait when it is 30 seconds or less. A longer `Retry-After` ends the request without waiting. An auth error, a `Retry-After` over that cap, or a 429/5xx that still fails after the retries pauses further Journals API calls in this process for 2 minutes. That pause is not written to the metrics store. Concurrent lookups for the same ISSN share one request.
 
-Stored metrics are served without calling the API. A newer JCR year is checked only when the stored year is older than the expected latest release, and at most once per ISSN per UTC day. An ISSN with no hit, and a journal that has no JCR year or no JIF, are written to the ISSN mapping and rechecked on the same schedule. New JCR data is treated as available on and after 30 June UTC: on 8 October 2026 the expected year is 2025; on 15 January 2026 it is 2024. `POST /api/admin/clarivate-metrics/refresh` with `{ "issn": "0028-0836" }` forces a check only when `CLARIVATE_ADMIN_REFRESH_ENABLED=true`. The handler keeps a TODO for `requireAdmin` so the route stays closed until PR #4's auth middleware is applied.
+Stored metrics are served without calling the API. A newer JCR year is checked only when the stored year is older than the expected latest release, and at most once per ISSN per UTC day. An ISSN with no hit, and a journal that has no JCR year or no JIF, are written to the ISSN mapping and rechecked on the same schedule. New JCR data is treated as available on and after 30 June UTC: on 8 October 2026 the expected year is 2025; on 15 January 2026 it is 2024. `POST /api/admin/clarivate-metrics/refresh` with `{ "issn": "0028-0836" }` forces a check. The route uses `apiGuard` and `requireAdmin`. A request with no session gets 401. `CLARIVATE_ADMIN_REFRESH_ENABLED=false` returns 404 after that check.
 
 Clarivate fields are copied onto the landing-page record only when they are non-empty. The display name prefers `jcrTitle` or `isoTitle`, then the landing-page name, then the Web of Science name. An all-caps id is not used in place of a mixed-case landing-page name. An all-caps publisher is title-cased when the landing page has no mixed-case publisher, and acronyms such as IEEE, BMC, ACS, JAMA, PLOS, BMJ, AIP, APS, ACM, and SIAM stay uppercase. Ads do not say "Published by Unknown publisher".
 

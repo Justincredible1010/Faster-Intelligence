@@ -14,6 +14,7 @@ import { factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection, sanitiz
 import type { ClarivateJournalMetrics } from './src/types';
 import { loadJournalMetrics } from './src/utils/metricsRefresh';
 import { normalizeIssn } from './src/utils/issn';
+import { apiGuard, requireAdmin } from './src/server/auth/guard';
 
 dotenv.config();
 installClarivateClient(clarivateHttpClient);
@@ -21,7 +22,7 @@ installClarivateClient(clarivateHttpClient);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
+export const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '15mb' }));
@@ -658,19 +659,16 @@ app.get('/api/cache/list', (_req, res) => {
 });
 
 /**
- * Admin-only Clarivate refresh. This bypasses the once-per-day JCR check.
- * Disabled unless CLARIVATE_ADMIN_REFRESH_ENABLED=true, so a merge of this
- * branch before or after PR #4 cannot burn the shared Journals API quota.
- * TODO: when PR #4 lands, also gate this route with requireAdmin from
- * src/server/auth/guard.ts, the same middleware used on /api/cache/refresh
- * and /api/cache/clear.
+ * Extra kill switch for the quota-burning refresh. The real gate is apiGuard
+ * plus requireAdmin, the same middleware /api/cache/refresh and /api/cache/clear
+ * use on main. Set CLARIVATE_ADMIN_REFRESH_ENABLED=false to hide the route.
  */
-export function clarivateAdminRefreshEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.CLARIVATE_ADMIN_REFRESH_ENABLED === 'true';
+export function clarivateAdminRefreshDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.CLARIVATE_ADMIN_REFRESH_ENABLED === 'false';
 }
 
-app.post('/api/admin/clarivate-metrics/refresh', async (req, res) => {
-  if (!clarivateAdminRefreshEnabled()) {
+app.post('/api/admin/clarivate-metrics/refresh', apiGuard, requireAdmin, async (req, res) => {
+  if (clarivateAdminRefreshDisabled()) {
     return res.status(404).json({ error: 'Not found' });
   }
   try {
