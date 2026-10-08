@@ -28,13 +28,13 @@ export const PRESET_SKILLS = {
 ## 1. Brand Integrity & Scientific Tone
 - Maintain prestigious, scholarly, and authoritative tone suitable for Nature Portfolio and Springer Nature.
 - Strict prohibition of predatory publishing terms (never use "guaranteed acceptance", "instant publish", or "easy SCI").
-- All factual metrics (Impact Factor, 5-Year IF, CAS Zone, first decision turnaround, indexing) must strictly reflect official Clarivate JCR and SpringerLink data.
+- State an impact factor, quartile, CAS zone, review time, fee, or indexing service only when that value is in the metrics section supplied with the request. Omit the claim when it is not.
 
 ## 2. Google Responsive Search Ads (RSA) Best Practices
 - Generate EXACTLY 15 diverse headlines (Google Best Practice for maximum Ad Strength):
   * Headlines 1-3: Brand & Official Publication Name (e.g. "Acta Pharmacologica Sinica", "Nature Portfolio Official").
-  * Headlines 4-6: Verified Authority (Clarivate IF, JCR Q1, CAS Zone 1/2).
-  * Headlines 7-9: Turnaround Speed & Fast Peer Review (e.g. "Fast 23-Day First Decision").
+  * Headlines 4-6: Authority metrics only when a trusted impact factor, quartile, or CAS zone is on the facts record. Omit them otherwise.
+  * Headlines 7-9: Turnaround only when the facts record includes a trusted first-decision day count. Never invent a day count.
   * Headlines 10-12: Thematic Scope, Special Issue CFP, and NSFC Open Access Funding.
   * Headlines 13-15: Direct Author Action (Submit Manuscript, Author Guidelines).
   * STRICT CHARACTER LIMIT: Every single headline MUST be <= 30 characters.
@@ -49,14 +49,14 @@ export const PRESET_SKILLS = {
 ## 4. Google Display Ads (RDA) Visual Standards
 - Responsive Display Ads require 1.91:1 Landscape (1200x628) and 1:1 Square (1200x1200).
 - Images must maintain clean scholarly focal point with text occupying less than 20% of surface area.
-- Include gold Clarivate Impact Factor seal and Springer Nature corporate brand navy (#002d62).`,
+- Include an impact-factor seal only when a trusted impact factor is on the facts record. Use Springer Nature navy (#002d62) for the brand.`,
 
   chinaStrategy: `# Greater China Academic Author Acquisition Strategy (CAS Zone 1 & NSFC Focus)
 
 ## Key Strategic Pillars for Chinese Scholars:
 1. CAS Zone (中科院分区):
-   - Highlight Chinese Academy of Sciences Zone 1 / Top (中科院1区 Top) or Zone 2 prominently in headlines and descriptions.
-   - Essential for Chinese university tenure, graduate student PhD defense, and hospital physician promotion (三甲医院副高/正高职称评审).
+   - Mention a CAS zone only when the facts record includes that exact zone. Do not write 中科院1区, Top, or any other zone that is not on the record.
+   - Chinese university tenure and hospital promotion often depend on the zone, so leave the claim out rather than guess it.
 
 2. National Natural Science Foundation of China (NSFC) Compliance:
    - Explicitly highlight: "符合国家自然科学基金(NSFC)开放获取受资助论文存储与发表规范".
@@ -71,7 +71,7 @@ export const PRESET_SKILLS = {
 
 ## 1. Visual Asset Composition:
 - Use clean scientific laboratory, crystallography, genomics, or microscopy visuals.
-- Do not clutter images with extensive text; overlay only key badges (Clarivate IF, Springer Nature logo).
+- Do not clutter images with extensive text. Overlay an impact-factor seal only when a trusted impact factor is on the facts record, and name Clarivate only when that value came from the Clarivate API.
 - Comply with Google Ads <20% text rule to avoid reduced ad impressions.
 
 ## 2. Standard Aspect Ratios:

@@ -22,6 +22,7 @@ import {
 } from '../types';
 import { countCharacterWidth, formatCharCountLabel } from '../utils/textUtils';
 import { deriveDisplayUrl } from '../utils/csvExporter';
+import { metricsFromClarivateWos, trustedImpactFactor } from '../utils/metricClaims';
 
 interface Props {
   ads: GoogleSearchAds;
@@ -54,7 +55,9 @@ export const SearchResultsMockup: React.FC<Props> = ({
     stage === 'AWA'
       ? `${facts.primaryDiscipline?.split('(')[0]?.trim().toLowerCase() || 'scientific'} research articles`
       : stage === 'CON'
-      ? `[${facts.journalName.toLowerCase()} impact factor]`
+      ? trustedImpactFactor(facts) != null
+        ? `[${facts.journalName.toLowerCase()} impact factor]`
+        : `"${facts.journalName.toLowerCase()} aims and scope"`
       : `[submit manuscript ${facts.journalName.toLowerCase()}]`;
 
   const [searchQuery, setSearchQuery] = useState(defaultQuery);
@@ -320,11 +323,13 @@ export const SearchResultsMockup: React.FC<Props> = ({
                 <span>clarivate.com &gt; jcr &gt; browse</span>
               </div>
               <h3 className="text-sm font-normal text-[#1a0dab] hover:underline cursor-pointer">
-                Clarivate Journal Citation Reports: {facts.journalName} Metrics
+                {facts.journalName} journal information
               </h3>
               <p className="text-xs text-[#4d5156] leading-relaxed">
-                {facts.journalName} Journal Impact Factor {facts.impactFactor || 'N/A'}. Indexed in{' '}
-                {facts.indexing?.join(', ') || 'Web of Science Core Collection'}.
+                {trustedImpactFactor(facts) != null
+                  ? `${facts.journalName} impact factor ${trustedImpactFactor(facts)}${metricsFromClarivateWos(facts) ? ` (clarivate_wos_journals_api JCR ${facts.jcrYear ?? ''})` : ''}.`
+                  : `${facts.journalName}. Aims, scope, and author information.`}
+                {facts.indexing?.length ? ` Indexed in ${facts.indexing.join(', ')}.` : ''}
               </p>
             </div>
 

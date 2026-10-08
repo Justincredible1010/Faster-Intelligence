@@ -1,11 +1,15 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { loadMetricsCacheFromDisk } from './src/utils/metricsCache';
+import { JOURNAL_CATALOG } from './src/data/journalCatalog';
+import { joinJournalUrl, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
+import { lookupMetricsByIssn, pageFacts } from './src/utils/metricSources';
+import { factsForCopy, guardAdCopy, metricPromptSection, metricsFromClarivateWos } from './src/utils/metricClaims';
 
 dotenv.config();
 
@@ -50,7 +54,14 @@ export interface JCRJournalEntry {
   chinaWaiverAvailable?: boolean;
   aimsAndScopeSummary?: string;
   primaryDiscipline?: string;
-  verificationStatus: 'source_verified' | 'user_provided' | 'unverified' | 'missing';
+  verificationStatus: 'user_provided' | 'page_sourced' | 'clarivate_api' | 'catalog_snapshot' | 'missing';
+  provenanceSource?: 'user_provided' | 'page_sourced' | 'clarivate_wos_journals_api' | 'catalog_snapshot' | 'missing';
+  jcrYear?: number;
+  retrievedAt?: string;
+  wosJournalId?: string;
+  issn?: string;
+  eIssn?: string;
+  catalogDataYear?: number;
   missingFields?: string[];
   isVerifiedClarivate?: boolean;
   reportingYear?: string;
@@ -227,361 +238,68 @@ export function normalizeStage(stage: string): StageCode {
   return 'CON';
 }
 
-// Verified Clarivate JCR & Web of Science Index Catalog
-export const CLARIVATE_JCR_CATALOG: JCRJournalEntry[] = [
-  {
-    url: 'https://www.nature.com/nature',
-    slugs: ['nature', 'flagship', 'default'],
-    journalName: 'Nature',
-    publisher: 'Nature Portfolio',
-    impactFactor: 50.5,
-    fiveYearImpactFactor: 54.3,
-    jcrQuartile: 'Q1',
-    casZone: '中科院综合性期刊1区 Top',
-    firstDecisionDays: 32,
-    indexing: ['SCIE', 'PubMed Central', 'MEDLINE', 'Scopus'],
-    openAccessType: 'Hybrid Open Access',
-    apcUsd: 11690,
-    chinaWaiverAvailable: false,
-    aimsAndScopeSummary: 'The world’s premier multidisciplinary science journal publishing the finest peer-reviewed research across all areas of science and technology.',
-    primaryDiscipline: 'Multidisciplinary Sciences (综合性科学)',
-    verificationStatus: 'source_verified',
-    reportingYear: 'JCR 2024 (Clarivate Journal Citation Reports)',
-    isVerifiedClarivate: true,
-    sourceAttribution: 'Verified via Clarivate Journal Citation Reports (JCR 2024/2025) & Web of Science Index',
-  },
-  {
-    url: 'https://www.nature.com/ncomms',
-    slugs: ['ncomms', 'nature-communications'],
-    journalName: 'Nature Communications',
-    publisher: 'Nature Portfolio',
-    impactFactor: 14.7,
-    fiveYearImpactFactor: 16.2,
-    jcrQuartile: 'Q1',
-    casZone: '中科院综合性期刊1区 Top',
-    firstDecisionDays: 28,
-    indexing: ['SCIE', 'PubMed Central', 'Scopus', 'DOAJ'],
-    openAccessType: 'Gold Open Access',
-    apcUsd: 6790,
-    chinaWaiverAvailable: false,
-    aimsAndScopeSummary: 'Multidisciplinary open access journal dedicated to publishing high-quality research in natural sciences, biology, physics, and chemistry.',
-    primaryDiscipline: 'Multidisciplinary Sciences (综合性科学)',
-    verificationStatus: 'source_verified',
-    reportingYear: 'JCR 2024 (Clarivate Journal Citation Reports)',
-    isVerifiedClarivate: true,
-    sourceAttribution: 'Verified via Clarivate Journal Citation Reports (JCR 2024/2025) & Web of Science Index',
-  },
-  {
-    url: 'https://www.nature.com/aps',
-    slugs: ['aps', 'acta-pharmacologica-sinica'],
-    journalName: 'Acta Pharmacologica Sinica',
-    publisher: 'Nature Portfolio',
-    impactFactor: 6.9,
-    fiveYearImpactFactor: 7.4,
-    jcrQuartile: 'Q1',
-    casZone: '中科院医学1区 Top / 药学1区',
-    firstDecisionDays: 23,
-    indexing: ['SCIE', 'PubMed Central', 'MEDLINE', 'Scopus'],
-    openAccessType: 'Hybrid Open Access',
-    apcUsd: 4190,
-    chinaWaiverAvailable: true,
-    aimsAndScopeSummary: 'Official journal of the Chinese Pharmacological Society and Shanghai Institute of Materia Medica, CAS, published with Nature Portfolio, covering all aspects of pharmacology and pharmaceutical sciences.',
-    primaryDiscipline: 'Pharmacology & Pharmacy (药理学与药物科学)',
-    verificationStatus: 'source_verified',
-    reportingYear: 'JCR 2024 (Clarivate Journal Citation Reports)',
-    isVerifiedClarivate: true,
-    sourceAttribution: 'Verified via Clarivate Journal Citation Reports (JCR 2024/2025) & Web of Science Index',
-  },
-  {
-    url: 'https://www.nature.com/cr',
-    slugs: ['cr', 'cell-research'],
-    journalName: 'Cell Research',
-    publisher: 'Nature Portfolio',
-    impactFactor: 28.1,
-    fiveYearImpactFactor: 30.2,
-    jcrQuartile: 'Q1',
-    casZone: '中科院生物学1区 Top',
-    firstDecisionDays: 19,
-    indexing: ['SCIE', 'PubMed Central', 'MEDLINE', 'Scopus'],
-    openAccessType: 'Hybrid Open Access',
-    apcUsd: 4690,
-    chinaWaiverAvailable: true,
-    aimsAndScopeSummary: 'Co-published by CAS and Nature Portfolio, focusing on molecular and cell biology, cancer, and immunology.',
-    primaryDiscipline: 'Cell Biology (细胞生物学)',
-    verificationStatus: 'source_verified',
-    reportingYear: 'JCR 2024 (Clarivate Journal Citation Reports)',
-    isVerifiedClarivate: true,
-    sourceAttribution: 'Verified via Clarivate Journal Citation Reports (JCR 2024/2025) & Web of Science Index',
-  },
-  {
-    url: 'https://www.nature.com/srep',
-    slugs: ['srep', 'scientific-reports'],
-    journalName: 'Scientific Reports',
-    publisher: 'Nature Portfolio',
-    impactFactor: 3.8,
-    fiveYearImpactFactor: 4.3,
-    jcrQuartile: 'Q1',
-    casZone: '中科院综合性期刊3区',
-    firstDecisionDays: 38,
-    indexing: ['SCIE', 'PubMed Central', 'Scopus', 'DOAJ'],
-    openAccessType: 'Gold Open Access',
-    apcUsd: 2690,
-    chinaWaiverAvailable: true,
-    aimsAndScopeSummary: 'An open access journal publishing scientifically valid, primary research from across all disciplines of natural and clinical sciences.',
-    primaryDiscipline: 'Multidisciplinary Sciences (综合性科学)',
-    verificationStatus: 'source_verified',
-    reportingYear: 'JCR 2024 (Clarivate Journal Citation Reports)',
-    isVerifiedClarivate: true,
-    sourceAttribution: 'Verified via Clarivate Journal Citation Reports (JCR 2024/2025) & Web of Science Index',
-  },
-  {
-    url: 'https://www.nature.com/onc',
-    slugs: ['onc', 'oncogene'],
-    journalName: 'Oncogene',
-    publisher: 'Nature Portfolio',
-    impactFactor: 6.9,
-    fiveYearImpactFactor: 7.7,
-    jcrQuartile: 'Q1',
-    casZone: '中科院医学1区 Top / 肿瘤学1区',
-    firstDecisionDays: 24,
-    indexing: ['SCIE', 'PubMed Central', 'MEDLINE', 'Scopus'],
-    openAccessType: 'Hybrid Open Access',
-    apcUsd: 4990,
-    chinaWaiverAvailable: false,
-    aimsAndScopeSummary: 'Leading international cancer research journal publishing molecular pathways of disease, metastasis, and targeted therapies.',
-    primaryDiscipline: 'Oncology (肿瘤学)',
-    verificationStatus: 'source_verified',
-    reportingYear: 'JCR 2024 (Clarivate Journal Citation Reports)',
-    isVerifiedClarivate: true,
-    sourceAttribution: 'Verified via Clarivate Journal Citation Reports (JCR 2024/2025) & Web of Science Index',
-  },
-  {
-    url: 'https://bmcbiol.biomedcentral.com',
-    slugs: ['bmc-biology', 'bmcbiol'],
-    journalName: 'BMC Biology',
-    publisher: 'BMC (Part of Springer Nature)',
-    impactFactor: 5.4,
-    fiveYearImpactFactor: 6.2,
-    jcrQuartile: 'Q1',
-    casZone: '中科院生物学1区 Top',
-    firstDecisionDays: 29,
-    indexing: ['SCIE', 'PubMed Central', 'Scopus', 'DOAJ'],
-    openAccessType: 'Gold Open Access',
-    apcUsd: 3690,
-    chinaWaiverAvailable: true,
-    aimsAndScopeSummary: 'Flagship biology journal of BMC, publishing research of broad interest across all areas of biological science.',
-    primaryDiscipline: 'Biological Sciences (生物科学)',
-    verificationStatus: 'source_verified',
-    reportingYear: 'JCR 2024 (Clarivate Journal Citation Reports)',
-    isVerifiedClarivate: true,
-    sourceAttribution: 'Verified via Clarivate Journal Citation Reports (JCR 2024/2025) & Web of Science Index',
-  },
-];
+// Canonical journal list. URLs and snapshot labels live in src/data/journalCatalog.ts.
+export const CLARIVATE_JCR_CATALOG: JCRJournalEntry[] = JOURNAL_CATALOG;
 
-export function normalizeUrlComponents(rawUrl: string): { host: string; slug: string; full: string; journalId: string } {
-  let cleaned = (rawUrl || '').trim();
-  if (!cleaned.startsWith('http://') && !cleaned.startsWith('https://')) {
-    cleaned = 'https://' + cleaned;
-  }
-  try {
-    const parsed = new URL(cleaned);
-    const host = parsed.hostname.toLowerCase();
-    const pathname = parsed.pathname.toLowerCase().replace(/\/+$/, '');
-    const parts = pathname.split('/').filter(Boolean);
-    const slug = parts.length > 0 ? parts[parts.length - 1] : '';
-    const journalId = slug || (host.includes('nature.com') ? 'nature' : host.replace(/[^a-z0-9]/g, '-'));
-    return { host, slug, full: `${parsed.protocol}//${parsed.host}${parsed.pathname}`, journalId };
-  } catch {
-    return { host: '', slug: '', full: rawUrl, journalId: 'unknown' };
-  }
-}
+const CURRENT_METRIC_STATUSES = new Set(['user_provided', 'page_sourced', 'clarivate_api', 'catalog_snapshot']);
 
-// Lookup Clarivate facts with Persistent Cache + Fallback Safeguards
-export async function lookupClarivateFacts(url: string, forceRefresh = false): Promise<JCRJournalEntry> {
-  const norm = normalizeUrlComponents(url);
-  const journalId = norm.journalId;
-
-  // 1. Check persistent in-memory cache first (unless forceRefresh)
-  if (!forceRefresh && metricsCache.has(journalId)) {
-    const cached = metricsCache.get(journalId)!;
-    if (!isCachedJournalExpired(cached) && cached.fullFacts) {
-      console.log(`[Cache HIT] Retrieved ${journalId} (${cached.journalName}) from metrics-cache.json`);
-      return {
-        ...cached.fullFacts,
-        isFromCache: true,
-        cachedAt: cached.lastAccess,
-        cacheExpiresAt: cached.metrics['impactFactor']?.expireAt,
-      };
-    }
-    console.log(`[Cache EXPIRED] Cached data for ${journalId} is stale. Refreshing...`);
-  }
-
-  // 2. Direct exact catalog match
-  const exact = CLARIVATE_JCR_CATALOG.find((entry) => {
-    const entryNorm = normalizeUrlComponents(entry.url);
-    if (norm.slug && entry.slugs.includes(norm.slug)) return true;
-    if (!norm.slug && (norm.host.includes('nature.com') || norm.full === 'https://www.nature.com') && entry.slugs.includes('nature')) {
-      return true;
-    }
-    return entryNorm.full === norm.full || entryNorm.host === norm.host && entryNorm.slug === norm.slug;
-  });
-
-  if (exact) {
-    console.log(`[Catalog MATCH] Found verified record for ${exact.journalName}`);
-    // Save into cache
-    const nowStr = new Date().toISOString();
-    const cachedEntry: CachedJournal = {
-      journalId,
-      journalName: exact.journalName,
-      publisher: exact.publisher,
-      lastAccess: nowStr,
-      metrics: {
-        impactFactor: {
-          metric: 'impactFactor',
-          value: exact.impactFactor,
-          year: 2024,
-          source: 'Clarivate JCR',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('impactFactor'),
-        },
-        casZone: {
-          metric: 'casZone',
-          value: exact.casZone || null,
-          year: 2024,
-          source: 'CAS Ranking',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('casZone'),
-        },
-        firstDecisionDays: {
-          metric: 'firstDecisionDays',
-          value: exact.firstDecisionDays || null,
-          year: 2024,
-          source: 'Publisher Average',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('firstDecisionDays'),
-        },
-        apcUsd: {
-          metric: 'apcUsd',
-          value: exact.apcUsd || null,
-          year: 2024,
-          source: 'Publisher Price List',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('apcUsd'),
-        },
+function rememberJournal(journalId: string, facts: JCRJournalEntry) {
+  const nowStr = new Date().toISOString();
+  const source = facts.verificationStatus === 'catalog_snapshot'
+    ? `Catalog snapshot ${facts.catalogDataYear || ''}`.trim()
+    : facts.verificationStatus;
+  const cachedEntry: CachedJournal = {
+    journalId,
+    journalName: facts.journalName,
+    publisher: facts.publisher,
+    lastAccess: nowStr,
+    metrics: {
+      impactFactor: {
+        metric: 'impactFactor',
+        value: facts.impactFactor,
+        year: facts.catalogDataYear || new Date().getFullYear(),
+        source,
+        cachedAt: nowStr,
+        expireAt: calculateMetricExpiry('impactFactor'),
       },
-      fullFacts: exact,
-    };
-    metricsCache.set(journalId, cachedEntry);
-    saveCacheToDisk();
-
-    return {
-      ...exact,
-      isFromCache: false,
-      cachedAt: nowStr,
-      cacheExpiresAt: cachedEntry.metrics['impactFactor']?.expireAt,
-    };
-  }
-
-  // 3. AI Lookup via Gemini if available
-  if (ai) {
-    try {
-      console.log(`[AI Lookup] Querying Gemini for journal metrics: ${norm.full}`);
-      const timeoutPromise = new Promise<null>((_, reject) =>
-        setTimeout(() => reject(new Error('AI lookup timed out')), 5000)
-      );
-
-      const aiQuery = ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: `You are an academic publishing metrics database. Find the verified Clarivate JCR metrics for this journal URL: "${norm.full}".
-Return strictly a JSON object with:
-{
-  "journalName": string,
-  "publisher": string,
-  "impactFactor": number,
-  "fiveYearImpactFactor": number,
-  "jcrQuartile": "Q1" | "Q2" | "Q3" | "Q4",
-  "casZone": string,
-  "firstDecisionDays": number,
-  "indexing": string[],
-  "openAccessType": string,
-  "apcUsd": number,
-  "chinaWaiverAvailable": boolean,
-  "aimsAndScopeSummary": string,
-  "primaryDiscipline": string
+      casZone: {
+        metric: 'casZone',
+        value: facts.casZone || null,
+        year: facts.catalogDataYear || new Date().getFullYear(),
+        source,
+        cachedAt: nowStr,
+        expireAt: calculateMetricExpiry('casZone'),
+      },
+      firstDecisionDays: {
+        metric: 'firstDecisionDays',
+        value: facts.firstDecisionDays || null,
+        year: facts.catalogDataYear || new Date().getFullYear(),
+        source,
+        cachedAt: nowStr,
+        expireAt: calculateMetricExpiry('firstDecisionDays'),
+      },
+      apcUsd: {
+        metric: 'apcUsd',
+        value: facts.apcUsd || null,
+        year: facts.catalogDataYear || new Date().getFullYear(),
+        source,
+        cachedAt: nowStr,
+        expireAt: calculateMetricExpiry('apcUsd'),
+      },
+    },
+    fullFacts: facts,
+  };
+  metricsCache.set(journalId, cachedEntry);
+  saveCacheToDisk();
+  return cachedEntry;
 }
-If this is not a known scholarly journal or impact factor cannot be verified, return null for impactFactor.`,
-        config: {
-          responseMimeType: 'application/json',
-        },
-      });
 
-      const res: any = await Promise.race([aiQuery, timeoutPromise]);
-      if (res && res.text) {
-        const parsed = JSON.parse(res.text);
-        if (parsed.journalName && parsed.impactFactor !== null && parsed.impactFactor !== undefined) {
-          const aiFacts: JCRJournalEntry = {
-            url: norm.full,
-            slugs: [norm.slug],
-            ...parsed,
-            isVerifiedClarivate: false,
-            verificationStatus: 'unverified',
-            reportingYear: 'Estimated Web Knowledge (Review in Step 1)',
-            sourceAttribution: 'Retrieved via Web Knowledge Engine — Please verify against official Clarivate JCR',
-          };
-
-          // Cache AI result
-          const nowStr = new Date().toISOString();
-          metricsCache.set(journalId, {
-            journalId,
-            journalName: parsed.journalName,
-            publisher: parsed.publisher || 'Springer Nature',
-            lastAccess: nowStr,
-            metrics: {
-              impactFactor: {
-                metric: 'impactFactor',
-                value: parsed.impactFactor,
-                year: 2024,
-                source: 'Web Lookup',
-                cachedAt: nowStr,
-                expireAt: calculateMetricExpiry('impactFactor'),
-              },
-            },
-            fullFacts: aiFacts,
-          });
-          saveCacheToDisk();
-
-          return aiFacts;
-        }
-      }
-    } catch (e: any) {
-      console.warn('[AI Lookup Failed]:', e.message);
-    }
-  }
-
-  // 4. UNKNOWN JOURNAL / LOOKUP FAILED:
-  // Return missing verificationStatus with null metrics and missingFields list.
-  // NO INVENTED NUMBERS!
-  let guessedName = 'Unknown Journal';
-  let guessedPublisher = 'Springer Nature';
-
-  if (norm.host.includes('nature.com')) {
-    guessedPublisher = 'Nature Portfolio';
-    guessedName = norm.slug ? `Nature ${norm.slug.charAt(0).toUpperCase() + norm.slug.slice(1)}` : 'Nature Portfolio Journal';
-  } else if (norm.host.includes('biomedcentral.com')) {
-    guessedPublisher = 'BMC (Part of Springer Nature)';
-    guessedName = norm.slug ? `BMC ${norm.slug.charAt(0).toUpperCase() + norm.slug.slice(1)}` : 'BMC Journal';
-  } else if (norm.host.includes('springer.com')) {
-    guessedPublisher = 'SpringerLink';
-    guessedName = norm.slug ? `Springer ${norm.slug.charAt(0).toUpperCase() + norm.slug.slice(1)}` : 'Springer Journal';
-  }
-
-  console.log(`[Metrics Missing] Journal ${norm.full} is unknown. Returning null fields and prompting user verification.`);
-
+function missingJournalFacts(canonicalUrl: string): JCRJournalEntry {
   return {
-    url: norm.full,
-    slugs: norm.slug ? [norm.slug] : [],
-    journalName: guessedName,
-    publisher: guessedPublisher,
+    url: canonicalUrl,
+    slugs: [],
+    journalName: 'Unknown journal',
+    publisher: 'Unknown publisher',
     impactFactor: null,
     fiveYearImpactFactor: null,
     jcrQuartile: null,
@@ -591,14 +309,97 @@ If this is not a known scholarly journal or impact factor cannot be verified, re
     openAccessType: null,
     apcUsd: null,
     chinaWaiverAvailable: false,
-    aimsAndScopeSummary: 'Aims and scope not verified.',
-    primaryDiscipline: 'Research Fields Unverified',
+    aimsAndScopeSummary: '',
+    primaryDiscipline: '',
     isVerifiedClarivate: false,
     verificationStatus: 'missing',
+    provenanceSource: 'missing',
     missingFields: ['impactFactor', 'casZone', 'jcrQuartile', 'firstDecisionDays', 'apcUsd', 'indexing'],
-    reportingYear: 'Missing Data',
-    sourceAttribution: 'Please manually verify and add journal metrics before generating campaigns.',
+    reportingYear: '',
+    sourceAttribution: 'No trusted metrics for this URL. Add them manually, or connect the Clarivate API.',
   };
+}
+
+export async function lookupClarivateFacts(url: string, forceRefresh = false, issn?: string): Promise<JCRJournalEntry> {
+  const norm = normalizeJournalUrl(url);
+  const journalId = norm.cacheKey;
+  if (!norm.canonical) return missingJournalFacts(url || '');
+
+  const cachedRecord = metricsCache.get(journalId);
+  const issnToUse = (issn || cachedRecord?.fullFacts?.issn || '').trim();
+
+  if (!forceRefresh && cachedRecord) {
+    const cached = cachedRecord;
+    const status = cached.fullFacts?.verificationStatus;
+    // Catalog snapshots are re-read from the in-repo list so a stale hardcoded
+    // figure cannot linger in metrics-cache.json.
+    const usable = !!status
+      && status !== 'catalog_snapshot'
+      && CURRENT_METRIC_STATUSES.has(status)
+      && !isCachedJournalExpired(cached)
+      && cached.fullFacts;
+    if (usable && cached.fullFacts) {
+      console.log(`[Cache HIT] Retrieved ${journalId} (${cached.journalName}) from metrics-cache.json`);
+      return {
+        ...cached.fullFacts,
+        url: normalizeJournalUrl(cached.fullFacts.url).canonical || norm.canonical,
+        isFromCache: true,
+        cachedAt: cached.lastAccess,
+        cacheExpiresAt: cached.metrics['impactFactor']?.expireAt,
+      };
+    }
+    console.log(status === 'catalog_snapshot'
+      ? `[Cache SKIP] Catalog snapshot for ${journalId} is re-read from the in-repo catalog.`
+      : status && !CURRENT_METRIC_STATUSES.has(status)
+      ? `[Cache SKIP] Legacy entry for ${journalId} is not a current metric status.`
+      : `[Cache EXPIRED] Cached data for ${journalId} is stale. Refreshing...`);
+  }
+
+  if (issnToUse) {
+    const fromApi = await lookupMetricsByIssn(issnToUse);
+    if (fromApi) {
+      const facts: JCRJournalEntry = {
+        ...missingJournalFacts(norm.canonical),
+        ...fromApi,
+        url: norm.canonical,
+        slugs: [],
+      };
+      rememberJournal(journalId, facts);
+      return facts;
+    }
+  }
+
+  const fromPage = await pageFacts.extractFromPage(norm.canonical);
+  if (fromPage) {
+    const facts: JCRJournalEntry = {
+      ...missingJournalFacts(norm.canonical),
+      ...fromPage,
+      url: norm.canonical,
+      slugs: [],
+      verificationStatus: 'page_sourced',
+      provenanceSource: 'page_sourced',
+      isVerifiedClarivate: false,
+      sourceAttribution: fromPage.sourceAttribution || 'Read from the journal page',
+    };
+    rememberJournal(journalId, facts);
+    return facts;
+  }
+
+  const exact = CLARIVATE_JCR_CATALOG.find((entry) => journalUrlsMatch(norm, normalizeJournalUrl(entry.url)));
+  if (exact) {
+    console.log(`[Catalog MATCH] Found catalog snapshot for ${exact.journalName}`);
+    const facts: JCRJournalEntry = { ...exact, url: normalizeJournalUrl(exact.url).canonical };
+    const cachedEntry = rememberJournal(journalId, facts);
+    return {
+      ...facts,
+      isFromCache: false,
+      cachedAt: cachedEntry.lastAccess,
+      cacheExpiresAt: cachedEntry.metrics['impactFactor']?.expireAt,
+    };
+  }
+
+  console.log(`[Metrics Missing] No record for ${norm.canonical}.`);
+  return missingJournalFacts(norm.canonical);
 }
 
 // --- REST API ENDPOINTS ---
@@ -606,11 +407,11 @@ If this is not a known scholarly journal or impact factor cannot be verified, re
 // 1. Fetch Clarivate Facts (checks cache first)
 app.post('/api/fetch-clarivate-facts', async (req, res) => {
   try {
-    const { url, forceRefresh = false } = req.body;
+    const { url, forceRefresh = false, issn } = req.body;
     if (!url || !url.trim()) {
       return res.status(400).json({ error: 'URL is required' });
     }
-    const facts = await lookupClarivateFacts(url, forceRefresh);
+    const facts = await lookupClarivateFacts(url, forceRefresh, typeof issn === 'string' ? issn : undefined);
     res.json({ success: true, facts });
   } catch (err: any) {
     console.error('Clarivate lookup error:', err);
@@ -636,7 +437,11 @@ app.post('/api/cache/refresh/:journalId', async (req, res) => {
   try {
     const { journalId } = req.params;
     const { url } = req.body;
-    const targetUrl = url || `https://www.nature.com/${journalId}`;
+    const cachedUrl = metricsCache.get(journalId)?.fullFacts?.url;
+    const targetUrl = url || cachedUrl;
+    if (!targetUrl) {
+      return res.status(400).json({ error: 'A journal URL is required to refresh this cache entry.' });
+    }
     const refreshed = await lookupClarivateFacts(targetUrl, true);
     res.json({
       success: true,
@@ -688,14 +493,20 @@ app.post('/api/update-journal-metrics', (req, res) => {
       return res.status(400).json({ error: 'Valid journal metrics object is required.' });
     }
 
-    const norm = normalizeUrlComponents(facts.url || '');
-    const journalId = norm.slug || facts.journalName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const norm = normalizeJournalUrl(facts.url || '');
+    if (!norm.canonical) {
+      return res.status(400).json({ error: 'A journal URL is required. Metrics are stored against that URL, not an invented path.' });
+    }
+    const journalId = norm.cacheKey;
     const nowStr = new Date().toISOString();
 
     const userProvidedFacts: JCRJournalEntry = {
       ...facts,
+      url: norm.canonical,
+      slugs: [],
       isVerifiedClarivate: false,
       verificationStatus: 'user_provided',
+      provenanceSource: 'user_provided',
       sourceAttribution: facts.sourceAttribution || 'Manually supplied by user (User Verified)',
       missingFields: [],
       reportingYear: facts.reportingYear || 'User Provided (2025/2026)',
@@ -772,6 +583,8 @@ export function generateStageHeadlines(
   stage: StageCode,
   outputLanguage: 'all' | 'EN' | 'ZH' = 'all'
 ) {
+  facts = factsForCopy(facts);
+  const ifLabel = metricsFromClarivateWos(facts) ? 'Clarivate IF' : 'IF';
   const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
   const disciplineShort = (facts.primaryDiscipline || 'Scientific').split('(')[0].trim().slice(0, 14);
 
@@ -825,8 +638,8 @@ export function generateStageHeadlines(
       { text: smartClamp(`${shortName} Aims & Scope`, 30), sourceFact: 'Scope Criteria', language: 'EN', category: 'Scope & Community', positionRecommendation: 'Position 1' },
       { text: smartClamp(`Evaluate ${shortName}`, 30), sourceFact: facts.journalName, language: 'EN', category: 'Journal Identity', positionRecommendation: 'Position 1' },
       // Conditional metrics (NO nulls)
-      ...(facts.impactFactor ? [{ text: smartClamp(`Clarivate IF ${facts.impactFactor} ${facts.jcrQuartile || ''}`.trim(), 30), sourceFact: `IF ${facts.impactFactor}`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
-      { text: smartClamp(`Indexed in ${facts.indexing?.slice(0, 2).join(' & ') || 'SCIE & Scopus'}`, 30), sourceFact: 'Indexing', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' },
+      ...(facts.impactFactor ? [{ text: smartClamp(`${ifLabel} ${facts.impactFactor}${facts.jcrQuartile ? ` ${facts.jcrQuartile}` : ''}`, 30), sourceFact: `IF ${facts.impactFactor}`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(facts.indexing?.length ? [{ text: smartClamp(`Indexed in ${facts.indexing.slice(0, 2).join(' & ')}`, 30), sourceFact: 'Indexing', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       { text: smartClamp(`Rigorous Peer Review Standards`, 30), sourceFact: 'Editorial Standards', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' },
       ...(facts.firstDecisionDays ? [{ text: smartClamp(`Avg ${facts.firstDecisionDays} Days to 1st Decision`, 30), sourceFact: `${facts.firstDecisionDays} Days Decision`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' }] : []),
       { text: smartClamp(`Compare Publishing Options`, 30), sourceFact: 'Comparison Evaluation', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' },
@@ -906,6 +719,8 @@ export function generateStageHeadlines(
 
 // Stage Descriptions with language purity
 export function generateStageDescriptions(facts: any, stage: StageCode, outputLanguage: 'all' | 'EN' | 'ZH' = 'all') {
+  facts = factsForCopy(facts);
+  const ifLabel = metricsFromClarivateWos(facts) ? 'Clarivate IF' : 'IF';
   if (stage === 'AWA') {
     const en = [
       { text: smartClamp(`Explore research published in ${facts.journalName}. Serving the global scientific community.`, 90), sourceFact: 'Journal Overview', language: 'EN' as const, theme: 'Scope & Relevance' },
@@ -925,13 +740,13 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
   }
 
   if (stage === 'CON') {
-    const ifText = facts.impactFactor ? `Clarivate IF ${facts.impactFactor}, ` : '';
-    const daysText = facts.firstDecisionDays ? `First decision in ${facts.firstDecisionDays} days.` : 'Prompt editorial turnaround.';
+    const ifText = facts.impactFactor ? `${ifLabel} ${facts.impactFactor}, ` : '';
+    const daysText = facts.firstDecisionDays ? `First decision in ${facts.firstDecisionDays} days.` : 'Editorial criteria are listed on the journal site.';
     const feeText = facts.apcUsd ? `APC ($${facts.apcUsd})` : 'publishing options';
     const casText = facts.casZone ? `（${facts.casZone.slice(0, 10)}）` : '';
 
     const en = [
-      { text: smartClamp(`Evaluate ${facts.journalName} for your paper. ${ifText}indexed in SCIE & Scopus.`, 90), sourceFact: 'Evaluation', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
+      { text: smartClamp(`Evaluate ${facts.journalName} for your paper. ${ifText}${facts.indexing?.length ? `indexed in ${facts.indexing.slice(0, 2).join(' & ')}.` : 'Review the aims and scope.'}`, 90), sourceFact: 'Evaluation', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
       { text: smartClamp(`Transparent publishing options and editorial criteria. ${daysText}`, 90), sourceFact: 'Turnaround', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
       { text: smartClamp(`Review accepted article types, transparent ${feeText}, and peer review workflow.`, 90), sourceFact: 'Publishing Options', language: 'EN' as const, theme: 'Publishing Options' },
       { text: smartClamp(`Compare scope, turnaround metrics, and open access models to make an informed choice.`, 90), sourceFact: 'Comparison Evaluation', language: 'EN' as const, theme: 'Comparison & Fit' },
@@ -966,6 +781,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
 }
 
 export function generateStageKeywords(facts: any, stage: StageCode) {
+  facts = factsForCopy(facts);
   const shortName = facts.journalName.toLowerCase();
   const disc = (facts.primaryDiscipline || 'science').toLowerCase().split('(')[0].trim();
 
@@ -989,7 +805,9 @@ export function generateStageKeywords(facts: any, stage: StageCode) {
   if (stage === 'CON') {
     return {
       englishSearchKeywords: [
-        { keyword: `[${shortName} impact factor 2024]`, matchType: 'Exact' as const, intent: 'Metric Evaluation' },
+        ...(facts.impactFactor
+          ? [{ keyword: `[${shortName} impact factor]`, matchType: 'Exact' as const, intent: 'Metric Evaluation' }]
+          : []),
         { keyword: `"${shortName} aims and scope"`, matchType: 'Phrase' as const, intent: 'Fit Evaluation' },
         { keyword: `"${shortName} compared to similar journals"`, matchType: 'Phrase' as const, intent: 'Journal Comparison' },
         { keyword: `[${shortName} review time vs standard]`, matchType: 'Exact' as const, intent: 'Turnaround Check' },
@@ -1021,6 +839,8 @@ export function generateStageKeywords(facts: any, stage: StageCode) {
 }
 
 export function generateStageDisplayAd(facts: any, stage: StageCode) {
+  facts = factsForCopy(facts);
+  const ifLabel = metricsFromClarivateWos(facts) ? 'Clarivate IF' : 'IF';
   const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
 
   if (stage === 'AWA') {
@@ -1042,7 +862,7 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
   }
 
   if (stage === 'CON') {
-    const metricStr = facts.impactFactor ? `Clarivate IF ${facts.impactFactor}` : 'Indexed Research';
+    const metricStr = facts.impactFactor ? `${ifLabel} ${facts.impactFactor}` : 'Peer-Reviewed Research';
     return {
       shortHeadline: smartClamp(`Check ${shortName} Fit`, 30),
       shortHeadlineCharCount: 0,
@@ -1052,7 +872,7 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
       descriptionCharCount: 0,
       businessName: facts.publisher,
       ctaText: 'Check Journal Fit',
-      visualConceptPrompt: `An objective academic evaluation ad featuring the official journal cover, Clarivate indexing badges (SCIE), and professional scholarly palette.`,
+      visualConceptPrompt: `An objective academic evaluation ad featuring the official journal cover and a professional scholarly palette. Do not draw impact-factor, quartile, or Clarivate badges.`,
       imageAccentColor: '#1e1b4b',
       targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'scholar.google.com', 'nature.com'],
       bannerHeadlineZh: `${facts.journalName} 选刊评估指南`,
@@ -1093,8 +913,9 @@ export function generateDeterministicCampaign(
   displayAd.longHeadlineCharCount = displayAd.longHeadline.length;
   displayAd.descriptionCharCount = displayAd.description.length;
 
-  const norm = normalizeUrlComponents(facts.url || '');
-  const baseUrl = norm.full || 'https://www.nature.com';
+  const copyFacts = factsForCopy(facts);
+  const baseUrl = normalizeJournalUrl(facts.url || '').canonical;
+  const destinationUrl = joinJournalUrl(baseUrl, stageConfig.recommendedDestination.urlPath);
 
   const sitelinks =
     stage === 'AWA'
@@ -1108,7 +929,7 @@ export function generateDeterministicCampaign(
       ? [
           { title: 'Aims & Scope Evaluation', desc: 'Check topical alignment and criteria', urlPath: `${baseUrl}/aims-and-scope` },
           { title: 'Article Types & Formats', desc: 'Accepted original research & reviews', urlPath: `${baseUrl}/article-types` },
-          { title: 'Journal Metrics & Indexing', desc: `Indexing & Clarivate status`, urlPath: `${baseUrl}/metrics` },
+          { title: 'Journal Metrics & Indexing', desc: 'Indexing and journal metrics', urlPath: `${baseUrl}/metrics` },
           { title: 'Publishing Options & Fees', desc: `Transparent APC & OA publishing`, urlPath: `${baseUrl}/open-access` },
         ]
       : [
@@ -1122,10 +943,10 @@ export function generateDeterministicCampaign(
     stage === 'AWA'
       ? [`Published by ${facts.publisher}`, (facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), 'Global Readership', 'Peer-Reviewed Science']
       : stage === 'CON'
-      ? [facts.impactFactor ? `Clarivate IF ${facts.impactFactor}` : 'Indexed in SCIE', facts.casZone ? facts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', facts.firstDecisionDays ? `1st Decision: ${facts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
-      : ['Author Guidelines Ready', 'Standard Preparation Checklist', facts.firstDecisionDays ? `First Decision: ${facts.firstDecisionDays} Days` : 'Prompt Review', 'Official Submission Portal'];
+      ? [copyFacts.impactFactor ? `${metricsFromClarivateWos(copyFacts) ? 'Clarivate IF' : 'IF'} ${copyFacts.impactFactor}` : 'Peer-reviewed journal', copyFacts.casZone ? copyFacts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', copyFacts.firstDecisionDays ? `1st Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
+      : ['Author Guidelines Ready', 'Standard Preparation Checklist', copyFacts.firstDecisionDays ? `First Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Official Submission Portal'];
 
-  return {
+  return guardAdCopy({
     funnelStage: stage,
     legacyStage: stage === 'AWA' ? 'TOFU' : stage === 'CON' ? 'MOFU' : 'BOFU',
     clarivateFacts: facts,
@@ -1133,7 +954,7 @@ export function generateDeterministicCampaign(
     primaryCta: stageConfig.primaryCta,
     recommendedDestination: {
       label: stageConfig.recommendedDestination.label,
-      url: `${baseUrl}${stageConfig.recommendedDestination.urlPath}`,
+      url: destinationUrl,
       description: stageConfig.recommendedDestination.description,
     },
     generationSource: 'template_fallback' as const,
@@ -1146,14 +967,14 @@ export function generateDeterministicCampaign(
         header: 'Disciplines',
         values: [(facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), facts.publisher, 'Peer-Reviewed Research'],
       },
-      recommendedFinalUrl: `${baseUrl}${stageConfig.recommendedDestination.urlPath}`,
+      recommendedFinalUrl: destinationUrl,
     },
     displayAds: {
       ...displayAd,
-      recommendedFinalUrl: `${baseUrl}${stageConfig.recommendedDestination.urlPath}`,
+      recommendedFinalUrl: destinationUrl,
     },
     keywords,
-  };
+  }, facts);
 }
 
 // 3. Campaign Generation API
@@ -1179,10 +1000,11 @@ app.post('/api/generate-campaign', async (req, res) => {
       facts = await lookupClarivateFacts(landingPageUrl);
     }
 
-    // BLOCK GENERATION IF REQUIRED METRICS ARE MISSING
-    if (facts.verificationStatus === 'missing' || (facts.missingFields && facts.missingFields.length > 0)) {
+    // Unknown journals have no identity to advertise. Snapshot and trusted records can
+    // generate copy; untrusted numbers are omitted by factsForCopy and the claim guard.
+    if (facts.verificationStatus === 'missing') {
       return res.status(400).json({
-        error: 'Please complete journal metrics to continue. Key Clarivate metrics are unverified.',
+        error: 'Please complete journal metrics to continue. No trusted or catalog record exists for this URL.',
         missingFields: facts.missingFields || ['impactFactor', 'casZone', 'firstDecisionDays', 'apcUsd'],
         facts,
       });
@@ -1211,14 +1033,14 @@ ${
     : `* Decision: Practical author guidelines, manuscript checklist, submission portal. NO guaranteed acceptance claims.`
 }
 
-FACTUAL METRICS (Strict source attribution, NO invented numbers):
-- Journal: ${facts.journalName} (${facts.publisher})
-- Clarivate Impact Factor: ${facts.impactFactor || 'Not reported'}
-- CAS Zone: ${facts.casZone || 'Not reported'}
-- Turnaround: ${facts.firstDecisionDays ? `${facts.firstDecisionDays} days` : 'Not reported'}
-- Indexing: ${facts.indexing?.join(', ') || 'SCIE, Scopus'}
-- Open Access: ${facts.openAccessType || 'Hybrid Open Access'} (APC: $${facts.apcUsd || 'Transparent'})
+JOURNAL:
+- Name: ${facts.journalName} (${facts.publisher})
+- Discipline: ${facts.primaryDiscipline || 'Not stated'}
+- Open access model: ${facts.openAccessType || 'Not stated'}
+- Indexing: ${facts.indexing?.length ? facts.indexing.join(', ') : 'Not stated'}
 - Output Language: ${outputLanguage}
+
+${metricPromptSection(facts)}
 
 ${customPlaybook ? `PLAYBOOK RULES:\n${customPlaybook}\n` : ''}
 
@@ -1321,28 +1143,26 @@ GOOGLE ADS REQUIREMENTS:
       campaignOutput.displayAds.targetPlacements = campaignOutput.displayAds.targetPlacements || fallback.displayAds.targetPlacements;
     }
 
-    const norm = normalizeUrlComponents(facts.url || '');
-    const baseUrl = norm.full || 'https://www.nature.com';
+    const destinationUrl = joinJournalUrl(facts.url, stageConfig.recommendedDestination.urlPath);
 
-    res.json({
-      success: true,
-      campaign: {
-        funnelStage: normalizedStage,
-        legacyStage: normalizedStage === 'AWA' ? 'TOFU' : normalizedStage === 'CON' ? 'MOFU' : 'BOFU',
-        clarivateFacts: facts,
-        funnelStrategyNote: `${stageConfig.name}: ${stageConfig.campaignObjective}`,
-        primaryCta: campaignOutput.primaryCta || stageConfig.primaryCta,
-        recommendedDestination: {
-          label: stageConfig.recommendedDestination.label,
-          url: `${baseUrl}${stageConfig.recommendedDestination.urlPath}`,
-          description: stageConfig.recommendedDestination.description,
-        },
-        generationSource,
-        outputLanguage,
-        generatedAt: new Date().toISOString(),
-        ...campaignOutput,
+    const campaign = guardAdCopy({
+      funnelStage: normalizedStage,
+      legacyStage: normalizedStage === 'AWA' ? 'TOFU' : normalizedStage === 'CON' ? 'MOFU' : 'BOFU',
+      clarivateFacts: facts,
+      funnelStrategyNote: `${stageConfig.name}: ${stageConfig.campaignObjective}`,
+      primaryCta: campaignOutput.primaryCta || stageConfig.primaryCta,
+      generationSource,
+      outputLanguage,
+      generatedAt: new Date().toISOString(),
+      ...campaignOutput,
+      recommendedDestination: {
+        label: stageConfig.recommendedDestination.label,
+        url: destinationUrl,
+        description: stageConfig.recommendedDestination.description,
       },
-    });
+    }, facts);
+
+    res.json({ success: true, campaign });
   } catch (error: any) {
     console.error('Campaign generation failed:', error);
     res.status(500).json({ error: error.message || 'Server error' });
@@ -1393,7 +1213,10 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('Server failed to start:', err);
-  process.exit(1);
-});
+const entryPoint = process.argv[1] ? path.resolve(process.argv[1]) : '';
+if (entryPoint === fileURLToPath(import.meta.url)) {
+  startServer().catch((err) => {
+    console.error('Server failed to start:', err);
+    process.exit(1);
+  });
+}
