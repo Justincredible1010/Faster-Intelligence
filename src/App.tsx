@@ -20,6 +20,8 @@ import {
 import { runComplianceAudit, autoFixComplianceIssues } from './utils/complianceValidator';
 import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
 import { AlertCircle, AlertTriangle, Sparkles } from 'lucide-react';
+import { apiFetch } from './auth/api';
+import { pickEditableJournalFacts } from './utils/editableJournalFacts';
 import { NATURE_HOMEPAGE_URL } from './utils/journalUrl';
 import { trustedApcUsd, trustedCasZone, trustedImpactFactor, trustedQuartile } from './utils/metricClaims';
 
@@ -62,9 +64,8 @@ export default function App() {
     setIsFetchingFacts(true);
     setError(null);
     try {
-      const res = await fetch('/api/fetch-clarivate-facts', {
+      const res = await apiFetch('/api/fetch-clarivate-facts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: url.trim(), forceRefresh }),
       });
       const data = await res.json();
@@ -138,10 +139,12 @@ export default function App() {
     if (channels.search) activeChannels.push('search');
     if (channels.display) activeChannels.push('display');
 
+    const browserFacts = manualFacts
+      ?? (clarivateFacts?.verificationStatus === 'user_provided' ? clarivateFacts : null);
+
     try {
-      const res = await fetch('/api/generate-campaign', {
+      const res = await apiFetch('/api/generate-campaign', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         signal: abortController.signal,
         body: JSON.stringify({
           landingPageUrl: url.trim(),
@@ -149,7 +152,7 @@ export default function App() {
           outputLanguage: lang,
           channels: activeChannels,
           customPlaybook: playbook,
-          userProvidedFacts: manualFacts || (clarivateFacts?.verificationStatus === 'user_provided' ? clarivateFacts : null),
+          userProvidedFacts: browserFacts ? pickEditableJournalFacts(browserFacts) : null,
         }),
       });
 
@@ -197,11 +200,15 @@ export default function App() {
   const handleSaveManualJournal = async (facts: ClarivateJournalMetrics) => {
     setClarivateFacts(facts);
     try {
-      await fetch('/api/update-journal-metrics', {
+      const saveRes = await apiFetch('/api/update-journal-metrics', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ facts }),
       });
+      if (!saveRes.ok) {
+        const saveData = await saveRes.json().catch(() => ({}));
+        setError(saveData.error || 'Failed to save journal metrics');
+        return;
+      }
     } catch (err) {
       console.warn('Failed to persist manual metrics to server:', err);
     }

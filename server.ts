@@ -4,8 +4,13 @@ import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { loadMetricsCacheFromDisk } from './src/utils/metricsCache';
+import { diffTrackedFields, recordMetricsAudit, type FieldChange, type MetricsAuditEvent } from './src/server/auditLog';
+import { assertProductionAuthConfig } from './src/server/auth/config';
+import { apiGuard, getRequestSession, requireAdmin } from './src/server/auth/guard';
+import { registerAuthRoutes } from './src/server/auth/routes';
+import { MANUAL_METRIC_SOURCE, MetricsValidationError, sanitizeUserProvidedFacts, validateJournalMetricsUpdate } from './src/server/metricsValidation';
 import { JOURNAL_CATALOG } from './src/data/journalCatalog';
 import { NATURE_HOMEPAGE_URL, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
 import { lookupMetricsByIssn, pageFacts } from './src/utils/metricSources';
@@ -34,7 +39,28 @@ const __dirname = path.dirname(__filename);
 export const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '15mb' }));
+// Express matches routes case-insensitively by default. Keep matching strict so
+// `/API/...` cannot reach a handler that the guard only recognised as `/api`.
+app.set('case sensitive routing', true);
+
+if (process.env.TRUST_PROXY === 'true') {
+  app.set('trust proxy', 1);
+}
+
+// Campaign payloads are JSON text. 1mb is enough for playbooks and journal facts
+// and replaces the previous 15mb limit.
+export const JSON_BODY_LIMIT = '1mb';
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+app.use((err: { type?: string; status?: number; statusCode?: number }, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.type === 'entity.too.large' || err?.status === 413 || err?.statusCode === 413) {
+    res.status(413).json({ error: 'Request body is too large. Maximum size is 1mb.' });
+    return;
+  }
+  next(err);
+});
+app.use(apiGuard);
+app.use('/api', apiGuard);
+registerAuthRoutes(app);
 
 // Shared Gemini client utility
 const apiKey = process.env.GEMINI_API_KEY;
@@ -114,14 +140,25 @@ export interface CachedJournal {
   metrics: Record<string, CachedMetricEntry>;
   lastAccess: string;
   fullFacts?: JCRJournalEntry;
+  lastModifiedBy?: { email: string; sub: string; provider: string; at: string };
+  audit?: MetricsAuditEvent[];
 }
 
 // --- PERSISTENT METRICS CACHE (metrics-cache.json) ---
-const CACHE_FILE_PATH = path.resolve(__dirname, 'metrics-cache.json');
+function cacheFilePath(): string {
+  const override = process.env.METRICS_CACHE_PATH;
+  if (override && override.trim()) return path.resolve(override);
+  return path.resolve(__dirname, 'metrics-cache.json');
+}
 const metricsCache = new Map<string, CachedJournal>();
 
+export function resetMetricsCacheForTests(): void {
+  metricsCache.clear();
+}
+
 function loadCacheFromDisk() {
-  const loaded = loadMetricsCacheFromDisk<CachedJournal>(CACHE_FILE_PATH);
+  metricsCache.clear();
+  const loaded = loadMetricsCacheFromDisk<CachedJournal>(cacheFilePath());
   loaded.forEach((val, key) => {
     metricsCache.set(key, val);
   });
@@ -133,7 +170,7 @@ function saveCacheToDisk() {
     metricsCache.forEach((val, key) => {
       obj[key] = val;
     });
-    fs.writeFileSync(CACHE_FILE_PATH, JSON.stringify(obj, null, 2), 'utf-8');
+    fs.writeFileSync(cacheFilePath(), JSON.stringify(obj, null, 2), 'utf-8');
   } catch (err) {
     console.error('[Metrics Cache] Failed to write cache to disk:', err);
   }
@@ -555,7 +592,7 @@ app.get('/api/cache/journal/:journalId', (req, res) => {
   });
 });
 
-app.post('/api/cache/refresh/:journalId', async (req, res) => {
+app.post('/api/cache/refresh/:journalId', requireAdmin, async (req, res) => {
   try {
     const { journalId } = req.params;
     const { url } = req.body;
@@ -594,11 +631,12 @@ app.get('/api/cache/list', (_req, res) => {
   });
 });
 
-app.post('/api/cache/clear', (_req, res) => {
+app.post('/api/cache/clear', requireAdmin, (_req, res) => {
   metricsCache.clear();
   try {
-    if (fs.existsSync(CACHE_FILE_PATH)) {
-      fs.unlinkSync(CACHE_FILE_PATH);
+    const filePath = cacheFilePath();
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
     }
   } catch (err) {
     console.warn('Failed to delete cache file:', err);
@@ -607,15 +645,16 @@ app.post('/api/cache/clear', (_req, res) => {
   res.json({ success: true, message: 'All cached metrics cleared successfully.' });
 });
 
-// Update or store user-provided journal metrics into cache
+// Update or store user-provided journal metrics into cache.
+// Only known fields are accepted. The signed-in user is recorded on the entry and in the audit log.
 app.post('/api/update-journal-metrics', (req, res) => {
   try {
-    const { facts } = req.body;
-    if (!facts || !facts.journalName) {
-      return res.status(400).json({ error: 'Valid journal metrics object is required.' });
+    const actor = getRequestSession(res)?.user;
+    if (!actor) {
+      return res.status(401).json({ error: 'Authentication required' });
     }
-
-    const norm = normalizeJournalUrl(facts.url || '');
+    const facts = validateJournalMetricsUpdate(req.body);
+    const norm = normalizeJournalUrl(facts.url);
     if (!norm.canonical) {
       return res.status(400).json({ error: 'A journal URL is required. Metrics are stored against that URL, not an invented path.' });
     }
@@ -625,71 +664,100 @@ app.post('/api/update-journal-metrics', (req, res) => {
       requestUrl: norm.canonical,
     });
     const nowStr = new Date().toISOString();
+    const previous = metricsCache.get(journalId);
 
     const userProvidedFacts: JCRJournalEntry = {
-      ...facts,
       url: norm.canonical,
       slugs: [],
+      journalName: facts.journalName,
+      publisher: facts.publisher,
+      impactFactor: facts.impactFactor,
+      fiveYearImpactFactor: facts.fiveYearImpactFactor,
+      jcrQuartile: facts.jcrQuartile,
+      casZone: facts.casZone,
+      firstDecisionDays: facts.firstDecisionDays,
+      indexing: facts.indexing,
+      openAccessType: facts.openAccessType,
+      apcUsd: facts.apcUsd,
+      chinaWaiverAvailable: facts.chinaWaiverAvailable,
+      aimsAndScopeSummary: facts.aimsAndScopeSummary,
+      primaryDiscipline: facts.primaryDiscipline,
+      issn: facts.issn,
+      eIssn: facts.eIssn,
       isVerifiedClarivate: false,
       verificationStatus: 'user_provided',
       provenanceSource: 'user_provided',
-      sourceAttribution: facts.sourceAttribution || 'Manually supplied by user (User Verified)',
+      sourceAttribution: MANUAL_METRIC_SOURCE,
       missingFields: [],
-      reportingYear: facts.reportingYear || 'User Provided (2025/2026)',
+      reportingYear: facts.reportingYear,
+      jcrYear: facts.jcrYear,
     };
+
+    const changedFields: FieldChange[] = diffTrackedFields(
+      previous?.fullFacts as unknown as Record<string, unknown> | undefined,
+      userProvidedFacts as unknown as Record<string, unknown>
+    );
+    const auditEvent: MetricsAuditEvent = {
+      at: nowStr,
+      actorEmail: actor.email,
+      actorSub: actor.sub,
+      actorProvider: actor.provider,
+      journalId,
+      journalName: facts.journalName,
+      action: previous ? 'update' : 'create',
+      changedFields,
+    };
+    recordMetricsAudit(auditEvent);
+
+    const metric = (name: string, value: number | string | null) => ({
+      metric: name,
+      value,
+      year: facts.jcrYear,
+      source: MANUAL_METRIC_SOURCE,
+      cachedAt: nowStr,
+      expireAt: calculateMetricExpiry(name),
+    });
 
     const cachedEntry: CachedJournal = {
       journalId,
       journalName: facts.journalName,
-      publisher: facts.publisher || 'Springer Nature',
+      publisher: facts.publisher,
       lastAccess: nowStr,
       metrics: {
-        impactFactor: {
-          metric: 'impactFactor',
-          value: facts.impactFactor,
-          year: 2025,
-          source: 'User Provided',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('impactFactor'),
-        },
-        casZone: {
-          metric: 'casZone',
-          value: facts.casZone || null,
-          year: 2025,
-          source: 'User Provided',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('casZone'),
-        },
-        firstDecisionDays: {
-          metric: 'firstDecisionDays',
-          value: facts.firstDecisionDays || null,
-          year: 2025,
-          source: 'User Provided',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('firstDecisionDays'),
-        },
-        apcUsd: {
-          metric: 'apcUsd',
-          value: facts.apcUsd || null,
-          year: 2025,
-          source: 'User Provided',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('apcUsd'),
-        },
+        impactFactor: metric('impactFactor', facts.impactFactor),
+        casZone: metric('casZone', facts.casZone),
+        firstDecisionDays: metric('firstDecisionDays', facts.firstDecisionDays),
+        apcUsd: metric('apcUsd', facts.apcUsd),
       },
       fullFacts: userProvidedFacts,
+      lastModifiedBy: {
+        email: actor.email,
+        sub: actor.sub,
+        provider: actor.provider,
+        at: nowStr,
+      },
+      audit: [...(previous?.audit || []), auditEvent].slice(-20),
     };
 
     metricsCache.set(journalId, cachedEntry);
     saveCacheToDisk();
 
-    console.log(`[Metrics Cache] Saved user-provided metrics for ${facts.journalName} (${journalId})`);
+    console.log(`[Metrics Cache] ${actor.email} saved user-provided metrics for ${facts.journalName} (${journalId})`);
     res.json({
       success: true,
-      message: `Saved verified metrics for ${facts.journalName}`,
+      message: `Saved manually entered metrics for ${facts.journalName}`,
       facts: userProvidedFacts,
+      audit: {
+        at: auditEvent.at,
+        actorEmail: auditEvent.actorEmail,
+        action: auditEvent.action,
+        changedFields: auditEvent.changedFields,
+      },
     });
   } catch (err: any) {
+    if (err instanceof MetricsValidationError) {
+      return res.status(400).json({ error: err.message });
+    }
     console.error('Failed to update journal metrics:', err);
     res.status(500).json({ error: err.message || 'Failed to update metrics' });
   }
@@ -1139,10 +1207,29 @@ app.post('/api/generate-campaign', async (req, res) => {
     const normalizedStage = normalizeStage(funnelStage);
     const stageConfig = STAGE_CONFIGS[normalizedStage];
 
-    // Priority 1: Check facts. If userProvidedFacts is sent, use them directly!
+    // Browser-supplied facts are always user-entered. A hand edit cannot keep a Clarivate label.
     let facts: JCRJournalEntry;
     if (userProvidedFacts && userProvidedFacts.verificationStatus === 'user_provided') {
-      facts = userProvidedFacts;
+      let sanitized;
+      try {
+        sanitized = sanitizeUserProvidedFacts(userProvidedFacts);
+      } catch (err) {
+        if (err instanceof MetricsValidationError) {
+          return res.status(400).json({ error: err.message });
+        }
+        throw err;
+      }
+      const norm = normalizeJournalUrl(sanitized.url);
+      facts = {
+        ...sanitized,
+        url: norm.canonical || sanitized.url,
+        slugs: [],
+        verificationStatus: 'user_provided',
+        provenanceSource: 'user_provided',
+        isVerifiedClarivate: false,
+        sourceAttribution: MANUAL_METRIC_SOURCE,
+        missingFields: [],
+      };
     } else {
       facts = await lookupClarivateFacts(landingPageUrl);
     }
@@ -1351,7 +1438,12 @@ app.post('/api/compare-stages', async (req, res) => {
   }
 });
 
-async function startServer() {
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+export async function startServer() {
+  assertProductionAuthConfig();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1360,7 +1452,11 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (_req, res) => {
+    app.get('*', (req, res) => {
+      if (req.path.startsWith('/api/')) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
   }
@@ -1370,8 +1466,11 @@ async function startServer() {
   });
 }
 
-const entryPoint = process.argv[1] ? path.resolve(process.argv[1]) : '';
-if (entryPoint === fileURLToPath(import.meta.url)) {
+const invokedDirectly = process.argv[1]
+  ? import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+  : false;
+
+if (invokedDirectly) {
   startServer().catch((err) => {
     console.error('Server failed to start:', err);
     process.exit(1);

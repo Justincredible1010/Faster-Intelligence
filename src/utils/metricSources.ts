@@ -82,9 +82,18 @@ export interface PageFactsClient {
   extractFromPage(canonicalUrl: string): Promise<ClarivateJournalMetrics | null>;
 }
 
+let extractPageFacts: PageFactsClient['extractFromPage'] = async () => null;
+
+/** Test seam. Production leaves the extractor unset, so page lookup returns null. */
+export function setPageFactsClientForTests(
+  client: Pick<PageFactsClient, 'extractFromPage'> | null
+): void {
+  extractPageFacts = client?.extractFromPage ?? (async () => null);
+}
+
 export const pageFacts: PageFactsClient = {
-  async extractFromPage(): Promise<ClarivateJournalMetrics | null> {
-    return null;
+  async extractFromPage(canonicalUrl: string): Promise<ClarivateJournalMetrics | null> {
+    return extractPageFacts(canonicalUrl);
   },
 };
 
