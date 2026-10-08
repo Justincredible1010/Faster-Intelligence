@@ -77,7 +77,7 @@ export interface ClarivateJournalMetrics {
   isVerifiedClarivate?: boolean;
   verificationStatus: FactVerificationStatus;
   reportingYear?: string;
-  /** JCR edition year from journalCitationReports, when the API supplied it. */
+  /** JCR edition year. Required when a person enters metrics by hand. */
   jcrYear?: number;
   /** ISO time the Web of Science Journals API response was retrieved. */
   retrievedAt?: string;
