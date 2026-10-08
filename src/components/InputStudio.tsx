@@ -37,6 +37,7 @@ import { JOURNAL_CATALOG } from '../data/journalCatalog';
 import { pickEditableJournalFacts } from '../utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from '../utils/journalUrl';
 import { metricFieldIsTrusted } from '../utils/metricClaims';
+import { suggestStageUrl } from '../utils/stageUrlSuggestion';
 import { formatUsageCount } from '../utils/usageCounts';
 
 function metricSourceLabel(source: string | undefined, field?: string): string {
@@ -183,6 +184,7 @@ export const InputStudio: React.FC<Props> = ({
 
   const currentStageNormalized = normalizeStage(funnelStage);
   const stages: StageCode[] = ['AWA', 'CON', 'DEC'];
+  const stageUrlSuggestion = suggestStageUrl(landingPageUrl, currentStageNormalized, clarivateFacts);
 
   // Check if metrics are missing
   const isMissingMetrics = clarivateFacts?.verificationStatus === 'missing';
@@ -754,6 +756,26 @@ export const InputStudio: React.FC<Props> = ({
             );
           })}
         </div>
+
+        {stageUrlSuggestion && (
+          <div
+            className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-xl"
+            role="status"
+          >
+            <div className="flex-1 space-y-1 min-w-0">
+              <p className="text-xs text-amber-950 leading-relaxed">{stageUrlSuggestion.reason}</p>
+              <p className="text-[11px] font-mono text-amber-900 break-all">{stageUrlSuggestion.url}</p>
+              <p className="text-[11px] text-amber-800">You can still generate with the current URL.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onChangeUrl(stageUrlSuggestion.url)}
+              className="shrink-0 px-3 py-2 bg-white border border-amber-300 text-amber-950 text-xs font-bold rounded-lg hover:bg-amber-100 transition"
+            >
+              Use this URL
+            </button>
+          </div>
+        )}
 
         {/* Ad Channels & Output Language Row */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
