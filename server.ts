@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { loadMetricsCacheFromDisk } from './src/utils/metricsCache';
 
 dotenv.config();
 
@@ -82,18 +83,10 @@ const CACHE_FILE_PATH = path.resolve(__dirname, 'metrics-cache.json');
 const metricsCache = new Map<string, CachedJournal>();
 
 function loadCacheFromDisk() {
-  try {
-    if (fs.existsSync(CACHE_FILE_PATH)) {
-      const data = fs.readFileSync(CACHE_FILE_PATH, 'utf-8');
-      const parsed: Record<string, CachedJournal> = JSON.parse(data);
-      Object.entries(parsed).forEach(([key, val]) => {
-        metricsCache.set(key, val);
-      });
-      console.log(`[Metrics Cache] Loaded ${metricsCache.size} cached journals from disk.`);
-    }
-  } catch (err) {
-    console.warn('[Metrics Cache] Failed to load cache file, starting fresh:', err);
-  }
+  const loaded = loadMetricsCacheFromDisk<CachedJournal>(CACHE_FILE_PATH);
+  loaded.forEach((val, key) => {
+    metricsCache.set(key, val);
+  });
 }
 
 function saveCacheToDisk() {
