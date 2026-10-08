@@ -114,7 +114,7 @@ function stageAccepts(url: string, stage: StageCode): boolean {
   const kind = pageKind(url);
   if (stage === 'DEC') return kind === 'decision';
   if (stage === 'CON') return kind === 'consideration' || kind === 'article';
-  return kind === 'home' || kind === 'about' || kind === 'article';
+  return kind === 'home';
 }
 
 function valueOf(field: FactValue | null | undefined): string {
@@ -233,20 +233,16 @@ function factsMatchUrl(currentRaw: string, facts: StageUrlFacts): boolean {
 }
 
 function pagePhrase(url: string, facts: StageUrlFacts): string {
-  const guidelines = clean(facts.authorGuidelinesUrl) || valueOf(facts.extractedFacts?.authorGuidelinesUrl);
   const portal = clean(facts.submissionPortalUrl) || valueOf(facts.extractedFacts?.submissionPortalUrl);
-  if (guidelines && samePage(url, guidelines)) {
-    const slug = normalizeJournalUrl(url).segments.at(-1) || '';
-    if (slug === 'submission-guidelines') return 'the submission guidelines';
-    return 'the author guidelines';
-  }
   if (portal && samePage(url, portal)) return 'the submission portal';
 
   const kind = pageKind(url);
   const slug = normalizeJournalUrl(url).segments.at(-1) || '';
-  if (kind === 'decision' && slug === 'submission-guidelines') return 'the submission guidelines';
-  if (kind === 'decision' && (slug === 'for-authors' || slug === 'author-guidelines')) return 'the author guidelines';
-  if (kind === 'decision' && slug.includes('checklist')) return 'the submission checklist';
+  if (slug === 'submission-guidelines') return 'the submission guidelines';
+  if (slug === 'for-authors' || slug === 'author-guidelines') return 'the author guidelines';
+  if (slug === 'submit' || slug === 'submission') return 'the submission page';
+  if (slug.includes('checklist')) return 'the submission checklist';
+  if (isPortalHost(normalizeJournalUrl(url).host)) return 'the submission portal';
   if (kind === 'decision') return 'the submission page';
   if (slug === 'aims' || slug === 'aims-and-scope') return 'the aims and scope';
   if (kind === 'article' || slug === 'article-types') return 'the article types';

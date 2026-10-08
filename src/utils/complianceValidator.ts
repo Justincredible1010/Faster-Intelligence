@@ -6,6 +6,7 @@ import {
 } from '../types';
 import { countCharacterWidth, smartClampWithWidth } from './textUtils';
 import { metricsFromClarivateWos, trustedImpactFactor } from './metricClaims';
+import { auditChinaAdLaw } from '../china/chinaAdLaw';
 
 // Common competitor academic journal trademarks to flag in ad copy
 export const COMPETITOR_TRADEMARKS = [
@@ -316,6 +317,9 @@ export function runComplianceAudit(
     });
   }
 
+  // China Advertising Law: warn only. Do not attach a rewrite.
+  issues.push(...auditChinaAdLaw(campaign));
+
   const errorsCount = issues.filter((i) => i.type === 'error').length;
   const warningsCount = issues.filter((i) => i.type === 'warning').length;
 
@@ -333,6 +337,8 @@ export function autoFixComplianceIssues(campaign: GeneratedAdCampaign): Generate
   let updatedCampaign = JSON.parse(JSON.stringify(campaign)) as GeneratedAdCampaign;
 
   report.issues.forEach((issue) => {
+    // China Advertising Law issues are warnings. Never rewrite that copy.
+    if (issue.category === 'china_ad_law') return;
     if (!issue.suggestedFix) return;
 
     if (updatedCampaign.searchAds?.headlines) {

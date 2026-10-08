@@ -681,7 +681,14 @@ export async function runLandingPageTests() {
     assert.match(awarenessGuidelines?.reason || '', /submission guidelines/);
     expectRealUrl(awarenessGuidelines?.url);
     assert.equal(suggestStageUrl('https://www.nature.com/ncomms', 'AWA', ncommsStageFacts), null);
-    assert.equal(suggestStageUrl('https://www.nature.com/ncomms/research-articles', 'AWA', ncommsStageFacts), null);
+    const awarenessArticles = suggestStageUrl(
+      'https://www.nature.com/ncomms/research-articles',
+      'AWA',
+      ncommsStageFacts
+    );
+    assert.equal(awarenessArticles?.url, 'https://www.nature.com/ncomms');
+    assert.match(awarenessArticles?.reason || '', /journal home/);
+    assert.match(awarenessArticles?.reason || '', /article types/);
 
     const considerationHome = suggestStageUrl('https://www.nature.com/ncomms', 'CON', ncommsStageFacts);
     assert.equal(considerationHome?.url, 'https://www.nature.com/ncomms/research-articles');
@@ -705,7 +712,8 @@ export async function runLandingPageTests() {
     const decisionHome = suggestStageUrl('https://www.nature.com/ncomms', 'DEC', ncommsStageFacts);
     assert.equal(decisionHome?.url, 'https://www.nature.com/ncomms/submit');
     assert.match(decisionHome?.reason || '', /Decision is for authors preparing a submission/);
-    assert.match(decisionHome?.reason || '', /author guidelines/);
+    assert.match(decisionHome?.reason || '', /submission page/);
+    assert.doesNotMatch(decisionHome?.reason || '', /author guidelines/);
     expectRealUrl(decisionHome?.url);
     assert.doesNotMatch(decisionHome?.url || '', /submission-guidelines/);
     assert.equal(suggestStageUrl('https://www.nature.com/ncomms/submit', 'DEC', ncommsStageFacts), null);

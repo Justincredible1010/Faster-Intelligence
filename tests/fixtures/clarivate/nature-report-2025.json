@@ -1,0 +1,20 @@
+{
+  "metrics": {
+    "impactMetrics": {
+      "jif": "56.1",
+      "jif5Years": "60.2",
+      "immediacyIndex": "11.4",
+      "jci": "3.2"
+    }
+  },
+  "ranks": {
+    "jif": [
+      {
+        "category": "Multidisciplinary Sciences",
+        "rank": "1/140",
+        "quartile": "Q1",
+        "jifPercentile": 99.6
+      }
+    ]
+  }
+}

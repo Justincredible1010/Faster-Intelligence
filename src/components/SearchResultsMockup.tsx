@@ -22,7 +22,7 @@ import {
 } from '../types';
 import { countCharacterWidth, formatCharCountLabel } from '../utils/textUtils';
 import { deriveDisplayUrl } from '../utils/csvExporter';
-import { metricsFromClarivateWos, trustedApcUsd, trustedImpactFactor } from '../utils/metricClaims';
+import { formatJifClaim, trustedApcUsd, trustedImpactFactor } from '../utils/metricClaims';
 
 interface Props {
   ads: GoogleSearchAds;
@@ -321,7 +321,7 @@ export const SearchResultsMockup: React.FC<Props> = ({
               <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
                 <Globe className="w-3 h-3 text-slate-400" />
                 <span>
-                  {metricsFromClarivateWos(facts)
+                  {formatJifClaim(facts)?.includes('Clarivate')
                     ? 'clarivate.com > jcr > browse'
                     : 'www.nature.com > journal-metrics'}
                 </span>
@@ -330,8 +330,8 @@ export const SearchResultsMockup: React.FC<Props> = ({
                 {facts.journalName} journal information
               </h3>
               <p className="text-xs text-[#4d5156] leading-relaxed">
-                {trustedImpactFactor(facts) != null && facts.jcrYear != null
-                  ? `${facts.journalName} impact factor ${trustedImpactFactor(facts)} (clarivate_wos_journals_api JCR ${facts.jcrYear}).`
+                {formatJifClaim(facts)
+                  ? `${facts.journalName} ${formatJifClaim(facts)}.`
                   : `${facts.journalName}. Aims, scope, and author information.`}
               </p>
             </div>

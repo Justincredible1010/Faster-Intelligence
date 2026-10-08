@@ -19,11 +19,12 @@ import {
 } from './types';
 import { runComplianceAudit, autoFixComplianceIssues } from './utils/complianceValidator';
 import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
+import { chinaChannelsExportSection } from './china/exportText';
 import { AlertCircle, AlertTriangle, Sparkles } from 'lucide-react';
 import { apiFetch } from './auth/api';
 import { pickEditableJournalFacts } from './utils/editableJournalFacts';
-import { NATURE_HOMEPAGE_URL } from './utils/journalUrl';
-import { trustedApcUsd, trustedCasZone, trustedImpactFactor, trustedQuartile } from './utils/metricClaims';
+import { journalUrlsMatch, NATURE_HOMEPAGE_URL, normalizeJournalUrl } from './utils/journalUrl';
+import { formatJifClaim, trustedApcUsd, trustedCasZone, trustedQuartile } from './utils/metricClaims';
 
 const DEFAULT_LANDING_URL = NATURE_HOMEPAGE_URL;
 
@@ -66,7 +67,11 @@ export default function App() {
     try {
       const res = await apiFetch('/api/fetch-clarivate-facts', {
         method: 'POST',
-        body: JSON.stringify({ url: url.trim(), forceRefresh }),
+        body: JSON.stringify({
+          url: url.trim(),
+          forceRefresh,
+          issn: clarivateFacts?.issn || clarivateFacts?.eIssn,
+        }),
       });
       const data = await res.json();
       if (data.facts) {
@@ -139,8 +144,13 @@ export default function App() {
     if (channels.search) activeChannels.push('search');
     if (channels.display) activeChannels.push('display');
 
-    const browserFacts = manualFacts
-      ?? (clarivateFacts?.verificationStatus === 'user_provided' ? clarivateFacts : null);
+    const savedFacts = manualFacts || clarivateFacts;
+    const savedFactsMatchUrl = Boolean(
+      savedFacts?.url && journalUrlsMatch(normalizeJournalUrl(savedFacts.url), normalizeJournalUrl(url))
+    );
+    const browserFacts = savedFacts?.verificationStatus === 'user_provided' && savedFactsMatchUrl
+      ? savedFacts
+      : null;
 
     try {
       const res = await apiFetch('/api/generate-campaign', {
@@ -152,6 +162,7 @@ export default function App() {
           outputLanguage: lang,
           channels: activeChannels,
           customPlaybook: playbook,
+          issn: (manualFacts || clarivateFacts)?.issn || (manualFacts || clarivateFacts)?.eIssn,
           userProvidedFacts: browserFacts ? pickEditableJournalFacts(browserFacts) : null,
         }),
       });
@@ -288,7 +299,7 @@ export default function App() {
 **Author Stage:** ${cfg.name}
 **Author Mindset:** ${cfg.authorMindset}
 **Campaign Objective:** ${cfg.campaignObjective}
-**Impact factor:** ${trustedImpactFactor(campaign.clarivateFacts) == null || campaign.clarivateFacts.jcrYear == null ? 'omitted (no clarivate_wos_journals_api value)' : `${trustedImpactFactor(campaign.clarivateFacts)} (clarivate_wos_journals_api, JCR ${campaign.clarivateFacts.jcrYear})`}
+**Impact factor:** ${formatJifClaim(campaign.clarivateFacts) ?? 'omitted'}
 **Quartile:** ${trustedQuartile(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **CAS zone:** ${trustedCasZone(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **APC (USD):** ${trustedApcUsd(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
@@ -349,6 +360,10 @@ ${campaign.keywords.chineseAuthorKeywords
 
 ### Negative Keywords (Academic Integrity Firewall):
 ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
+
+---
+
+${chinaChannelsExportSection(campaign)}
 `;
 
     const blob = new Blob([markdownBrief], { type: 'text/markdown;charset=utf-8' });

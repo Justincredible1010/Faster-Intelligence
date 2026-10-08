@@ -288,7 +288,7 @@ export const StageComparisonModal: React.FC<Props> = ({
 
         {/* Modal Footer */}
         <div className="sticky bottom-0 px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
-          <span>All 3 stages share identical verified Clarivate JCR metrics, but adapt communication priorities for author context.</span>
+          <span>All 3 stages use the same journal record and change the message for the author's stage.</span>
           <button
             onClick={onClose}
             className="px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 rounded-lg transition"

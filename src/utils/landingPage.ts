@@ -3,6 +3,7 @@ import https from 'node:https';
 import net from 'node:net';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import type { ExtractedFactField, ExtractedPageFacts, FactVerificationStatus, MetricProvenanceSource, PageSourcedFeature, PageSourcedMetric } from '../types';
+import { normalizeIssn as canonicalIssn } from './issn';
 import { normalizeJournalUrl } from './journalUrl';
 import { formatUsageCount, parseUsageCount } from './usageCounts';
 
@@ -247,10 +248,9 @@ export function isPublisherHomepage(rawUrl: string): boolean {
   }
 }
 
-export function normalizeIssn(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const match = value.toUpperCase().match(/\b(\d{4}-\d{3}[\dX])\b/);
-  return match ? match[1] : null;
+/** Landing-page adapter for the single ISSN helper in issn.ts. */
+function normalizeIssn(value: string | null | undefined): string | null {
+  return canonicalIssn(value) || null;
 }
 
 /**

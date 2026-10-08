@@ -40,7 +40,7 @@ import { metricFieldIsTrusted } from '../utils/metricClaims';
 import { suggestStageUrl } from '../utils/stageUrlSuggestion';
 import { formatUsageCount } from '../utils/usageCounts';
 
-function metricSourceLabel(source: string | undefined, field?: string): string {
+function metricSourceLabel(source: string | undefined, field?: string, year?: number): string {
   if (
     (field === 'impactFactor' || field === 'fiveYearImpactFactor') &&
     (source === 'page_sourced' || source === 'landing_page')
@@ -50,7 +50,9 @@ function metricSourceLabel(source: string | undefined, field?: string): string {
   if (source === 'page_sourced' || source === 'landing_page') return 'Page-sourced';
   if (source === 'catalog_snapshot') return 'Catalog snapshot';
   if (source === 'user_provided') return 'User provided';
-  if (source === 'clarivate_wos_journals_api') return 'WOS Journals API';
+  if (source === 'clarivate_wos_journals_api') {
+    return year != null ? `Clarivate JCR ${year}` : 'Clarivate Web of Science Journals API';
+  }
   return '';
 }
 
@@ -432,13 +434,29 @@ export const InputStudio: React.FC<Props> = ({
                   </div>
                   <span className="text-[10px] text-slate-400 block">
                     5-Yr: {clarivateFacts.fiveYearImpactFactor ?? 'N/A'}
-                    {metricSourceLabel(clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source, 'fiveYearImpactFactor')
-                      ? ` · ${metricSourceLabel(clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source, 'fiveYearImpactFactor')}`
+                    {metricSourceLabel(
+                      clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source,
+                      'fiveYearImpactFactor',
+                      clarivateFacts.provenanceMap?.fiveYearImpactFactor?.year
+                    )
+                      ? ` · ${metricSourceLabel(
+                          clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source,
+                          'fiveYearImpactFactor',
+                          clarivateFacts.provenanceMap?.fiveYearImpactFactor?.year
+                        )}`
                       : ''}
                   </span>
-                  {metricSourceLabel(clarivateFacts.provenanceMap?.impactFactor?.source, 'impactFactor') && (
+                  {metricSourceLabel(
+                    clarivateFacts.provenanceMap?.impactFactor?.source,
+                    'impactFactor',
+                    clarivateFacts.provenanceMap?.impactFactor?.year ?? clarivateFacts.jcrYear
+                  ) && (
                     <span className="text-[10px] text-slate-500 block">
-                      {metricSourceLabel(clarivateFacts.provenanceMap?.impactFactor?.source, 'impactFactor')}
+                      {metricSourceLabel(
+                        clarivateFacts.provenanceMap?.impactFactor?.source,
+                        'impactFactor',
+                        clarivateFacts.provenanceMap?.impactFactor?.year ?? clarivateFacts.jcrYear
+                      )}
                     </span>
                   )}
                 </div>
@@ -617,9 +635,15 @@ export const InputStudio: React.FC<Props> = ({
                 <span>
                   {clarivateFacts.verificationStatus === 'user_provided'
                     ? 'Manually entered (unverified)'
+                    : clarivateFacts.provenanceSource === 'clarivate_wos_journals_api'
+                    ? 'Includes Web of Science Journals API values'
+                    : clarivateFacts.verificationStatus === 'page_sourced'
+                    ? 'Read from the journal page'
+                    : clarivateFacts.verificationStatus === 'catalog_snapshot'
+                    ? 'Catalog snapshot'
                     : clarivateFacts.isFromCache
                     ? 'Cached record (refreshed automatically)'
-                    : 'Real-time verified source'}
+                    : 'Record loaded'}
                 </span>
                 {clarivateFacts.reportingYear && (
                   <span>· {clarivateFacts.reportingYear}</span>
@@ -643,12 +667,15 @@ export const InputStudio: React.FC<Props> = ({
                 <div className="flex flex-wrap items-center gap-4 text-slate-500">
                   <span>
                     Indexing: <strong>{clarivateFacts.indexing?.length ? clarivateFacts.indexing.join(', ') : 'Not stated'}</strong>
+                    {metricSourceLabel(clarivateFacts.provenanceMap?.indexing?.source)
+                      ? ` (${metricSourceLabel(clarivateFacts.provenanceMap?.indexing?.source)})`
+                      : ''}
                   </span>
                   <span>
                     Discipline: <strong>{clarivateFacts.primaryDiscipline}</strong>
                   </span>
                   <span>
-                    Reporting Period: <strong>{clarivateFacts.reportingYear || 'JCR 2024'}</strong>
+                    Reporting Period: <strong>{clarivateFacts.reportingYear || 'Not stated'}</strong>
                   </span>
                 </div>
               </div>
@@ -771,7 +798,10 @@ export const InputStudio: React.FC<Props> = ({
             </div>
             <button
               type="button"
-              onClick={() => onChangeUrl(stageUrlSuggestion.url)}
+              onClick={() => {
+                onChangeUrl(stageUrlSuggestion.url);
+                onFetchFacts(stageUrlSuggestion.url, true);
+              }}
               className="shrink-0 px-3 py-2 bg-white border border-amber-300 text-amber-950 text-xs font-bold rounded-lg hover:bg-amber-100 transition"
             >
               Use this URL
@@ -871,6 +901,7 @@ export const InputStudio: React.FC<Props> = ({
               : selectedChannels.search
               ? 'Search Only'
               : 'Display Only'}
+            {' · Weibo post and WeChat ad'}
           </span>
         </div>
 
