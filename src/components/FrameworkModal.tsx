@@ -35,7 +35,7 @@ export const FrameworkModal: React.FC<Props> = ({ isOpen, onClose }) => {
                 Academic Author Campaign Strategy Framework
               </h2>
               <p className="text-xs text-slate-500">
-                Funnel Differentiation, Clarivate JCR Truth, and Author Decision-Making
+                Funnel Differentiation, Source-Grounded Facts, and Author Decision-Making
               </p>
             </div>
           </div>
@@ -95,7 +95,7 @@ export const FrameworkModal: React.FC<Props> = ({ isOpen, onClose }) => {
                   <strong>Author Mindset:</strong> {STAGE_CONFIGS.CON.authorMindset}
                 </p>
                 <p className="text-slate-600">
-                  <strong>Focus:</strong> Aims and scope, accepted article types, editorial rigor, publishing model, transparent APC fees, and verified Clarivate metrics.
+                  <strong>Focus:</strong> Aims and scope, accepted article types, editorial rigor, publishing model, transparent APC fees, and metrics only when a trusted source supplied them.
                 </p>
                 <div className="text-[11px] text-indigo-900 pt-1">
                   <strong>Suitable CTAs:</strong> "Check journal fit", "Review aims and scope", "Explore publishing options"
@@ -133,7 +133,7 @@ export const FrameworkModal: React.FC<Props> = ({ isOpen, onClose }) => {
             </div>
             <ul className="text-slate-600 space-y-1 list-disc pl-4">
               <li>
-                <strong>Clarivate JCR Grounding:</strong> Impact factors and quartiles are strictly tied to Clarivate Journal Citation Reports (2024 edition).
+                <strong>Source grounding:</strong> Impact factors and quartiles appear only when they come from the Web of Science Journals API, the journal page, or a user entry. The in-repo catalog is a snapshot and is not cited in ads.
               </li>
               <li>
                 <strong>No Fabricated Claims:</strong> The engine will never invent special issues, deadlines, or competing journal superiority claims.

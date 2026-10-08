@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Search, Layout, Target, ArrowRight, Info, Layers, ShieldCheck, Image as ImageIcon } from 'lucide-react';
 import { GeneratedAdCampaign, STAGE_CONFIGS, normalizeStage } from '../types';
-import { trustedCasZone, trustedImpactFactor } from '../utils/metricClaims';
+import { formatJifClaim, trustedCasZone, trustedImpactFactor } from '../utils/metricClaims';
 import { GoogleAdPreview } from './GoogleAdPreview';
 import { DisplayAdCanvas } from './DisplayAdCanvas';
 import { GoogleDisplayPreview } from './GoogleDisplayPreview';
@@ -161,6 +161,7 @@ export const ChannelSuite: React.FC<Props> = ({
                 content={campaign.displayAds}
                 journalName={campaign.clarivateFacts.journalName}
                 impactFactor={trustedImpactFactor(campaign.clarivateFacts) ?? undefined}
+                impactLabel={formatJifClaim(campaign.clarivateFacts)}
                 casZone={trustedCasZone(campaign.clarivateFacts) ?? undefined}
                 publisher={campaign.clarivateFacts.publisher}
                 stage={stage}

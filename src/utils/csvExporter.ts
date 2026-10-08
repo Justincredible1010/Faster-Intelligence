@@ -1,6 +1,6 @@
 import { GeneratedAdCampaign, STAGE_CONFIGS, normalizeStage } from '../types';
 import { smartClampWithWidth } from './textUtils';
-import { metricsAreTrusted, metricsFromClarivateWos, trustedApcUsd, trustedCasZone, trustedFirstDecisionDays, trustedImpactFactor } from './metricClaims';
+import { formatJifClaim, metricsAreTrusted, metricsFromClarivateWos, trustedApcUsd, trustedCasZone, trustedFirstDecisionDays } from './metricClaims';
 
 function escapeCsvField(field: string | number | undefined | null): string {
   if (field === undefined || field === null) return '""';
@@ -45,14 +45,13 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
   const adGroupName = `${cfg.shortLabel} Author Keywords`;
   const finalUrl = campaign.recommendedDestination?.url || facts?.url || '';
   const displayUrl = deriveDisplayUrl(finalUrl);
-  const impactFactor = trustedImpactFactor(facts);
-
   const fromWos = metricsFromClarivateWos(facts);
-  const ifProv = impactFactor == null
+  const jifClaim = formatJifClaim(facts);
+  const ifProv = jifClaim == null
     ? 'No trusted impact factor'
     : fromWos
-    ? `clarivate_wos_journals_api JCR ${facts.jcrYear ?? 'undated'} IF ${impactFactor} (retrieved ${facts.retrievedAt || 'undated'})`
-    : `IF ${impactFactor} (${facts.verificationStatus})`;
+    ? `${jifClaim} (retrieved ${facts.retrievedAt || 'undated'})`
+    : `${jifClaim} (${facts.verificationStatus})`;
   const portalProv = facts.submissionPortalUrl
     ? `Extracted Portal URL (${facts.submissionPortalUrl})`
     : 'Submission portal not provided';
@@ -206,7 +205,7 @@ export function downloadGoogleAdsEditorPackage(campaign: GeneratedAdCampaign) {
   // 2. Generate and download README instructions with Provenance details
   const usedFactsSummary = `
 - Journal Title: ${facts.journalName} (${facts.publisher})
-- Impact factor: ${trustedImpactFactor(facts) ?? 'omitted (no trusted value)'} (Provenance: ${facts.sourceAttribution})
+- Impact factor: ${formatJifClaim(facts) ?? 'omitted (no trusted value)'} (Provenance: ${facts.sourceAttribution})
 - CAS zone: ${trustedCasZone(facts) ?? 'omitted (no trusted value)'}
 - First decision days: ${trustedFirstDecisionDays(facts) ?? 'omitted (no trusted value)'}
 - APC (USD): ${trustedApcUsd(facts) ?? 'omitted (no trusted value)'}
@@ -217,7 +216,7 @@ export function downloadGoogleAdsEditorPackage(campaign: GeneratedAdCampaign) {
   const qualityWarnings = !metricsAreTrusted(facts)
     ? 'Numeric and ranking claims were omitted because this record has no trusted metrics.'
     : fromWos
-    ? `Impact-factor values in this package came from clarivate_wos_journals_api, JCR ${facts.jcrYear ?? 'undated'}, retrieved ${facts.retrievedAt || 'undated'}.`
+    ? `Impact-factor values in this package are cited as ${formatJifClaim(facts) || 'a Clarivate JCR value'}, retrieved ${facts.retrievedAt || 'undated'}.`
     : 'Metrics in this package were supplied by the user or read from the journal page. They are not a Clarivate API result.';
 
   const readmeText = `# Google Ads Editor Import Package & Quality Audit
