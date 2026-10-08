@@ -14,9 +14,9 @@ import { MANUAL_METRIC_SOURCE, MetricsValidationError, sanitizeUserProvidedFacts
 import { JOURNAL_CATALOG } from './src/data/journalCatalog';
 import { NATURE_HOMEPAGE_URL, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
 import { lookupMetricsByIssn, pageFacts } from './src/utils/metricSources';
-import { factsForCopy, guardAdCopy, metricPromptSection, metricsFromClarivateWos } from './src/utils/metricClaims';
+import { factsForCopy, guardAdCopy, metricPromptSection } from './src/utils/metricClaims';
 import { formatUsageCount } from './src/utils/usageCounts';
-import type { ExtractedPageFacts } from './src/types';
+import type { ExtractedPageFacts, PageSourcedFeature } from './src/types';
 import {
   LandingPageError,
   extractLandingPageFacts,
@@ -117,6 +117,7 @@ export interface JCRJournalEntry {
   cacheExpiresAt?: string;
   submissionPortalUrl?: string | null;
   authorGuidelinesUrl?: string | null;
+  pageFeatures?: PageSourcedFeature[];
   extractedFacts?: ExtractedPageFacts;
   provenanceMap?: Record<string, { source: string; confidence: number; year?: number; note?: string }>;
 }
@@ -756,10 +757,48 @@ function attachCachedPageFacts<T extends JCRJournalEntry>(facts: T): T {
   return {
     ...withUsage,
     extractedFacts: withUsage.extractedFacts ?? cached.extractedFacts,
+    pageFeatures: withUsage.pageFeatures?.length ? withUsage.pageFeatures : cached.pageFeatures,
     submissionPortalUrl: withUsage.submissionPortalUrl ?? cached.submissionPortalUrl,
     authorGuidelinesUrl: withUsage.authorGuidelinesUrl ?? cached.authorGuidelinesUrl,
     provenanceMap: restoredProvenance(withUsage, cached),
   };
+}
+
+function pageFeatureText(facts: { pageFeatures?: PageSourcedFeature[] }, kind: PageSourcedFeature['kind']): string | null {
+  const found = (facts.pageFeatures || []).find(
+    (item) => item.kind === kind && item.provenance === 'page-sourced' && item.text.trim()
+  );
+  return found?.text.trim() || null;
+}
+
+/** One ad line, plus the remainder of a long page sentence when it does not fit. */
+function pageFeatureLines(text: string | null, width: number): string[] {
+  const clean = (text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  const first = smartClamp(clean, width);
+  if (!first) return [];
+  if (first === clean) return [first];
+  const rest = clean.slice(first.length).replace(/^[\s,;:.\-–—]+/, '').trim();
+  const second = rest ? smartClamp(rest, width) : '';
+  return second ? [first, second] : [first];
+}
+
+function clarivateHeadline(facts: { impactFactor?: number | null; jcrYear?: number | null }): string | null {
+  if (facts.impactFactor == null || facts.jcrYear == null) return null;
+  const full = `clarivate_wos_journals_api JCR ${facts.jcrYear} IF ${facts.impactFactor}`;
+  if (countCharacterWidth(full) <= 30) return full;
+  const short = `Clarivate JCR ${facts.jcrYear} IF ${facts.impactFactor}`;
+  return countCharacterWidth(short) <= 30 ? short : null;
+}
+
+function clarivateDescription(facts: {
+  impactFactor?: number | null;
+  fiveYearImpactFactor?: number | null;
+  jcrYear?: number | null;
+}): string | null {
+  if (facts.impactFactor == null || facts.jcrYear == null) return null;
+  const five = facts.fiveYearImpactFactor != null ? `, 5-year IF ${facts.fiveYearImpactFactor}` : '';
+  return `clarivate_wos_journals_api JCR ${facts.jcrYear} IF ${facts.impactFactor}${five}.`;
 }
 
 function rejectedJournalHost(res: express.Response, raw: string): boolean {
@@ -912,9 +951,12 @@ export function generateStageHeadlines(
   outputLanguage: 'all' | 'EN' | 'ZH' = 'all'
 ) {
   facts = factsForCopy(facts);
-  const ifLabel = metricsFromClarivateWos(facts) ? 'Clarivate IF' : 'IF';
   const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
   const disciplineShort = (facts.primaryDiscipline || 'Scientific').split('(')[0].trim().slice(0, 14);
+  const impactHeadline = clarivateHeadline(facts);
+  const articleTypeHeadline = pageFeatureText(facts, 'article_types')?.split(',')[0]?.trim() || '';
+  const publishingHeadline = pageFeatureText(facts, 'publishing_model') || '';
+  const submissionHeadline = pageFeatureText(facts, 'submission')?.split(';')[0]?.trim() || '';
 
   // AWA (Awareness)
   if (stage === 'AWA') {
@@ -966,7 +1008,10 @@ export function generateStageHeadlines(
       { text: smartClamp(`${shortName} Aims & Scope`, 30), sourceFact: 'Scope Criteria', language: 'EN', category: 'Scope & Community', positionRecommendation: 'Position 1' },
       { text: smartClamp(`Evaluate ${shortName}`, 30), sourceFact: facts.journalName, language: 'EN', category: 'Journal Identity', positionRecommendation: 'Position 1' },
       // Conditional metrics (NO nulls)
-      ...(facts.impactFactor ? [{ text: smartClamp(`${ifLabel} ${facts.impactFactor}${facts.jcrQuartile ? ` ${facts.jcrQuartile}` : ''}`, 30), sourceFact: `IF ${facts.impactFactor}`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(impactHeadline ? [{ text: impactHeadline, sourceFact: impactHeadline, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(facts.jcrQuartile ? [{ text: smartClamp(`Quartile ${facts.jcrQuartile}`, 30), sourceFact: 'JCR quartile', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(articleTypeHeadline ? [{ text: smartClamp(articleTypeHeadline, 30), sourceFact: 'Article types', language: 'EN' as const, category: 'Scope & Community', positionRecommendation: 'Position 2' }] : []),
+      ...(publishingHeadline ? [{ text: smartClamp(publishingHeadline, 30), sourceFact: 'Publishing model', language: 'EN' as const, category: 'Publishing Options', positionRecommendation: 'Position 2' }] : []),
       ...(facts.indexing?.length ? [{ text: smartClamp(`Indexed in ${facts.indexing.slice(0, 2).join(' & ')}`, 30), sourceFact: 'Indexing', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       ...(facts.articleDownloads ? [{ text: smartClamp(`${formatUsageCount(facts.articleDownloads)} Article Downloads`, 30), sourceFact: 'Article downloads', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       ...(facts.fullTextViews ? [{ text: smartClamp(`${formatUsageCount(facts.fullTextViews)} Full-Text Views`, 30), sourceFact: 'Full-text views', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
@@ -1010,6 +1055,7 @@ export function generateStageHeadlines(
   // DEC (Decision)
   const en: HeadlineSeed[] = [
     { text: smartClamp(`Submit to ${shortName}`, 30), sourceFact: 'Submission Portal', language: 'EN', category: 'Journal Identity', positionRecommendation: 'Position 1' },
+    ...(submissionHeadline ? [{ text: smartClamp(submissionHeadline, 30), sourceFact: 'Submission', language: 'EN' as const, category: 'Author Guidance', positionRecommendation: 'Position 1' }] : []),
     { text: smartClamp(`Author Guidelines & Checklist`, 30), sourceFact: 'Author Guidelines', language: 'EN', category: 'Author Guidance', positionRecommendation: 'Position 1' },
     { text: smartClamp(`Official Submission Portal`, 30), sourceFact: 'Verified Portal', language: 'EN', category: 'Author Guidance', positionRecommendation: 'Position 1' },
     { text: smartClamp(`Manuscript Prep Instructions`, 30), sourceFact: 'Preparation', language: 'EN', category: 'Author Guidance', positionRecommendation: 'Position 2' },
@@ -1052,9 +1098,22 @@ export function generateStageHeadlines(
 // Stage Descriptions with language purity
 export function generateStageDescriptions(facts: any, stage: StageCode, outputLanguage: 'all' | 'EN' | 'ZH' = 'all') {
   facts = factsForCopy(facts);
-  const ifLabel = metricsFromClarivateWos(facts) ? 'Clarivate IF' : 'IF';
+  const aimsLines = pageFeatureLines(pageFeatureText(facts, 'aims_and_audience'), 90);
+  const articleTypesText = pageFeatureText(facts, 'article_types');
+  const publishingText = pageFeatureText(facts, 'publishing_model');
+  const impactDescription = clarivateDescription(facts);
+  const submissionText = pageFeatureText(facts, 'submission');
+  const featureDescription = (text: string, sourceFact: string, theme: string) => ({
+    text: smartClamp(text, 90),
+    sourceFact,
+    language: 'EN' as const,
+    theme,
+  });
   if (stage === 'AWA') {
     const en = [
+      ...aimsLines.map((text) => featureDescription(text, 'Aims and audience', 'Scope & Relevance')),
+      ...(articleTypesText ? [featureDescription(articleTypesText, 'Article types', 'Scope & Relevance')] : []),
+      ...(publishingText ? [featureDescription(publishingText, 'Publishing model', 'Publishing Options')] : []),
       { text: smartClamp(`Explore research published in ${facts.journalName}. Serving the global scientific community.`, 90), sourceFact: 'Journal Overview', language: 'EN' as const, theme: 'Scope & Relevance' },
       { text: smartClamp(`Discover multidisciplinary advances and innovative discoveries across ${facts.primaryDiscipline}.`, 90), sourceFact: facts.primaryDiscipline, language: 'EN' as const, theme: 'Scope & Relevance' },
       { text: smartClamp(`Published by ${facts.publisher}. Connect with global readership and open scholarship.`, 90), sourceFact: facts.publisher, language: 'EN' as const, theme: 'Scope & Relevance' },
@@ -1072,7 +1131,6 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
   }
 
   if (stage === 'CON') {
-    const ifText = facts.impactFactor ? `${ifLabel} ${facts.impactFactor}, ` : '';
     const daysText = facts.firstDecisionDays ? `First decision in ${facts.firstDecisionDays} days.` : 'Editorial criteria are listed on the journal site.';
     const feeText = facts.apcUsd ? `APC ($${facts.apcUsd})` : 'publishing options';
     const casText = facts.casZone ? `（${facts.casZone.slice(0, 10)}）` : '';
@@ -1083,7 +1141,12 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
         : '';
 
     const en = [
-      { text: smartClamp(`Evaluate ${facts.journalName} for your paper. ${ifText}${facts.indexing?.length ? `indexed in ${facts.indexing.slice(0, 2).join(' & ')}.` : 'Review the aims and scope.'}`, 90), sourceFact: 'Evaluation', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
+      ...aimsLines.map((text) => featureDescription(text, 'Aims and audience', 'Scope & Relevance')),
+      ...(articleTypesText ? [featureDescription(articleTypesText, 'Article types', 'Scope & Relevance')] : []),
+      ...(publishingText ? [featureDescription(publishingText, 'Publishing model', 'Publishing Options')] : []),
+      ...(impactDescription ? [{ text: smartClamp(impactDescription, 90), sourceFact: 'Clarivate impact factor', language: 'EN' as const, theme: 'Evaluation & Peer Review' }] : []),
+      ...(facts.jcrQuartile ? [featureDescription(`Quartile ${facts.jcrQuartile}`, 'JCR quartile', 'Evaluation & Peer Review')] : []),
+      { text: smartClamp(`Evaluate ${facts.journalName} for your paper. ${facts.indexing?.length ? `indexed in ${facts.indexing.slice(0, 2).join(' & ')}.` : 'Review the aims and scope.'}`, 90), sourceFact: 'Evaluation', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
       ...(downloadsText ? [{ text: smartClamp(downloadsText, 90), sourceFact: facts.articleDownloads ? 'Article downloads' : 'Full-text views', language: 'EN' as const, theme: 'Readership' }] : []),
       { text: smartClamp(`Transparent publishing options and editorial criteria. ${daysText}`, 90), sourceFact: 'Turnaround', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
       { text: smartClamp(`Review accepted article types, transparent ${feeText}, and peer review workflow.`, 90), sourceFact: 'Publishing Options', language: 'EN' as const, theme: 'Publishing Options' },
@@ -1103,6 +1166,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
 
   // DEC
   const en = [
+    ...(submissionText ? [{ text: smartClamp(submissionText, 90), sourceFact: 'Submission', language: 'EN' as const, theme: 'Author Checklist' }] : []),
     { text: smartClamp(`Prepare your manuscript for ${facts.journalName}. Access author guidelines and checklist.`, 90), sourceFact: 'Author Guidelines', language: 'EN' as const, theme: 'Author Checklist' },
     { text: smartClamp(`Clear manuscript formatting instructions and required documents for official submission.`, 90), sourceFact: 'Manuscript Prep', language: 'EN' as const, theme: 'Author Checklist' },
     { text: smartClamp(`Review fee waiver policies and submit directly through the verified Springer Nature portal.`, 90), sourceFact: 'Submission Portal', language: 'EN' as const, theme: 'Publishing Options' },
@@ -1179,7 +1243,6 @@ export function generateStageKeywords(facts: any, stage: StageCode) {
 
 export function generateStageDisplayAd(facts: any, stage: StageCode) {
   facts = factsForCopy(facts);
-  const ifLabel = metricsFromClarivateWos(facts) ? 'Clarivate IF' : 'IF';
   const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
 
   if (stage === 'AWA') {
@@ -1201,7 +1264,7 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
   }
 
   if (stage === 'CON') {
-    const metricStr = facts.impactFactor ? `${ifLabel} ${facts.impactFactor}` : 'Peer-Reviewed Research';
+    const metricStr = clarivateDescription(facts) || 'Peer-Reviewed Research';
     return {
       shortHeadline: smartClamp(`Check ${shortName} Fit`, 30),
       shortHeadlineCharCount: 0,
@@ -1299,11 +1362,13 @@ export function generateDeterministicCampaign(
     campaignLandingUrl(facts)
   );
 
+  const labelledImpact = clarivateHeadline(copyFacts);
+  const impactCallout = labelledImpact && countCharacterWidth(labelledImpact) <= 25 ? labelledImpact : 'Peer-reviewed journal';
   const callouts =
     stage === 'AWA'
       ? [`Published by ${facts.publisher}`, (facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), 'Global Readership', 'Peer-Reviewed Science']
       : stage === 'CON'
-      ? [copyFacts.impactFactor ? `${metricsFromClarivateWos(copyFacts) ? 'Clarivate IF' : 'IF'} ${copyFacts.impactFactor}` : 'Peer-reviewed journal', copyFacts.casZone ? copyFacts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', copyFacts.firstDecisionDays ? `1st Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
+      ? [impactCallout, copyFacts.casZone ? copyFacts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', copyFacts.firstDecisionDays ? `1st Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
       : ['Author Guidelines Ready', 'Standard Preparation Checklist', copyFacts.firstDecisionDays ? `First Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Official Submission Portal'];
 
   return guardAdCopy({

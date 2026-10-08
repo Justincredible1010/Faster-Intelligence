@@ -43,6 +43,9 @@ export const DisplayAdCanvas: React.FC<Props> = ({
   const [selectedFormat, setSelectedFormat] = useState<string>('all');
   const [copiedBrief, setCopiedBrief] = useState(false);
   const impactFactor = trustedImpactFactor(facts);
+  const impactLabel = impactFactor != null && facts.jcrYear != null
+    ? `clarivate_wos_journals_api JCR ${facts.jcrYear} IF ${impactFactor}`
+    : '';
   const casZone = trustedCasZone(facts);
   const firstDecisionDays = trustedFirstDecisionDays(facts);
 
@@ -170,7 +173,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
                   {/* Body Content */}
                   <div className="space-y-1.5 my-auto">
                     <div className="text-xs text-amber-300 font-semibold truncate">
-                      {journalName}{impactFactor != null ? ` · IF ${impactFactor}` : ''}
+                      {journalName}{impactLabel ? ` · ${impactLabel}` : ''}
                     </div>
                     <h4 className="text-sm font-bold leading-snug line-clamp-2 text-white">
                       {shortH}
@@ -258,7 +261,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
               <div className="flex items-center gap-3 shrink-0">
                 <div className="text-right hidden sm:block">
                   <div className="text-[10px] text-amber-300 font-bold">
-                    {impactFactor != null ? `IF ${impactFactor}` : journalName}
+                    {impactLabel || journalName}
                   </div>
                   <div className="text-[9px] text-slate-400">
                     {firstDecisionDays != null ? `${firstDecisionDays} Days Review` : 'Peer-Reviewed'}
@@ -461,7 +464,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
                 <div>
                   <div className="text-xs font-bold text-slate-900">{longH}</div>
                   <div className="text-[11px] text-slate-500">
-                    {facts.journalName}{impactFactor != null ? ` · IF ${impactFactor}` : ''}
+                    {facts.journalName}{impactLabel ? ` · ${impactLabel}` : ''}
                   </div>
                 </div>
                 <ExternalLink className="w-4 h-4 text-slate-400 shrink-0" />

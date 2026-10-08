@@ -52,15 +52,27 @@ export function metricFieldIsTrusted(facts: MetricCarrier, field: string): boole
 }
 
 /**
- * Journal impact factors in ad copy come from the Clarivate API or the user.
- * A figure read from the journal website stays on the facts panel only.
+ * An impact factor enters ads, prompts, and exports only from clarivate_wos_journals_api,
+ * and only when the record has a JCR year so the number can be labelled.
+ * Page, catalog, and hand-entered figures stay on the facts panel.
  */
 export function impactFactorMayEnterCopy(facts: MetricCarrier, field: 'impactFactor' | 'fiveYearImpactFactor'): boolean {
-  if (!metricFieldIsTrusted(facts, field)) return false;
   const source = fieldProvenance(facts, field);
-  if (source === 'page_sourced' || source === 'landing_page') return false;
-  if (!source && facts?.verificationStatus === 'page_sourced' && !metricsFromClarivateWos(facts)) return false;
-  return true;
+  const clarivateField = source === 'clarivate_wos_journals_api';
+  const clarivateRecord = !source && metricsFromClarivateWos(facts);
+  if (!clarivateField && !clarivateRecord) return false;
+  return typeof facts?.jcrYear === 'number' && Number.isInteger(facts.jcrYear);
+}
+
+/** Full label for a Clarivate impact factor: source, JCR year, and the number. */
+export function clarivateImpactPhrase(
+  facts: MetricCarrier,
+  field: 'impactFactor' | 'fiveYearImpactFactor' = 'impactFactor'
+): string | null {
+  const value = field === 'impactFactor' ? trustedImpactFactor(facts) : trustedFiveYearImpactFactor(facts);
+  if (value == null || facts?.jcrYear == null) return null;
+  const name = field === 'impactFactor' ? 'IF' : '5-year IF';
+  return `clarivate_wos_journals_api JCR ${facts.jcrYear} ${name} ${value}`;
 }
 
 function trustedNumber(facts: MetricCarrier, field: string, value: number | null | undefined): number | null {
@@ -141,8 +153,6 @@ export function metricPromptSection(facts: MetricCarrier): string {
   }
 
   const lines = ['METRICS (these are the only numbers and rankings you may use):'];
-  const impactFactor = trustedImpactFactor(facts);
-  const fiveYear = trustedFiveYearImpactFactor(facts);
   const quartile = trustedQuartile(facts);
   const casZone = trustedCasZone(facts);
   const days = trustedFirstDecisionDays(facts);
@@ -151,11 +161,13 @@ export function metricPromptSection(facts: MetricCarrier): string {
   const views = trustedFullTextViews(facts);
   const fromClarivate = metricsFromClarivateWos(facts);
 
-  if (impactFactor != null) lines.push(`- Impact factor: ${impactFactor}`);
+  const impactPhrase = clarivateImpactPhrase(facts, 'impactFactor');
+  const fiveYearPhrase = clarivateImpactPhrase(facts, 'fiveYearImpactFactor');
+  if (impactPhrase) lines.push(`- Impact factor: ${impactPhrase}`);
   else if (facts?.impactFactor != null || facts?.fiveYearImpactFactor != null) {
-    lines.push('- Do not state an impact factor or 5-year impact factor. A journal-website figure is reference only.');
+    lines.push('- Do not state an impact factor or 5-year impact factor. A journal-website or catalog figure is reference only.');
   }
-  if (fiveYear != null) lines.push(`- 5-year impact factor: ${fiveYear}`);
+  if (fiveYearPhrase) lines.push(`- 5-year impact factor: ${fiveYearPhrase}`);
   if (quartile) lines.push(`- JCR quartile: ${quartile}`);
   if (casZone) lines.push(`- CAS zone: ${casZone}`);
   if (days != null) lines.push(`- First decision days: ${days}`);
@@ -168,8 +180,10 @@ export function metricPromptSection(facts: MetricCarrier): string {
   if (lines.length === 1) lines.push('- None of the metric fields are filled in.');
   lines.push(
     fromClarivate
-      ? 'These values came from the Clarivate API. You may say Clarivate only for these values.'
-      : 'Do not attribute these values to Clarivate.'
+      ? 'These values came from the Clarivate API. Name clarivate_wos_journals_api and the JCR year whenever you state an impact factor.'
+      : impactPhrase || fiveYearPhrase
+        ? 'You may say clarivate_wos_journals_api only for the impact factor labelled with that source and its JCR year.'
+        : 'Do not attribute these values to Clarivate.'
   );
   lines.push('Do not add any number or ranking that is not listed above.');
   return lines.join('\n');

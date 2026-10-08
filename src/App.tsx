@@ -288,7 +288,7 @@ export default function App() {
 **Author Stage:** ${cfg.name}
 **Author Mindset:** ${cfg.authorMindset}
 **Campaign Objective:** ${cfg.campaignObjective}
-**Impact factor:** ${trustedImpactFactor(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
+**Impact factor:** ${trustedImpactFactor(campaign.clarivateFacts) == null || campaign.clarivateFacts.jcrYear == null ? 'omitted (no clarivate_wos_journals_api value)' : `${trustedImpactFactor(campaign.clarivateFacts)} (clarivate_wos_journals_api, JCR ${campaign.clarivateFacts.jcrYear})`}
 **Quartile:** ${trustedQuartile(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **CAS zone:** ${trustedCasZone(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **APC (USD):** ${trustedApcUsd(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}

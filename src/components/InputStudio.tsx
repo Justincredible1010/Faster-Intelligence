@@ -30,6 +30,7 @@ import {
   STAGE_CONFIGS,
   ClarivateJournalMetrics,
   OutputLanguage,
+  PageSourcedFeature,
   normalizeStage,
 } from '../types';
 import { JOURNAL_CATALOG } from '../data/journalCatalog';
@@ -495,6 +496,17 @@ export const InputStudio: React.FC<Props> = ({
                   ) || 'Page-sourced'}
                 </span>
               </div>
+            ) : null}
+            {!isEditingMetrics && (clarivateFacts.pageFeatures?.length || 0) > 0 ? (
+              <ul className="mt-2.5 space-y-1">
+                {(clarivateFacts.pageFeatures || []).map((feature: PageSourcedFeature) => (
+                  <li key={feature.kind} className="bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase">{feature.label}</span>
+                    <span className="text-xs font-semibold text-slate-900 block">{feature.text}</span>
+                    <span className="text-[10px] text-slate-500">Page-sourced</span>
+                  </li>
+                ))}
+              </ul>
             ) : null}
             {isEditingMetrics ? (
               /* Inline Editable Form */

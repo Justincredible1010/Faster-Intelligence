@@ -2,7 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import { lookup as dnsLookup } from 'node:dns/promises';
-import type { ExtractedFactField, ExtractedPageFacts, FactVerificationStatus, MetricProvenanceSource, PageSourcedMetric } from '../types';
+import type { ExtractedFactField, ExtractedPageFacts, FactVerificationStatus, MetricProvenanceSource, PageSourcedFeature, PageSourcedMetric } from '../types';
 import { normalizeJournalUrl } from './journalUrl';
 import { formatUsageCount, parseUsageCount } from './usageCounts';
 
@@ -79,6 +79,7 @@ export interface MergeableJournalFacts {
   articleDownloads?: number | null;
   fullTextViews?: number | null;
   aimsAndScopeSummary?: string;
+  pageFeatures?: PageSourcedFeature[];
   verificationStatus: FactVerificationStatus;
   provenanceSource?: MetricProvenanceSource;
   isVerifiedClarivate?: boolean;
@@ -917,6 +918,89 @@ function apcInfoUrl(pageAnchors: Anchor[], pageUrl: string): string | null {
   return link ? absoluteUrl(link.href, pageUrl) : null;
 }
 
+function featureTextIsSafe(text: string): boolean {
+  return !/impact factor|影响因子|\bjcr\b|\bQ[1-4]\b|quartile|中科院/i.test(text);
+}
+
+const PUBLISHING_MODEL_CUE = /\b(?:fully open access|gold open access|hybrid(?: open access)?|open access)\b/i;
+
+/** Paragraphs, list items, and headings. Nav bars are not one sentence. */
+function proseBlocks(html: string): string[] {
+  const blocks = html.match(/<(?:p|li|h[1-6])\b[^>]*>[\s\S]*?<\/(?:p|li|h[1-6])>/gi) || [];
+  return blocks.map((block) => decodeHtml(block)).filter(Boolean);
+}
+
+function labelledPublishingModel(html: string): string | null {
+  const model = html.match(/data-test=["']darwin-publishing-model["'][\s\S]{0,500}?<dd\b[^>]*>([\s\S]*?)<\/dd>/i);
+  if (!model) return null;
+  const text = decodeHtml(model[1]);
+  if (!text || !featureTextIsSafe(text)) return null;
+  return text;
+}
+
+function publishingModelText(html: string, pageAnchors: Anchor[]): string | null {
+  const labelled = labelledPublishingModel(html);
+  if (labelled) return labelled;
+
+  for (const block of proseBlocks(html)) {
+    for (const sentence of block.split(/(?<=[.!?])\s+/)) {
+      const text = sentence.replace(/\s+/g, ' ').trim();
+      if (text.length > 180 || !PUBLISHING_MODEL_CUE.test(text) || !featureTextIsSafe(text)) continue;
+      return text;
+    }
+  }
+
+  const link = pageAnchors.find((anchor) => PUBLISHING_MODEL_CUE.test(anchor.text) && featureTextIsSafe(anchor.text));
+  return link?.text.replace(/\s+/g, ' ').trim() || null;
+}
+
+function pushFeature(
+  features: PageSourcedFeature[],
+  kind: PageSourcedFeature['kind'],
+  label: string,
+  text: string | null | undefined
+) {
+  const clean = (text || '').replace(/\s+/g, ' ').trim();
+  if (!clean || !featureTextIsSafe(clean)) return;
+  if (features.some((item) => item.kind === kind)) return;
+  features.push({ kind, label, text: clean, provenance: 'page-sourced' });
+}
+
+/** Features stated in visible page text or in the text of a real link. Impact factors and rankings are left out. */
+function collectPageFeatures(
+  html: string,
+  pageAnchors: Anchor[],
+  aims: string | null,
+  articleTypeLabels: string[],
+  firstDecisionDays: number | null
+): PageSourcedFeature[] {
+  const features: PageSourcedFeature[] = [];
+  pushFeature(features, 'aims_and_audience', 'Aims and audience', aims);
+
+  if (articleTypeLabels.length > 0) {
+    pushFeature(features, 'article_types', 'Article types', articleTypeLabels.join(', '));
+  }
+
+  pushFeature(features, 'publishing_model', 'Publishing model', publishingModelText(html, pageAnchors));
+
+  if (firstDecisionDays != null) {
+    pushFeature(features, 'speed', 'Time to first decision', `${firstDecisionDays} days to first decision`);
+  }
+
+  const submissionLabels: string[] = [];
+  for (const anchor of pageAnchors) {
+    const portal = /submit (your )?manuscript/i.test(anchor.text) || /mts-[a-z0-9-]+\.nature\.com|submission\.springernature\.com|editorialmanager\.com/i.test(anchor.href);
+    const guidelines = /for authors|author guidelines|submission guidelines/i.test(anchor.text);
+    if ((portal || guidelines) && anchor.text && !submissionLabels.includes(anchor.text)) {
+      submissionLabels.push(anchor.text);
+    }
+  }
+  if (submissionLabels.length > 0) {
+    pushFeature(features, 'submission', 'Submission', submissionLabels.join('; '));
+  }
+  return features;
+}
+
 function pushMetric(metrics: PageSourcedMetric[], metric: PageSourcedMetric) {
   if (metrics.some((item) => item.kind === metric.kind)) return;
   metrics.push(metric);
@@ -1117,6 +1201,7 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
     openAccessPolicy: field(openAccess(html), 0.75),
     specialIssuesAvailable: field(specialIssue, specialIssue ? 0.7 : 0),
     pageMetrics: metrics,
+    pageFeatures: collectPageFeatures(html, pageAnchors, aims, types, decision?.numericValue ?? null),
     layout,
     rawConfidenceAverage: 0,
     extractedDate: new Date().toISOString(),
@@ -1228,6 +1313,7 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
   }
 
   result.extractedFacts = page;
+  result.pageFeatures = page.pageFeatures || [];
   const textLocked = userProvided;
 
   if (page.journalTitle.value && !textLocked && !verifiedLive) {
@@ -1364,7 +1450,11 @@ export function formatLandingPagePromptSection(facts: MergeableJournalFacts): st
     page.articleProcessingChargeUsd.value !== null ? `- APC stated on page: $${page.articleProcessingChargeUsd.value} USD (page-sourced)` : '',
     page.openAccessPolicy.value ? `- Publishing model on page: ${page.openAccessPolicy.value}` : '',
     page.editorInChief.value ? `- Editor: ${page.editorInChief.value}` : '',
-    ...page.pageMetrics.map((item) => `- Page-sourced ${item.label}: ${item.value}`),
+    ...page.pageMetrics
+      .filter((item) => item.kind !== 'impact_factor' && item.kind !== 'five_year_impact_factor')
+      .map((item) => `- Page-sourced ${item.label}: ${item.value}`),
+    ...(page.pageFeatures || []).map((feature) => `- Page-sourced ${feature.label}: ${feature.text}`),
+    'Do not state an impact factor, 5-year impact factor, or ranking from the journal page.',
   ];
   return lines.filter(Boolean).join('\n');
 }

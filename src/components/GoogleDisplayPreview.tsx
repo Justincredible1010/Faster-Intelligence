@@ -24,6 +24,7 @@ interface Props {
   content: GoogleDisplayAd;
   journalName?: string;
   impactFactor?: number | null;
+  jcrYear?: number | null;
   casZone?: string | null;
   publisher?: string;
   stage?: StageCode;
@@ -96,6 +97,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
   content,
   journalName = 'Nature',
   impactFactor = null,
+  jcrYear = null,
   casZone = null,
   publisher = 'Nature Portfolio',
   onUpdateContent,
@@ -119,11 +121,12 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
   };
 
   const currentTheme = themeColors[themeStyle];
+  const impactBadge = impactFactor != null && jcrYear != null ? `Clarivate JCR ${jcrYear} IF ${impactFactor}` : '';
 
   // Draw Banner to Canvas whenever format, theme, image, or text changes
   useEffect(() => {
     drawBanner();
-  }, [activeFormat, themeStyle, uploadedImage, activeStockUrl, content, journalName, impactFactor, casZone]);
+  }, [activeFormat, themeStyle, uploadedImage, activeStockUrl, content, journalName, impactBadge, casZone]);
 
   const drawBanner = () => {
     const canvas = canvasRef.current;
@@ -248,7 +251,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
       ctx.fillText(journalName, 70, 145);
 
       // Clarivate IF Gold Badge & CAS Zone Pill
-      drawBadge(ctx, 70, 185, impactFactor == null ? '' : `IF ${impactFactor}`, '#fbbf24', '#78350f', 22);
+      drawBadge(ctx, 70, 185, impactBadge, '#fbbf24', '#78350f', 22);
       drawBadge(ctx, 430, 185, casZone || '', '#a5b4fc', '#312e81', 22);
 
       // Headline
@@ -268,7 +271,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
       drawButton(ctx, 70, 485, 250, 64, ctaBtnText, currentTheme.accent, '#001a3d');
 
       // Journal Cover / Scientific Seal on Right
-      drawJournalCoverMock(ctx, width - 290, 120, 210, 290, journalName, impactFactor);
+      drawJournalCoverMock(ctx, width - 290, 120, 210, 290, journalName, impactBadge);
     } else if (format === 'square') {
       // 1:1 Square (1200 x 1200)
       ctx.fillStyle = '#93c5fd';
@@ -279,11 +282,11 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
       ctx.font = 'bold 64px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.fillText(journalName, 80, 200);
 
-      drawBadge(ctx, 80, 250, impactFactor == null ? '' : `IF ${impactFactor}`, '#fbbf24', '#78350f', 32);
+      drawBadge(ctx, 80, 250, impactBadge, '#fbbf24', '#78350f', 32);
       drawBadge(ctx, 420, 250, casZone || '', '#a5b4fc', '#312e81', 32);
 
       // Journal Cover in Center
-      drawJournalCoverMock(ctx, 420, 360, 360, 460, journalName, impactFactor);
+      drawJournalCoverMock(ctx, 420, 360, 360, 460, journalName, impactBadge);
 
       // Headline
       ctx.fillStyle = '#f8fafc';
@@ -309,7 +312,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
       ctx.font = 'bold 36px sans-serif';
       ctx.fillText(journalName.slice(0, 18), 35, 95);
 
-      drawBadge(ctx, 35, 120, impactFactor == null ? '' : `IF ${impactFactor}`, '#fbbf24', '#78350f', 18);
+      drawBadge(ctx, 35, 120, impactBadge, '#fbbf24', '#78350f', 18);
       drawBadge(ctx, 280, 120, casZone || '', '#a5b4fc', '#312e81', 18);
 
       ctx.fillStyle = '#f8fafc';
@@ -333,7 +336,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
       ctx.font = '24px sans-serif';
       ctx.fillText(`Official ${publisher} · ${content.shortHeadline || 'Open for Papers'}`, 50, 130);
 
-      drawBadge(ctx, 750, 45, impactFactor == null ? '' : `IF ${impactFactor}`, '#fbbf24', '#78350f', 24);
+      drawBadge(ctx, 750, 45, impactBadge, '#fbbf24', '#78350f', 24);
       drawBadge(ctx, 750, 105, casZone || '', '#a5b4fc', '#312e81', 20);
 
       drawButton(ctx, 1140, 50, 260, 75, content.ctaText || 'Submit Paper', currentTheme.accent, '#001a3d');
@@ -347,10 +350,10 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
       ctx.font = 'bold 36px sans-serif';
       wrapText(ctx, journalName, 25, 120, 270, 42);
 
-      drawBadge(ctx, 25, 220, impactFactor == null ? '' : `IF ${impactFactor}`, '#fbbf24', '#78350f', 24);
+      drawBadge(ctx, 25, 220, impactBadge, '#fbbf24', '#78350f', 24);
       drawBadge(ctx, 160, 220, casZone ? casZone.slice(0, 6) : '', '#a5b4fc', '#312e81', 20);
 
-      drawJournalCoverMock(ctx, 45, 300, 230, 310, journalName, impactFactor);
+      drawJournalCoverMock(ctx, 45, 300, 230, 310, journalName, impactBadge);
 
       ctx.fillStyle = '#f8fafc';
       ctx.font = 'bold 26px sans-serif';
@@ -417,7 +420,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
     w: number,
     h: number,
     name: string,
-    ifValue: number | null
+    ifValue: string
   ) => {
     // Shadow
     ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
@@ -452,7 +455,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
     // IF Badge on cover
     ctx.fillStyle = '#f59e0b';
     ctx.font = 'bold 16px sans-serif';
-    if (ifValue != null) ctx.fillText(`IF ${ifValue}`, x + w / 2, y + h * 0.90);
+    if (ifValue) ctx.fillText(ifValue, x + w / 2, y + h * 0.90);
     ctx.textAlign = 'left';
   };
 

@@ -48,11 +48,9 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
   const impactFactor = trustedImpactFactor(facts);
 
   const fromWos = metricsFromClarivateWos(facts);
-  const ifProv = impactFactor == null
-    ? 'No trusted impact factor'
-    : fromWos
-    ? `clarivate_wos_journals_api JCR ${facts.jcrYear ?? 'undated'} IF ${impactFactor} (retrieved ${facts.retrievedAt || 'undated'})`
-    : `IF ${impactFactor} (${facts.verificationStatus})`;
+  const ifProv = impactFactor == null || facts.jcrYear == null
+    ? 'Impact factor omitted'
+    : `clarivate_wos_journals_api JCR ${facts.jcrYear} IF ${impactFactor} (retrieved ${facts.retrievedAt || 'undated'})`;
   const portalProv = facts.submissionPortalUrl
     ? `Extracted Portal URL (${facts.submissionPortalUrl})`
     : 'Submission portal not provided';
@@ -206,7 +204,7 @@ export function downloadGoogleAdsEditorPackage(campaign: GeneratedAdCampaign) {
   // 2. Generate and download README instructions with Provenance details
   const usedFactsSummary = `
 - Journal Title: ${facts.journalName} (${facts.publisher})
-- Impact factor: ${trustedImpactFactor(facts) ?? 'omitted (no trusted value)'} (Provenance: ${facts.sourceAttribution})
+- Impact factor: ${trustedImpactFactor(facts) == null || facts.jcrYear == null ? 'omitted' : `${trustedImpactFactor(facts)} (clarivate_wos_journals_api, JCR ${facts.jcrYear})`}
 - CAS zone: ${trustedCasZone(facts) ?? 'omitted (no trusted value)'}
 - First decision days: ${trustedFirstDecisionDays(facts) ?? 'omitted (no trusted value)'}
 - APC (USD): ${trustedApcUsd(facts) ?? 'omitted (no trusted value)'}

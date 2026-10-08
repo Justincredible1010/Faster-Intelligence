@@ -29,6 +29,14 @@ export interface ExtractedFactField<T> {
   provenanceLabel?: string;
 }
 
+/** A concrete feature the journal page states. Not an impact factor or a ranking. */
+export interface PageSourcedFeature {
+  kind: 'aims_and_audience' | 'article_types' | 'publishing_model' | 'speed' | 'submission';
+  label: string;
+  text: string;
+  provenance: 'page-sourced';
+}
+
 /** A number or labelled figure taken from the journal page itself, not from Clarivate or a model guess. */
 export interface PageSourcedMetric {
   label: string;
@@ -67,6 +75,8 @@ export interface ExtractedPageFacts {
   specialIssuesAvailable: ExtractedFactField<boolean>;
   /** Metrics the page itself states. Each item is labelled page-sourced. */
   pageMetrics: PageSourcedMetric[];
+  /** Features the visible page or its real links state. Each item is page-sourced. */
+  pageFeatures: PageSourcedFeature[];
   layout: 'nature_portfolio' | 'springer_link' | 'unknown';
   rawConfidenceAverage: number;
   extractedDate: string;
@@ -129,6 +139,8 @@ export interface ClarivateJournalMetrics {
   cacheExpiresAt?: string;
   submissionPortalUrl?: string | null;
   authorGuidelinesUrl?: string | null;
+  /** Page-sourced features for Google, Weibo, and WeChat copy. Empty when the page did not state them. */
+  pageFeatures?: PageSourcedFeature[];
   extractedFacts?: ExtractedPageFacts;
   provenanceMap?: Record<string, { source: string; confidence: number; year?: number; note?: string }>;
 }

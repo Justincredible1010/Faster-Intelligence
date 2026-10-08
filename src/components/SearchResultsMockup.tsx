@@ -330,8 +330,8 @@ export const SearchResultsMockup: React.FC<Props> = ({
                 {facts.journalName} journal information
               </h3>
               <p className="text-xs text-[#4d5156] leading-relaxed">
-                {trustedImpactFactor(facts) != null
-                  ? `${facts.journalName} impact factor ${trustedImpactFactor(facts)}${metricsFromClarivateWos(facts) ? ` (clarivate_wos_journals_api JCR ${facts.jcrYear ?? ''})` : ''}.`
+                {trustedImpactFactor(facts) != null && facts.jcrYear != null
+                  ? `${facts.journalName} impact factor ${trustedImpactFactor(facts)} (clarivate_wos_journals_api JCR ${facts.jcrYear}).`
                   : `${facts.journalName}. Aims, scope, and author information.`}
               </p>
             </div>

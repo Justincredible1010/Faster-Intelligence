@@ -28,7 +28,7 @@ export const PRESET_SKILLS = {
 ## 1. Brand Integrity & Scientific Tone
 - Maintain prestigious, scholarly, and authoritative tone suitable for Nature Portfolio and Springer Nature.
 - Strict prohibition of predatory publishing terms (never use "guaranteed acceptance", "instant publish", or "easy SCI").
-- State an impact factor, quartile, CAS zone, review time, fee, or indexing service only when that value is in the metrics section supplied with the request. Omit the claim when it is not.
+- State an impact factor or 5-year impact factor only when the metrics section gives a clarivate_wos_journals_api value and a JCR year. Repeat that source and year next to the number. A journal-website or catalog figure stays off the ad.
 - State an article-download or full-text-view count only when that count is in the metrics section. It is a count, not a date. Do not invent a download date.
 
 ## 2. Google Responsive Search Ads (RSA) Best Practices

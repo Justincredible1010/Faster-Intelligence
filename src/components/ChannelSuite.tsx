@@ -161,6 +161,7 @@ export const ChannelSuite: React.FC<Props> = ({
                 content={campaign.displayAds}
                 journalName={campaign.clarivateFacts.journalName}
                 impactFactor={trustedImpactFactor(campaign.clarivateFacts) ?? undefined}
+                jcrYear={trustedImpactFactor(campaign.clarivateFacts) != null ? campaign.clarivateFacts.jcrYear : undefined}
                 casZone={trustedCasZone(campaign.clarivateFacts) ?? undefined}
                 publisher={campaign.clarivateFacts.publisher}
                 stage={stage}

@@ -713,7 +713,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(facts.provenanceMap?.casZone?.source, 'catalog_snapshot');
     assert.equal(facts.provenanceMap?.indexing?.source, 'catalog_snapshot');
     const copy = campaignText(generatedBody.campaign);
-    assert.match(copy, /15\.1/);
+    assert.doesNotMatch(copy, /15\.1/);
     assert.doesNotMatch(copy, /Q1/);
     assert.doesNotMatch(copy, /1区/);
     assert.doesNotMatch(copy, /SCIE/);
@@ -745,7 +745,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     const afterSaveBody = await afterSave.json();
     assert.equal(afterSave.status, 200, afterSaveBody.error || 'generate after save should keep catalog labels');
     const savedCopy = campaignText(afterSaveBody.campaign);
-    assert.match(savedCopy, /15\.1/);
+    assert.doesNotMatch(savedCopy, /15\.1/);
     assert.doesNotMatch(savedCopy, /Q1/);
     assert.doesNotMatch(savedCopy, /1区/);
     assert.doesNotMatch(savedCopy, /SCIE/);
@@ -834,7 +834,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(facts.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
     const copy = campaignText(generatedBody.campaign);
     assert.match(copy, /349,945,839/);
-    assert.match(copy, /15\.1/);
+    assert.doesNotMatch(copy, /15\.1/);
     assert.doesNotMatch(copy, /114M/);
     assert.doesNotMatch(copy, /2025/);
     assert.doesNotMatch(copy, /Q1/);
@@ -1085,6 +1085,7 @@ function stubPageLinks(url: string): ExtractedPageFacts {
     openAccessPolicy: empty,
     specialIssuesAvailable: pageField(false),
     pageMetrics: [],
+    pageFeatures: [],
     layout: 'unknown',
     rawConfidenceAverage: 0.5,
     extractedDate: '2026-10-08T00:00:00.000Z',

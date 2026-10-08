@@ -64,6 +64,7 @@ const READ_ONLY_SERVER_FIELDS = new Set([
   'authorGuidelinesUrl',
   'articleDownloads',
   'fullTextViews',
+  'pageFeatures',
 ]);
 
 /** Public label for user-entered metrics. Never include an email address here. */
