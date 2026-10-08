@@ -21,6 +21,7 @@ import { runComplianceAudit, autoFixComplianceIssues } from './utils/complianceV
 import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
 import { AlertCircle, AlertTriangle, Sparkles } from 'lucide-react';
 import { apiFetch } from './auth/api';
+import { pickEditableJournalFacts } from './utils/editableJournalFacts';
 import { NATURE_HOMEPAGE_URL } from './utils/journalUrl';
 import { trustedApcUsd, trustedCasZone, trustedImpactFactor, trustedQuartile } from './utils/metricClaims';
 
@@ -138,6 +139,9 @@ export default function App() {
     if (channels.search) activeChannels.push('search');
     if (channels.display) activeChannels.push('display');
 
+    const browserFacts = manualFacts
+      ?? (clarivateFacts?.verificationStatus === 'user_provided' ? clarivateFacts : null);
+
     try {
       const res = await apiFetch('/api/generate-campaign', {
         method: 'POST',
@@ -148,7 +152,7 @@ export default function App() {
           outputLanguage: lang,
           channels: activeChannels,
           customPlaybook: playbook,
-          userProvidedFacts: manualFacts || (clarivateFacts?.verificationStatus === 'user_provided' ? clarivateFacts : null),
+          userProvidedFacts: browserFacts ? pickEditableJournalFacts(browserFacts) : null,
         }),
       });
 

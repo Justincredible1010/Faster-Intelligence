@@ -98,6 +98,32 @@ describe('journal metrics schema', () => {
     assert.equal(facts.sourceAttribution, 'Manually entered (unverified)');
   });
 
+  it('drops known read-only server fields and still rejects unknown ones', () => {
+    const facts = validateJournalMetricsUpdate({
+      facts: validFacts({
+        slugs: ['nature'],
+        isFromCache: true,
+        cachedAt: '2026-01-01T00:00:00.000Z',
+        cacheExpiresAt: '2026-04-01T00:00:00.000Z',
+        extractedFacts: { rawConfidenceAverage: 1 },
+        provenanceMap: { impactFactor: { source: 'server', confidence: 1 } },
+        submissionPortalUrl: 'https://www.nature.com/submit',
+        authorGuidelinesUrl: 'https://www.nature.com/guide',
+      }),
+    });
+    assert.equal(facts.journalName, 'Example Journal');
+    assert.equal(facts.jcrYear, 2024);
+    assert.equal('slugs' in facts, false);
+    assert.equal('isFromCache' in facts, false);
+    assert.equal('cachedAt' in facts, false);
+    assert.equal('cacheExpiresAt' in facts, false);
+    assert.equal('extractedFacts' in facts, false);
+    expectReject(
+      { facts: validFacts({ slugs: ['nature'], cacheExpiresAt: '2026-01-01', notAField: true }) },
+      /Unknown journal metric fields: notAField/
+    );
+  });
+
   it('allows null metrics but not strings that only look numeric', () => {
     const facts = validateJournalMetricsUpdate({
       facts: validFacts({ impactFactor: null, apcUsd: null, casZone: null }),

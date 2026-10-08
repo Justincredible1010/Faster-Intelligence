@@ -48,6 +48,22 @@ const PROVENANCE_SOURCES = new Set([
 
 const ALLOWED = new Set<string>(ALLOWED_FACT_FIELDS);
 
+/**
+ * Fields a lookup response adds, or that the catalog carries, and that the
+ * browser must not have to strip before an edit can be saved. Unknown keys
+ * outside this set and the allowlist are still rejected.
+ */
+const READ_ONLY_SERVER_FIELDS = new Set([
+  'slugs',
+  'isFromCache',
+  'cachedAt',
+  'cacheExpiresAt',
+  'extractedFacts',
+  'provenanceMap',
+  'submissionPortalUrl',
+  'authorGuidelinesUrl',
+]);
+
 /** Public label for user-entered metrics. Never include an email address here. */
 export const MANUAL_METRIC_SOURCE = 'Manually entered (unverified)';
 
@@ -190,7 +206,7 @@ export function sanitizeUserProvidedFacts(facts: unknown): SanitizedJournalMetri
   ) {
     fail('Unknown journal metric fields');
   }
-  const unknown = Object.keys(facts).filter((key) => !ALLOWED.has(key));
+  const unknown = Object.keys(facts).filter((key) => !ALLOWED.has(key) && !READ_ONLY_SERVER_FIELDS.has(key));
   if (unknown.length > 0) fail(`Unknown journal metric fields: ${unknown.sort().join(', ')}`);
 
   assertKnownStatus(facts);

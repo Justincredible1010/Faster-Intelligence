@@ -11,6 +11,7 @@ import { getDevOutbox } from '../src/server/auth/email';
 import { MagicLinkRejected, requestMagicLink } from '../src/server/auth/magicLink';
 import { loadAuthConfig } from '../src/server/auth/config';
 import { resetAuthForTests } from '../src/server/auth/reset';
+import { setPageFactsClientForTests } from '../src/utils/metricSources';
 import { MockOidcIssuer, type MockClaims } from './mockOidcIssuer';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mcge-auth-'));
@@ -184,6 +185,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     applyEnv();
     resetAuthForTests();
     resetMetricsCacheForTests();
+    setPageFactsClientForTests(null);
     mock.reset();
   });
 
@@ -504,6 +506,131 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(String(facts.sourceAttribution).includes('clarivate_wos_journals_api'), false);
   });
 
+  it('generates after editing fetched catalog and page-sourced facts', async () => {
+    const jar: Jar = new Map();
+    const user = await devLogin(jar);
+
+    const catalogRes = await api('/api/fetch-clarivate-facts', {
+      jar,
+      csrf: user.csrfToken,
+      body: { url: 'https://www.nature.com/ncomms' },
+    });
+    assert.equal(catalogRes.status, 200);
+    const catalogFacts = (await catalogRes.json()).facts;
+    assert.equal(catalogFacts.verificationStatus, 'catalog_snapshot');
+    assert.equal(catalogFacts.jcrYear, undefined);
+    assert.ok(Array.isArray(catalogFacts.slugs));
+    assert.equal(typeof catalogFacts.cachedAt, 'string');
+    assert.equal(typeof catalogFacts.cacheExpiresAt, 'string');
+    assert.equal(catalogFacts.isFromCache, false);
+
+    const catalogGenerated = await api('/api/generate-campaign', {
+      jar,
+      csrf: user.csrfToken,
+      body: {
+        landingPageUrl: 'https://www.nature.com/ncomms',
+        funnelStage: 'CON',
+        channels: ['search'],
+        outputLanguage: 'EN',
+        userProvidedFacts: {
+          ...catalogFacts,
+          impactFactor: 15.1,
+          jcrYear: 2024,
+          verificationStatus: 'user_provided',
+          provenanceSource: 'clarivate_wos_journals_api',
+          isVerifiedClarivate: true,
+        },
+      },
+    });
+    const catalogBody = await catalogGenerated.json();
+    assert.equal(catalogGenerated.status, 200, catalogBody.error || 'catalog edit should generate');
+    assert.equal(catalogBody.campaign.clarivateFacts.impactFactor, 15.1);
+    assert.equal(catalogBody.campaign.clarivateFacts.jcrYear, 2024);
+    assert.equal(catalogBody.campaign.clarivateFacts.verificationStatus, 'user_provided');
+    assert.equal(catalogBody.campaign.clarivateFacts.provenanceSource, 'user_provided');
+    assert.equal(catalogBody.campaign.clarivateFacts.isVerifiedClarivate, false);
+    assert.equal(catalogBody.campaign.clarivateFacts.sourceAttribution, 'Manually entered (unverified)');
+    assert.deepEqual(catalogBody.campaign.clarivateFacts.slugs, []);
+    assert.equal('cachedAt' in catalogBody.campaign.clarivateFacts, false);
+    assert.equal('cacheExpiresAt' in catalogBody.campaign.clarivateFacts, false);
+    assert.equal('isFromCache' in catalogBody.campaign.clarivateFacts, false);
+
+    const pageUrl = 'https://www.nature.com/page-sourced-journal';
+    setPageFactsClientForTests({
+      async extractFromPage(canonicalUrl: string) {
+        if (canonicalUrl !== pageUrl) return null;
+        return {
+          journalName: 'Page Sourced Journal',
+          publisher: 'Nature Portfolio',
+          impactFactor: 2.5,
+          fiveYearImpactFactor: null,
+          jcrQuartile: 'Q2',
+          casZone: null,
+          firstDecisionDays: 40,
+          indexing: ['Scopus'],
+          openAccessType: 'Hybrid Open Access',
+          apcUsd: 1000,
+          chinaWaiverAvailable: false,
+          aimsAndScopeSummary: 'Read from the journal page.',
+          primaryDiscipline: 'Biology',
+          sourceAttribution: 'Read from the journal page',
+          verificationStatus: 'page_sourced',
+          provenanceSource: 'page_sourced',
+          isVerifiedClarivate: false,
+        };
+      },
+    });
+    const firstPage = await api('/api/fetch-clarivate-facts', {
+      jar,
+      csrf: user.csrfToken,
+      body: { url: pageUrl },
+    });
+    assert.equal(firstPage.status, 200);
+    assert.equal((await firstPage.json()).facts.verificationStatus, 'page_sourced');
+    const secondPage = await api('/api/fetch-clarivate-facts', {
+      jar,
+      csrf: user.csrfToken,
+      body: { url: pageUrl },
+    });
+    assert.equal(secondPage.status, 200);
+    const pageFacts = (await secondPage.json()).facts;
+    assert.equal(pageFacts.verificationStatus, 'page_sourced');
+    assert.equal(pageFacts.jcrYear, undefined);
+    assert.ok(Array.isArray(pageFacts.slugs));
+    assert.equal(pageFacts.isFromCache, true);
+    assert.equal(typeof pageFacts.cachedAt, 'string');
+    assert.equal(typeof pageFacts.cacheExpiresAt, 'string');
+
+    const pageGenerated = await api('/api/generate-campaign', {
+      jar,
+      csrf: user.csrfToken,
+      body: {
+        landingPageUrl: pageUrl,
+        funnelStage: 'CON',
+        channels: ['search'],
+        outputLanguage: 'EN',
+        userProvidedFacts: {
+          ...pageFacts,
+          impactFactor: 2.8,
+          jcrYear: 2023,
+          verificationStatus: 'user_provided',
+        },
+      },
+    });
+    const pageBody = await pageGenerated.json();
+    assert.equal(pageGenerated.status, 200, pageBody.error || 'page-sourced edit should generate');
+    assert.equal(pageBody.campaign.clarivateFacts.journalName, 'Page Sourced Journal');
+    assert.equal(pageBody.campaign.clarivateFacts.impactFactor, 2.8);
+    assert.equal(pageBody.campaign.clarivateFacts.jcrYear, 2023);
+    assert.equal(pageBody.campaign.clarivateFacts.verificationStatus, 'user_provided');
+    assert.equal(pageBody.campaign.clarivateFacts.provenanceSource, 'user_provided');
+    assert.equal(pageBody.campaign.clarivateFacts.isVerifiedClarivate, false);
+    assert.deepEqual(pageBody.campaign.clarivateFacts.slugs, []);
+    assert.equal('cachedAt' in pageBody.campaign.clarivateFacts, false);
+    assert.equal('cacheExpiresAt' in pageBody.campaign.clarivateFacts, false);
+    assert.equal('isFromCache' in pageBody.campaign.clarivateFacts, false);
+  });
+
   it('returns 401 for mixed-case and percent-encoded /api paths', async () => {
     const blocked = [
       { method: 'POST', path: '/API/generate-campaign' },
@@ -512,13 +639,38 @@ describe('authenticated http api', { concurrency: 1 }, () => {
       { method: 'GET', path: '/%61pi/cache/list' },
       { method: 'GET', path: '/%41PI/cache/list' },
       { method: 'POST', path: '/%2561pi/generate-campaign' },
-      { method: 'GET', path: '/%252e%252e/API/cache/list' },
     ];
     for (const route of blocked) {
       const res = await rawApi(route.method, route.path);
       assert.equal(res.status, 401, `${route.method} ${route.path}`);
       assert.equal(res.body.error, 'Authentication required');
     }
+  });
+
+  it('rejects API paths that contain dot segments, backslashes, or encoded slashes', async () => {
+    const blocked = [
+      '/api/cache/journal/x%2F..%2F..%2F..%2Fauth%2Fsession',
+      '/api/cache/journal/x%5C..%5Cauth%5Csession',
+      '/api/cache/journal/x%252F..%252Fauth%252Fsession',
+      '/api/cache/journal/x%255C..%255Cauth%255Csession',
+      '/api/auth/..%2Fauth/session',
+      '/%252e%252e/API/cache/list',
+      '/api/cache/journal/x\\..\\auth\\session',
+    ];
+    for (const requestPath of blocked) {
+      const res = await rawApi('GET', requestPath);
+      assert.equal(res.status, 400, requestPath);
+      assert.equal(res.body.error, 'Invalid request path');
+    }
+
+    const sessionRes = await rawApi('GET', '/api/auth/session');
+    assert.equal(sessionRes.status, 200);
+
+    const jar: Jar = new Map();
+    await devLogin(jar);
+    const authed = await rawApi('GET', '/api/cache/journal/x%2F..%2F..%2F..%2Fauth%2Fsession', jar);
+    assert.equal(authed.status, 400);
+    assert.equal(authed.body.error, 'Invalid request path');
   });
 
   it('rate limits magic-link requests per email and per IP', async () => {

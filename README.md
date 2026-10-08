@@ -313,18 +313,18 @@ The email domain check runs on the server after the provider has proven the addr
 
 ### Which option to choose
 
-| | Google sign-in | Email magic link | Generic OIDC (Entra, Okta, …) |
+| | Google sign-in | Email magic link | Generic OIDC (Springer Nature Okta) |
 | :--- | :--- | :--- | :--- |
 | Setup effort | Medium. Create an OAuth client and set the redirect URI. | Low for the app. Production still needs a mail transport. | Higher. An IdP admin registers the app, redirect URI, and email claims. |
 | Who must be involved | Someone who can create a Google Cloud OAuth client. A Workspace admin if you want the account chooser limited to the company domain (`hd`). | The app owner. A mail admin if you use the company SMTP relay or a transactional provider. | Corporate IT / identity admin, and usually security review. |
 | Security | Strong if every user has a Workspace account and Google enforces MFA. The app still checks the verified email and `hd`. | The mailbox is the authenticator. Safe enough when corporate mail already has MFA, the link expires in 15 minutes, and it is single-use. Weaker than SSO for offboarding: access lasts until the session expires unless you revoke mail. | Best fit for an employee tool. MFA, device policy, and leaver access are enforced at the IdP. The app still refuses any token whose verified email is outside the domain. |
 | Cost and dependencies | Google OAuth client is free. No mail vendor. Depends on Google being reachable. | No IdP license. Production needs SMTP or an HTTPS email webhook (`smtp` or `http` transport). The `console` transport only prints the link and is refused in production. | Uses the IdP the company already pays for. No extra mail vendor. |
 | User experience | One redirect, if the person has a Google account. | Type the work email, open the message, confirm in the browser. Slower, works wherever mail works. | One redirect through company SSO. Familiar for staff. |
-| Mainland China | Weak choice. `accounts.google.com` is often blocked, so people in mainland China may be unable to sign in without a VPN. | Strongest reach of the three when company mail is reachable from China. The link itself is served by this app, not by Google. | Usually better than Google. `login.microsoftonline.com` (Entra) is often reachable when Google is not, but IT should confirm from a China office network before relying on it. Okta varies by tenant region. |
+| Mainland China | Weak choice. `accounts.google.com` is often blocked, so people in mainland China may be unable to sign in without a VPN. | Strongest reach of the three when company mail is reachable from China. The link itself is served by this app, not by Google. | Company SSO is Okta at `https://auth.springernature.com`. IT should confirm that host is reachable from a China office network before relying on it. |
 
 **Decision:** use **magic links** now (`AUTH_PROVIDER=magic_link`). That is the documented default in `.env.example` and in the production instructions below.
 
-**Planned upgrade:** switch to **generic OIDC against corporate SSO** (Microsoft Entra ID if that is the Springer Nature workforce IdP) once IT registers the app. IT already owns MFA and account closure, and there is no mail vendor to keep. Keep the app-side domain check on after that switch. Do not make Google the default while a meaningful set of users are in mainland China.
+**Planned upgrade:** switch to **generic OIDC against Springer Nature Okta** (`https://auth.springernature.com`, standard OIDC discovery and the authorization code flow) once IT registers the app. IT already owns MFA and account closure, and there is no mail vendor to keep. Keep the app-side domain check on after that switch. Do not make Google the default while a meaningful set of users are in mainland China.
 
 The dev bypass is not a fourth production option. It is registered only when `NODE_ENV` is exactly `development` and `AUTH_DEV_BYPASS` is exactly `true`. Any other environment, including production, responds **404** on `POST /api/auth/dev-login`.
 
@@ -339,7 +339,7 @@ The dev bypass is not a fourth production option. It is registered only when `NO
 | `AUTH_ALLOWED_EMAIL_SUBDOMAINS` | No | Comma-separated full hosts that are subdomains of an allowed apex. Default empty (subdomains rejected). |
 | `AUTH_ADMIN_EMAILS` | For cache admin | Comma-separated emails allowed to call cache clear and cache refresh. |
 | `AUTH_SESSION_TTL_SECONDS` | No | Session lifetime. Default 28800 (8 hours). |
-| `TRUST_PROXY` | Behind TLS proxies | Set to `true` so Express trusts `X-Forwarded-*` from one proxy. |
+| `TRUST_PROXY` | Cloud Run | Set to `true`. Otherwise the magic-link per-IP limit treats every user as one address. |
 | `NODE_ENV` | Production | `production` serves `dist/` and refuses the dev bypass. |
 | `AUTH_DEV_BYPASS` | Local only | `true` shows "Continue as development user". Ignored unless `NODE_ENV=development`. |
 | `AUTH_DEV_USER_EMAIL` | No | Default `dev.user@springernature.com`. Must pass the domain check. |
@@ -407,28 +407,28 @@ AUTH_EMAIL_TRANSPORT=console
 
 The link is printed in the server log. It looks like `http://localhost:3000/#magic=...`. Opening it shows a confirm button so inbox scanners that only GET the URL cannot consume the token. `MAGIC_LINK_TTL_SECONDS` defaults to 900. Requests are limited to 5 per email address and 5 per client IP in a 15-minute window. Outside production the client IP is the socket address, not `X-Forwarded-For`.
 
-### Generic OIDC (planned upgrade: Azure AD / Entra, Okta, and others)
+### Generic OIDC (planned upgrade: Springer Nature Okta)
 
-Use this after Springer Nature IT registers the app. Until then leave `AUTH_PROVIDER=magic_link`.
+Company SSO is Okta at `https://auth.springernature.com`. It uses standard OIDC discovery and the authorization code flow. Use this after Springer Nature IT registers the app. Until then leave `AUTH_PROVIDER=magic_link`.
 
-1. Register a confidential web app at the IdP. Redirect URI: `{APP_URL}/api/auth/callback`.
+1. Ask IT to register a confidential web app. Redirect URI: `{APP_URL}/api/auth/callback`.
 2. Allow the authorization code flow and PKCE (`S256`). Token endpoint auth method: **client secret basic**.
-3. Release the `email` and `email_verified` claims (and `name` if you want it on the session). For Entra, add the optional ID token claims `email` and `email_verified`. The app rejects tokens that omit them.
-4. Copy the `issuer` value from `{issuer}/.well-known/openid-configuration` into `OIDC_ISSUER` with no trailing slash. It must match the discovery document exactly (aside from a trailing slash).
+3. Request scopes `openid email profile`. The ID token must include `email` and `email_verified` (and `name` if you want it on the session). The app rejects tokens that omit `email` or `email_verified`.
+4. Set `OIDC_ISSUER` to `https://auth.springernature.com` with no trailing slash. Discovery is `https://auth.springernature.com/.well-known/openid-configuration`. The issuer must match that document.
 5. Set:
 
 ```bash
 AUTH_PROVIDER=oidc
 AUTH_SESSION_SECRET=replace-with-a-random-string-at-least-32-chars
 APP_URL=https://mcge.example.com
-OIDC_ISSUER=https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0
+OIDC_ISSUER=https://auth.springernature.com
 OIDC_CLIENT_ID=application-client-id
 OIDC_CLIENT_SECRET=client-secret
-# OIDC_SCOPES defaults to "openid email profile"
+OIDC_SCOPES=openid email profile
 AUTH_ADMIN_EMAILS=you@springernature.com
 ```
 
-Okta uses the same variables with an issuer such as `https://your-domain.okta.com`. The IdP must be reachable on `https` in production.
+The issuer must be reachable on `https` in production.
 
 ### Local development bypass
 
@@ -531,7 +531,10 @@ SMTP_PORT=587
 SMTP_USER=apikey-or-mailbox
 SMTP_PASS=secret
 SMTP_FROM="Marketing Content Engine <noreply@springernature.com>"
+TRUST_PROXY=true
 ```
+
+On Cloud Run, `TRUST_PROXY=true` is required. Cloud Run terminates TLS and sends the client address in `X-Forwarded-For`. The per-IP magic-link limit reads that header only when `TRUST_PROXY=true`. Without it, every user shares one address, and five requests lock the service for everyone.
 
 Cloud Run must stay at `max-instances=1` until a shared session store is configured. A restart logs users out.
 

@@ -10,41 +10,70 @@ const PUBLIC_POST = new Set([
   '/api/auth/logout',
 ]);
 
-function decodeRepeated(value: string, times = 2): string {
+function pathOnly(input: string): string {
+  return input.split('?')[0]?.split('#')[0] || '/';
+}
+
+/** Raw path plus up to two percent-decodes, so double-encoded sequences are visible. */
+function decodeSteps(value: string): string[] {
+  const steps = [value];
   let current = value;
-  for (let i = 0; i < times; i++) {
+  for (let i = 0; i < 2; i++) {
     if (!current.includes('%')) break;
     try {
       const next = decodeURIComponent(current);
       if (next === current) break;
+      steps.push(next);
       current = next;
     } catch {
       break;
     }
   }
-  return current;
+  return steps;
 }
 
-function collapseDotSegments(path: string): string {
-  const parts: string[] = [];
-  for (const part of path.split('/')) {
-    if (part === '' || part === '.') continue;
-    if (part === '..') {
-      parts.pop();
-      continue;
-    }
-    parts.push(part);
-  }
-  return `/${parts.join('/')}`;
+function hasEncodedSlash(value: string): boolean {
+  return /%2f/i.test(value) || /%5c/i.test(value);
 }
 
-/** Lowercase, percent-decode (twice), and drop the query, hash, and trailing slash. */
+function isUnsafePath(value: string): boolean {
+  return value.includes('..') || value.includes('\\') || hasEncodedSlash(value);
+}
+
+function isDirectApiPath(value: string): boolean {
+  const lower = value.toLowerCase();
+  return lower === '/api' || lower.startsWith('/api/');
+}
+
+function mentionsApiSegment(value: string): boolean {
+  return /(^|\/)api(\/|$)/i.test(value);
+}
+
+/**
+ * Lowercase, percent-decode (twice), and drop the query, hash, and trailing slash.
+ * Dot segments are not collapsed. Collapsing made a cache id such as
+ * `x%2F..%2Fauth%2Fsession` look like the public session route while Express
+ * still routed the encoded slash to `/api/cache/journal/:journalId`.
+ */
 export function normalizeRequestPath(input: string): string {
-  const raw = input.split('?')[0]?.split('#')[0] || '/';
-  const decoded = decodeRepeated(raw).replace(/\\/g, '/').toLowerCase();
-  let path = collapseDotSegments(decoded);
+  const steps = decodeSteps(pathOnly(input));
+  let path = (steps[steps.length - 1] || '/').toLowerCase();
   if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
   return path || '/';
+}
+
+/**
+ * `reject` — an /api path contains `..`, `\`, or an encoded slash (`%2F` / `%5C`,
+ * including a double-encoded form visible after one decode).
+ * `api` — a safe /api path, matched exactly after normalisation.
+ */
+export function classifyRequestPath(input: string): 'reject' | 'api' | 'ignore' {
+  const steps = decodeSteps(pathOnly(input));
+  const unsafe = steps.some(isUnsafePath);
+  const directApi = steps.some(isDirectApiPath);
+  if (unsafe && (directApi || steps.some(mentionsApiSegment))) return 'reject';
+  if (directApi) return 'api';
+  return 'ignore';
 }
 
 function isApiPath(path: string): boolean {
@@ -53,18 +82,25 @@ function isApiPath(path: string): boolean {
 
 /**
  * Express matches routes case-insensitively unless case-sensitive routing is on,
- * and it decodes the path once before matching. Compare a normalised path so
- * `/API/...` and `/%41PI/...` cannot skip this guard and still hit a handler.
+ * and it decodes the path once before matching. Compare the exact normalised
+ * path so `/API/...` and `/%41PI/...` cannot skip this guard. Paths with `..`,
+ * backslashes, or encoded slashes are rejected instead of being collapsed.
  * `originalUrl` is required because a guard mounted at `/api` sees a stripped `req.path`.
  */
 export function normalizedApiPath(req: Request): string | null {
   const candidates = [req.originalUrl, req.url, req.path];
   for (const candidate of candidates) {
     if (!candidate) continue;
+    if (classifyRequestPath(candidate) !== 'api') continue;
     const path = normalizeRequestPath(candidate);
     if (isApiPath(path)) return path;
   }
   return null;
+}
+
+function rejectedApiRequest(req: Request): boolean {
+  const candidates = [req.originalUrl, req.url, req.path];
+  return candidates.some((candidate) => !!candidate && classifyRequestPath(candidate) === 'reject');
 }
 
 export function getRequestSession(res: Response): SessionRecord | null {
@@ -101,6 +137,11 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
  * requests also require the session CSRF token.
  */
 export function apiGuard(req: Request, res: Response, next: NextFunction): void {
+  if (rejectedApiRequest(req)) {
+    res.status(400).json({ error: 'Invalid request path' });
+    return;
+  }
+
   const path = normalizedApiPath(req);
   if (!path) {
     next();
