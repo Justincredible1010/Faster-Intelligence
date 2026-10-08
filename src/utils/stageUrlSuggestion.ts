@@ -1,5 +1,6 @@
 import { JOURNAL_CATALOG } from '../data/journalCatalog';
 import type { StageCode } from '../types';
+import { journalUrlFetchBlockReason } from './journalHosts';
 import { journalUrlsMatch, normalizeJournalUrl, type NormalizedJournalUrl } from './journalUrl';
 
 /**
@@ -333,4 +334,35 @@ export function suggestStageUrl(
 
   if (!target || !allowed.has(target) || samePage(target, current)) return null;
   return { url: target, reason: reasonFor(stage, target, current, facts) };
+}
+
+export interface EditedStageUrl {
+  /** The marketer's URL, unchanged. Null when it must not be fetched. */
+  url: string | null;
+  warning: string | null;
+}
+
+/**
+ * Accept an edited suggestion as the URL to fetch.
+ * The prefilled value still comes from suggestStageUrl. This does not invent a
+ * path and does not replace the marketer's slug with that suggestion.
+ * A host other than the journal page or the suggestion is refused, including
+ * hosts outside the Springer Nature fetch allowlist.
+ */
+export function editedStageUrlToApply(editedRaw: string, journalUrl: string, suggestedUrl: string): EditedStageUrl {
+  const edited = (editedRaw || '').trim();
+  const blocked = journalUrlFetchBlockReason(edited);
+  if (blocked) return { url: null, warning: blocked };
+
+  const editedHost = normalizeJournalUrl(edited).hostKey;
+  const journalHost = normalizeJournalUrl(journalUrl).hostKey;
+  const suggestedHost = normalizeJournalUrl(suggestedUrl).hostKey;
+  if (!editedHost || (editedHost !== journalHost && editedHost !== suggestedHost)) {
+    return {
+      url: null,
+      warning: 'That URL is on a different host than this journal, so it was not fetched.',
+    };
+  }
+
+  return { url: edited, warning: null };
 }

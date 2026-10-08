@@ -37,7 +37,7 @@ import { JOURNAL_CATALOG } from '../data/journalCatalog';
 import { pickEditableJournalFacts } from '../utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from '../utils/journalUrl';
 import { metricFieldIsTrusted } from '../utils/metricClaims';
-import { suggestStageUrl } from '../utils/stageUrlSuggestion';
+import { editedStageUrlToApply, suggestStageUrl } from '../utils/stageUrlSuggestion';
 import { formatUsageCount } from '../utils/usageCounts';
 
 function metricSourceLabel(source: string | undefined, field?: string, year?: number): string {
@@ -131,6 +131,8 @@ export const InputStudio: React.FC<Props> = ({
   const [showAdvancedMetrics, setShowAdvancedMetrics] = useState(false);
   const [editedFacts, setEditedFacts] = useState<ClarivateJournalMetrics | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [stageUrlDraft, setStageUrlDraft] = useState('');
+  const [stageUrlWarning, setStageUrlWarning] = useState<string | null>(null);
 
   useEffect(() => {
     if (clarivateFacts) {
@@ -187,6 +189,24 @@ export const InputStudio: React.FC<Props> = ({
   const currentStageNormalized = normalizeStage(funnelStage);
   const stages: StageCode[] = ['AWA', 'CON', 'DEC'];
   const stageUrlSuggestion = suggestStageUrl(landingPageUrl, currentStageNormalized, clarivateFacts);
+  const suggestedStageUrl = stageUrlSuggestion?.url || '';
+
+  useEffect(() => {
+    setStageUrlDraft(suggestedStageUrl);
+    setStageUrlWarning(null);
+  }, [suggestedStageUrl]);
+
+  const applyStageUrl = () => {
+    if (!stageUrlSuggestion) return;
+    const decision = editedStageUrlToApply(stageUrlDraft, landingPageUrl, stageUrlSuggestion.url);
+    if (!decision.url) {
+      setStageUrlWarning(decision.warning);
+      return;
+    }
+    setStageUrlWarning(null);
+    onChangeUrl(decision.url);
+    onFetchFacts(decision.url, true);
+  };
 
   // Check if metrics are missing
   const isMissingMetrics = clarivateFacts?.verificationStatus === 'missing';
@@ -789,19 +809,37 @@ export const InputStudio: React.FC<Props> = ({
             className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-xl"
             role="status"
           >
-            <div className="flex-1 space-y-1 min-w-0">
+            <div className="flex-1 space-y-2 min-w-0">
               <p className="text-xs text-amber-950 leading-relaxed">{stageUrlSuggestion.reason}</p>
-              <p className="text-[11px] font-mono text-amber-900 break-all">{stageUrlSuggestion.url}</p>
+              <label htmlFor="stage-url-draft" className="block text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+                Suggested URL
+              </label>
+              <input
+                id="stage-url-draft"
+                type="text"
+                value={stageUrlDraft}
+                spellCheck={false}
+                onChange={(event) => {
+                  setStageUrlDraft(event.target.value);
+                  setStageUrlWarning(null);
+                }}
+                className="w-full text-[11px] font-mono text-amber-950 bg-white border border-amber-300 rounded-lg px-2 py-1.5"
+              />
+              <p className="text-[11px] text-amber-800">
+                Change the path or slug if you want a different page. Using it loads the URL you entered.
+              </p>
               {!isMissingMetrics && (
                 <p className="text-[11px] text-amber-800">You can still generate with the current URL.</p>
+              )}
+              {stageUrlWarning && (
+                <p className="text-[11px] text-red-800" role="alert">
+                  {stageUrlWarning}
+                </p>
               )}
             </div>
             <button
               type="button"
-              onClick={() => {
-                onChangeUrl(stageUrlSuggestion.url);
-                onFetchFacts(stageUrlSuggestion.url, true);
-              }}
+              onClick={applyStageUrl}
               className="shrink-0 px-3 py-2 bg-white border border-amber-300 text-amber-950 text-xs font-bold rounded-lg hover:bg-amber-100 transition"
             >
               Use this URL

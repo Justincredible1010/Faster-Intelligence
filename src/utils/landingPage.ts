@@ -4,20 +4,11 @@ import net from 'node:net';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import type { ExtractedFactField, ExtractedPageFacts, FactVerificationStatus, MetricProvenanceSource, PageSourcedFeature, PageSourcedMetric } from '../types';
 import { normalizeIssn as canonicalIssn } from './issn';
+import { ALLOWED_DOMAIN_SUFFIXES, isAllowedSpringerNatureHost, journalUrlFetchBlockReason } from './journalHosts';
 import { normalizeJournalUrl } from './journalUrl';
 import { formatUsageCount, parseUsageCount } from './usageCounts';
 
-/**
- * Journal landing pages are fetched only from Springer Nature hosts.
- * Other hosts, IP literals, and redirects off this list are refused so a
- * marketer-supplied URL cannot be used to reach internal services.
- */
-export const ALLOWED_DOMAIN_SUFFIXES = [
-  'nature.com',
-  'springer.com',
-  'biomedcentral.com',
-  'springernature.com',
-] as const;
+export { ALLOWED_DOMAIN_SUFFIXES, isAllowedSpringerNatureHost };
 
 export const FETCH_TIMEOUT_MS = 8_000;
 export const MAX_HTML_BYTES = 1_500_000;
@@ -94,15 +85,6 @@ export interface MergeableJournalFacts {
 }
 
 type Provenance = { source: string; confidence: number; year?: number; note?: string };
-
-export function isAllowedSpringerNatureHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '');
-  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) {
-    return false;
-  }
-  if (net.isIP(host) || !/[a-z]/i.test(host)) return false;
-  return ALLOWED_DOMAIN_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
-}
 
 function isPrivateIpv4(a: number, b: number, c: number): boolean {
   if (a === 0 || a === 10 || a === 127) return true;
@@ -191,33 +173,11 @@ export function preferIpv4(addresses: string[]): string[] {
 }
 
 export function parseAllowedJournalUrl(raw: string): URL {
+  const reason = journalUrlFetchBlockReason(raw);
+  if (reason) throw new LandingPageError(reason, 'ssrf');
   let cleaned = (raw || '').trim();
-  if (!cleaned) throw new LandingPageError('A journal URL is required.', 'ssrf');
   if (!/^[a-z][a-z0-9+.-]*:/i.test(cleaned)) cleaned = `https://${cleaned}`;
-
-  let url: URL;
-  try {
-    url = new URL(cleaned);
-  } catch {
-    throw new LandingPageError('The journal URL is not valid.', 'ssrf');
-  }
-
-  if (url.username || url.password) {
-    throw new LandingPageError('Journal URLs must not include credentials.', 'ssrf');
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new LandingPageError('Only http and https journal URLs can be read.', 'ssrf');
-  }
-  if (url.port && url.port !== '80' && url.port !== '443') {
-    throw new LandingPageError('Only ports 80 and 443 are allowed.', 'ssrf');
-  }
-  if (!isAllowedSpringerNatureHost(url.hostname)) {
-    throw new LandingPageError(
-      'Only Springer Nature journal hosts are allowed (nature.com, springer.com, biomedcentral.com, springernature.com, and their subdomains).',
-      'ssrf'
-    );
-  }
-  return url;
+  return new URL(cleaned);
 }
 
 /** www.nature.com/ is the Nature flagship journal, not a publisher portal. */

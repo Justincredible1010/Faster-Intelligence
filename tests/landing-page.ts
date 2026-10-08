@@ -19,7 +19,7 @@ import {
 } from '../src/utils/landingPage';
 import { app, generateDeterministicCampaign, lookupClarivateFacts, type JournalLookupOptions } from '../server';
 import { factsForCopy, guardMetricClaims, metricPromptSection } from '../src/utils/metricClaims';
-import { suggestStageUrl } from '../src/utils/stageUrlSuggestion';
+import { editedStageUrlToApply, suggestStageUrl } from '../src/utils/stageUrlSuggestion';
 import { parseUsageCount } from '../src/utils/usageCounts';
 import { normalizeJournalUrl } from '../src/utils/journalUrl';
 
@@ -783,6 +783,26 @@ export async function runLandingPageTests() {
     assert.equal(suggestStageUrl('https://www.nature.com/ncomms', 'CON', withAims)?.url, 'https://www.nature.com/ncomms/aims');
     assert.doesNotMatch(awarenessGuidelines?.reason || '', /impact factor|18\.1|14\.7/i);
     assert.doesNotMatch(decisionHome?.reason || '', /impact factor|18\.1|14\.7/i);
+
+    const journalPage = 'https://www.nature.com/ncomms/research-articles';
+    const suggestedHome = 'https://www.nature.com/ncomms';
+    const customSlug = 'https://www.nature.com/ncomms/My-Custom-Slug';
+    const appliedSlug = editedStageUrlToApply(customSlug, journalPage, suggestedHome);
+    assert.equal(appliedSlug.url, customSlug);
+    assert.equal(appliedSlug.warning, null);
+    assert.notEqual(appliedSlug.url, suggestedHome);
+    const apexSlug = editedStageUrlToApply('https://nature.com/ncomms/another-page', journalPage, suggestedHome);
+    assert.equal(apexSlug.url, 'https://nature.com/ncomms/another-page');
+    const portalSuggestion = 'https://mts-ncomms.nature.com/';
+    const portalEdit = editedStageUrlToApply('https://mts-ncomms.nature.com/custom-path', journalPage, portalSuggestion);
+    assert.equal(portalEdit.url, 'https://mts-ncomms.nature.com/custom-path');
+    const otherJournalHost = editedStageUrlToApply('https://link.springer.com/journal/1', journalPage, suggestedHome);
+    assert.equal(otherJournalHost.url, null);
+    assert.match(otherJournalHost.warning || '', /different host/);
+    const offAllowlist = editedStageUrlToApply('https://example.com/ncomms/custom', journalPage, suggestedHome);
+    assert.equal(offAllowlist.url, null);
+    assert.match(offAllowlist.warning || '', /Springer Nature journal hosts/);
+    assert.equal(editedStageUrlToApply('https://www.nature.com', 'https://www.nature.com/ncomms/about', suggestedHome).url, 'https://www.nature.com');
 
     const childCache = new Map();
     const childFacts = await lookupClarivateFacts('https://www.nature.com/ncomms/submission-guidelines', false, {
