@@ -155,16 +155,18 @@ Each metric stores its own `expireAt`. A cached journal is treated as stale only
   ├── StageComparisonModal.tsx (AWA vs. CON vs. DEC side-by-side view)
   └── PlaybookSkillModal.tsx (Custom marketing playbook injection)
                            │
-                           │  HTTP / REST (JSON)
+                           │  HTTP / REST (JSON, cookie session, CSRF header)
                            ▼
   SERVER (Express + Node.js via tsx server.ts)
+  ├── Auth gate on every /api route (server session, CSRF, @springernature.com)
+  │   ├── Google OIDC  |  magic link  |  generic OIDC (Entra, Okta, …)
   ├── /api/fetch-clarivate-facts (Cached lookup with Clarivate JCR fallback)
-  ├── /api/update-journal-metrics (Saves user-verified data to cache)
+  ├── /api/update-journal-metrics (Known-field schema, audit of who changed what)
   ├── /api/generate-campaign (Gemini 3.8 Flash + deterministic strategy engine)
   ├── /api/compare-stages (Generates AWA, CON, DEC simultaneously)
-  ├── /api/cache/* (List, inspect, refresh, and clear cache entries)
+  ├── /api/cache/* (List and inspect for signed-in users; refresh and clear are admin-only)
   ├── Gemini 3.8 Flash SDK (@google/genai)
-  └── Persistent File System Storage (metrics-cache.json)
+  └── Persistent File System Storage (metrics-cache.json, metrics-audit.jsonl)
 ```
 
 ### Core Technologies
@@ -260,20 +262,174 @@ The same Export menu also downloads a **Markdown campaign brief** (`handleExport
 
 ## 9. API Reference
 
-| Endpoint | Method | Payload | Description |
-| :--- | :--- | :--- | :--- |
-| `/api/fetch-clarivate-facts` | `POST` | `{ "url": string, "forceRefresh"?: boolean }` | Resolves Clarivate JCR metrics from cache, verified catalog, or AI lookup. Returns `verificationStatus: 'missing'` if unknown. |
-| `/api/update-journal-metrics` | `POST` | `{ "facts": ClarivateJournalMetrics }` | Saves user-supplied or audited journal metrics into persistent cache (`metrics-cache.json`). |
-| `/api/generate-campaign` | `POST` | `{ "landingPageUrl": string, "funnelStage": "AWA"\|"CON"\|"DEC", "channels": string[], "outputLanguage": "all"\|"EN"\|"ZH", "customPlaybook"?: string, "userProvidedFacts"?: object }` | Generates full Google Search, Display, and Keywords pack. Rejects with `400` if required metrics are missing. |
-| `/api/compare-stages` | `POST` | `{ "landingPageUrl": string, "outputLanguage"?: string }` | Builds AWA, CON, and DEC campaigns with the deterministic template engine. This route does not call Gemini. |
-| `/api/cache/list` | `GET` | — | Lists all currently cached journals, access timestamps, and expiration statuses. |
-| `/api/cache/journal/:id` | `GET` | — | Inspects cached metric details and TTL expiration timestamps for a specific journal. |
-| `/api/cache/refresh/:id` | `POST` | `{ "url"?: string }` | Forces a fresh lookup (catalog, then Gemini if configured), bypassing the existing cache entry. |
-| `/api/cache/clear` | `POST` | — | Flushes in-memory cache and deletes `metrics-cache.json` on disk. |
+Every `/api` route except the sign-in endpoints below requires a server session. `POST`, `PUT`, `PATCH`, and `DELETE` also require the `X-CSRF-Token` header returned by `GET /api/auth/session`. Unauthenticated calls receive **401**. Authenticated calls that omit the CSRF token receive **403**. JSON bodies are limited to **1mb**.
+
+| Endpoint | Method | Auth | Payload | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `/api/auth/session` | `GET` | Public | — | Returns the current user (or `authenticated: false`), a CSRF token, the active provider, and whether the dev bypass is enabled. Sets the `sn_session` cookie. |
+| `/api/auth/login` | `GET` | Public | — | Starts Google or generic OIDC (authorization code + PKCE). Not used for magic links. |
+| `/api/auth/callback` | `GET` | Public | — | OIDC redirect URI. Verifies the ID token, then the email domain. |
+| `/api/auth/magic-link/request` | `POST` | Public + CSRF | `{ "email": string }` | Sends a one-time link when `AUTH_PROVIDER=magic_link` and the address is allowed. |
+| `/api/auth/magic-link/verify` | `POST` | Public + CSRF | `{ "token": string }` | Confirms a magic link and creates a session. The link is opened from `#magic=` in the browser; the token is not consumed by a GET. |
+| `/api/auth/dev-login` | `POST` | Public + CSRF | `{}` | Development-only sign-in. **404** unless `NODE_ENV=development` and `AUTH_DEV_BYPASS=true`. |
+| `/api/auth/logout` | `POST` | Public + CSRF | `{}` | Destroys the server session. |
+| `/api/fetch-clarivate-facts` | `POST` | User | `{ "url": string, "forceRefresh"?: boolean }` | Resolves Clarivate JCR metrics from cache, verified catalog, or AI lookup. Returns `verificationStatus: 'missing'` if unknown. |
+| `/api/update-journal-metrics` | `POST` | User | `{ "facts": known fields only }` | Saves user-supplied metrics. Unknown fields, wrong types, and client-set `source_verified` / `isVerifiedClarivate: true` are rejected with **400**. The server records who changed which fields. |
+| `/api/generate-campaign` | `POST` | User | `{ "landingPageUrl": string, "funnelStage": "AWA"\|"CON"\|"DEC", "channels": string[], "outputLanguage": "all"\|"EN"\|"ZH", "customPlaybook"?: string, "userProvidedFacts"?: object }` | Generates full Google Search, Display, and Keywords pack. Rejects with `400` if required metrics are missing. |
+| `/api/compare-stages` | `POST` | User | `{ "landingPageUrl": string, "outputLanguage"?: string }` | Builds AWA, CON, and DEC campaigns with the deterministic template engine. This route does not call Gemini. |
+| `/api/cache/list` | `GET` | User | — | Lists all currently cached journals, access timestamps, and expiration statuses. |
+| `/api/cache/journal/:id` | `GET` | User | — | Inspects cached metric details, TTL, and the audit trail stored on that journal. |
+| `/api/cache/refresh/:id` | `POST` | **Admin** | `{ "url"?: string }` | Forces a fresh lookup (catalog, then Gemini if configured). |
+| `/api/cache/clear` | `POST` | **Admin** | — | Flushes the in-memory cache and deletes `metrics-cache.json`. |
+
+Admin means the signed-in email is listed in `AUTH_ADMIN_EMAILS`. Anyone else receives **403**.
+
+`POST /api/update-journal-metrics` accepts only these `facts` fields: `url`, `journalName`, `publisher`, `impactFactor`, `fiveYearImpactFactor`, `jcrQuartile`, `casZone`, `firstDecisionDays`, `indexing`, `openAccessType`, `apcUsd`, `chinaWaiverAvailable`, `aimsAndScopeSummary`, `primaryDiscipline`, `sourceAttribution`, `reportingYear`, `verificationStatus` (`user_provided` only), `isVerifiedClarivate` (`false` only), and `missingFields` (strings). The stored record is rebuilt from that schema. `verificationStatus` is forced to `user_provided`, and `sourceAttribution` is rewritten to name the signed-in email. Each save appends a line to `metrics-audit.jsonl`.
 
 ---
 
-## 10. Development & Production Instructions
+## 10. Authentication
+
+Sign-in is selected with one environment variable, `AUTH_PROVIDER`. The session layer, CSRF check, and `@springernature.com` rule are the same for every provider. The browser only ever holds an `HttpOnly` session id (`sn_session`, `SameSite=Lax`, `Secure` when `APP_URL` is https in production). The server stores the user, the OAuth transaction, and the CSRF token. The SPA sends that CSRF token as `X-CSRF-Token` on every state-changing request.
+
+The email domain check runs on the server after the provider has proven the address:
+
+- The address must contain one `@`, be ASCII, and use a real hostname (no trailing dot, no empty labels).
+- The domain must equal an allowed apex, case-insensitively. The default apex is `springernature.com`.
+- A subdomain such as `staff.springernature.com` is rejected unless that full host is listed in `AUTH_ALLOWED_EMAIL_SUBDOMAINS` **and** it is actually under an allowed apex.
+- Lookalikes fail. `springernature.com.evil.com`, `notspringernature.com`, and `springernature.co` are not the apex and are not subdomains of it.
+- Google and generic OIDC also require `email_verified` to be true. If an `hd` claim is present, that host must pass the same rule. A missing `hd` does not skip the email check.
+
+### Which option to choose
+
+| | Google sign-in | Email magic link | Generic OIDC (Entra, Okta, …) |
+| :--- | :--- | :--- | :--- |
+| Setup effort | Medium. Create an OAuth client and set the redirect URI. | Low for the app. Production still needs a mail transport. | Higher. An IdP admin registers the app, redirect URI, and email claims. |
+| Who must be involved | Someone who can create a Google Cloud OAuth client. A Workspace admin if you want the account chooser limited to the company domain (`hd`). | The app owner. A mail admin if you use the company SMTP relay or a transactional provider. | Corporate IT / identity admin, and usually security review. |
+| Security | Strong if every user has a Workspace account and Google enforces MFA. The app still checks the verified email and `hd`. | The mailbox is the authenticator. Safe enough when corporate mail already has MFA, the link expires in 15 minutes, and it is single-use. Weaker than SSO for offboarding: access lasts until the session expires unless you revoke mail. | Best fit for an employee tool. MFA, device policy, and leaver access are enforced at the IdP. The app still refuses any token whose verified email is outside the domain. |
+| Cost and dependencies | Google OAuth client is free. No mail vendor. Depends on Google being reachable. | No IdP license. Production needs SMTP or an HTTPS email webhook (`smtp` or `http` transport). The `console` transport only prints the link and is refused in production. | Uses the IdP the company already pays for. No extra mail vendor. |
+| User experience | One redirect, if the person has a Google account. | Type the work email, open the message, confirm in the browser. Slower, works wherever mail works. | One redirect through company SSO. Familiar for staff. |
+| Mainland China | Weak choice. `accounts.google.com` is often blocked, so people in mainland China may be unable to sign in without a VPN. | Strongest reach of the three when company mail is reachable from China. The link itself is served by this app, not by Google. | Usually better than Google. `login.microsoftonline.com` (Entra) is often reachable when Google is not, but IT should confirm from a China office network before relying on it. Okta varies by tenant region. |
+
+**Recommendation:** use **generic OIDC against corporate SSO** (Microsoft Entra ID if that is the Springer Nature workforce IdP). IT already owns MFA and account closure, there is no new mail vendor, and the login endpoints are more likely to work for colleagues in mainland China than Google. Keep the app-side domain check on anyway.
+
+If an IdP app registration will take time, ship **magic links** as the interim. Do not make Google the default while a meaningful set of users are in mainland China.
+
+The dev bypass is not a fourth production option. It is registered only when `NODE_ENV` is exactly `development` and `AUTH_DEV_BYPASS` is exactly `true`. Any other environment, including production, responds **404** on `POST /api/auth/dev-login`.
+
+### Shared environment
+
+| Variable | Required | Purpose |
+| :--- | :--- | :--- |
+| `AUTH_PROVIDER` | Yes in production | `google`, `magic_link`, or `oidc`. |
+| `AUTH_SESSION_SECRET` | Yes in production | At least 32 characters. Signs the session cookie. In local development an ephemeral secret is generated if this is unset. |
+| `APP_URL` | Yes in production | Public origin with no trailing slash, for example `https://mcge.example.com`. Used for OAuth redirects and magic links. Must be `https` except for localhost. |
+| `AUTH_ALLOWED_EMAIL_DOMAINS` | No | Comma-separated apex domains. Default `springernature.com`. |
+| `AUTH_ALLOWED_EMAIL_SUBDOMAINS` | No | Comma-separated full hosts that are subdomains of an allowed apex. Default empty (subdomains rejected). |
+| `AUTH_ADMIN_EMAILS` | For cache admin | Comma-separated emails allowed to call cache clear and cache refresh. |
+| `AUTH_SESSION_TTL_SECONDS` | No | Session lifetime. Default 28800 (8 hours). |
+| `TRUST_PROXY` | Behind TLS proxies | Set to `true` so Express trusts `X-Forwarded-*` from one proxy. |
+| `NODE_ENV` | Production | `production` serves `dist/` and refuses the dev bypass. |
+| `AUTH_DEV_BYPASS` | Local only | `true` shows "Continue as development user". Ignored unless `NODE_ENV=development`. |
+| `AUTH_DEV_USER_EMAIL` | No | Default `dev.user@springernature.com`. Must pass the domain check. |
+| `AUTH_DEV_USER_NAME` | No | Display name for the dev user. |
+
+Redirect URI for both OAuth providers: `{APP_URL}/api/auth/callback`.
+
+### Google sign-in
+
+1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create an OAuth client of type **Web application**.
+2. Add authorized redirect URI `{APP_URL}/api/auth/callback`.
+3. On the OAuth consent screen, add the scopes `openid`, `email`, and `profile` (the app requests those). If the app is internal to Workspace, a Workspace admin can mark it internal so only company accounts see it.
+4. Optionally ask the Workspace admin to confirm the `springernature.com` hosted domain. The app sends `hd=springernature.com` as an account-chooser hint. The security check is still the verified email plus `hd` when Google sends it.
+5. Set:
+
+```bash
+AUTH_PROVIDER=google
+AUTH_SESSION_SECRET=replace-with-a-random-string-at-least-32-chars
+APP_URL=https://mcge.example.com
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+AUTH_ADMIN_EMAILS=you@springernature.com
+```
+
+`GOOGLE_ISSUER` defaults to `https://accounts.google.com`. Leave it unset in production.
+
+### Magic links
+
+1. Choose a transport: `smtp` (company relay or a provider such as Amazon SES) or `http` (your own mail webhook). `console` prints the link on the server and is rejected when `NODE_ENV=production`.
+2. Set:
+
+```bash
+AUTH_PROVIDER=magic_link
+AUTH_SESSION_SECRET=replace-with-a-random-string-at-least-32-chars
+APP_URL=https://mcge.example.com
+AUTH_EMAIL_TRANSPORT=smtp
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=apikey-or-mailbox
+SMTP_PASS=secret
+SMTP_FROM="Marketing Content Engine <noreply@springernature.com>"
+# SMTP_SECURE=true when using port 465
+AUTH_ADMIN_EMAILS=you@springernature.com
+```
+
+HTTP transport instead of SMTP:
+
+```bash
+AUTH_EMAIL_TRANSPORT=http
+AUTH_EMAIL_WEBHOOK_URL=https://mail.internal.example/v1/send
+AUTH_EMAIL_WEBHOOK_BEARER=optional-token
+```
+
+The webhook receives JSON `{ "to", "subject", "text", "html" }`. Add another transport in code with `registerEmailSender(name, factory)` from `src/server/auth/email.ts`.
+
+Local use without a mail server:
+
+```bash
+NODE_ENV=development
+AUTH_PROVIDER=magic_link
+AUTH_EMAIL_TRANSPORT=console
+```
+
+The link is printed in the server log. It looks like `http://localhost:3000/#magic=...`. Opening it shows a confirm button so inbox scanners that only GET the URL cannot consume the token. `MAGIC_LINK_TTL_SECONDS` defaults to 900.
+
+### Generic OIDC (Azure AD / Entra, Okta, and others)
+
+1. Register a confidential web app at the IdP. Redirect URI: `{APP_URL}/api/auth/callback`.
+2. Allow the authorization code flow and PKCE (`S256`). Token endpoint auth method: **client secret basic**.
+3. Release the `email` and `email_verified` claims (and `name` if you want it on the session). For Entra, add the optional ID token claims `email` and `email_verified`. The app rejects tokens that omit them.
+4. Copy the `issuer` value from `{issuer}/.well-known/openid-configuration` into `OIDC_ISSUER` with no trailing slash. It must match the discovery document exactly (aside from a trailing slash).
+5. Set:
+
+```bash
+AUTH_PROVIDER=oidc
+AUTH_SESSION_SECRET=replace-with-a-random-string-at-least-32-chars
+APP_URL=https://mcge.example.com
+OIDC_ISSUER=https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0
+OIDC_CLIENT_ID=application-client-id
+OIDC_CLIENT_SECRET=client-secret
+# OIDC_SCOPES defaults to "openid email profile"
+AUTH_ADMIN_EMAILS=you@springernature.com
+```
+
+Okta uses the same variables with an issuer such as `https://your-domain.okta.com`. The IdP must be reachable on `https` in production.
+
+### Local development bypass
+
+```bash
+NODE_ENV=development
+AUTH_DEV_BYPASS=true
+AUTH_PROVIDER=magic_link
+AUTH_EMAIL_TRANSPORT=console
+AUTH_DEV_USER_EMAIL=dev.user@springernature.com
+```
+
+The sign-in page shows **Continue as development user**. That button calls `POST /api/auth/dev-login`. It does not exist as a working route in production, test, or when the flag is anything other than `true`.
+
+---
+
+## 11. Development & Production Instructions
 
 ### Prerequisites
 - Node.js 20 or newer (CI uses Node.js 22)
@@ -285,10 +441,12 @@ Copy `.env.example` to `.env`.
 | Variable | Required | What the code does with it |
 | :--- | :--- | :--- |
 | `GEMINI_API_KEY` | Only for live Gemini calls | Read by `server.ts`. Without it, the process still starts. Journal lookup uses the built-in catalog, and campaign generation uses the deterministic template engine. |
-| `NODE_ENV` | No | `production` serves the prebuilt `dist/` assets. Any other value, including unset, mounts the Vite dev middleware. |
+| `NODE_ENV` | Production | `production` serves the prebuilt `dist/` assets, requires auth configuration, and disables the dev bypass. Any other value mounts the Vite dev middleware. |
+| `APP_URL` | Production | Public origin used for OAuth redirects and magic links. See the authentication section. |
+| `AUTH_PROVIDER` and `AUTH_SESSION_SECRET` | Production | Select the sign-in provider and sign the session cookie. See the authentication section for every provider variable. |
 | `DISABLE_HMR` | No | When `true`, `vite.config.ts` turns off hot module replacement and file watching. |
 
-The server always listens on **port 3000** (`http://0.0.0.0:3000`). `PORT` is not read. `.env.example` still lists `APP_URL` for hosts that inject it; this application does not read `APP_URL`.
+The server always listens on **port 3000** (`http://0.0.0.0:3000`). `PORT` is not read.
 
 ### Installation
 ```bash
@@ -300,7 +458,7 @@ npm ci
 ```bash
 npm test
 ```
-Runs `tests/unit-tests.ts` with `tsx` (character width, language purity, compliance audit, the 15-column CSV export, and metrics-cache loading).
+Runs `tests/unit-tests.ts` (character width, language purity, compliance audit, the 15-column CSV export, and metrics-cache loading) and the auth suite (domain checks, 401s, provider callbacks against a mock issuer, dev-bypass guards, and journal-metric validation).
 
 ### Type Checking
 ```bash
@@ -322,6 +480,6 @@ NODE_ENV=production npm start
 
 ---
 
-## 11. Ethical & Academic Integrity Statement
+## 12. Ethical & Academic Integrity Statement
 
 Marketing Content Generation Engine is designed to uphold the highest standards of scientific publishing ethics. It does not support or generate deceptive claims, artificial review acceleration guarantees, or ungrounded promotional hype. All campaigns generated through this engine are grounded in verified journal indexing criteria and adhere to the **Committee on Publication Ethics (COPE)** guidelines and **Google Ads Advertising Policies**.

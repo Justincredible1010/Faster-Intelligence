@@ -20,6 +20,7 @@ import {
 import { runComplianceAudit, autoFixComplianceIssues } from './utils/complianceValidator';
 import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
 import { AlertCircle, AlertTriangle, Sparkles } from 'lucide-react';
+import { apiFetch } from './auth/api';
 
 const DEFAULT_LANDING_URL = 'https://www.nature.com/nature';
 
@@ -60,9 +61,8 @@ export default function App() {
     setIsFetchingFacts(true);
     setError(null);
     try {
-      const res = await fetch('/api/fetch-clarivate-facts', {
+      const res = await apiFetch('/api/fetch-clarivate-facts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: url.trim(), forceRefresh }),
       });
       const data = await res.json();
@@ -142,9 +142,8 @@ export default function App() {
     if (channels.display) activeChannels.push('display');
 
     try {
-      const res = await fetch('/api/generate-campaign', {
+      const res = await apiFetch('/api/generate-campaign', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         signal: abortController.signal,
         body: JSON.stringify({
           landingPageUrl: url.trim(),
@@ -200,11 +199,15 @@ export default function App() {
   const handleSaveManualJournal = async (facts: ClarivateJournalMetrics) => {
     setClarivateFacts(facts);
     try {
-      await fetch('/api/update-journal-metrics', {
+      const saveRes = await apiFetch('/api/update-journal-metrics', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ facts }),
       });
+      if (!saveRes.ok) {
+        const saveData = await saveRes.json().catch(() => ({}));
+        setError(saveData.error || 'Failed to save journal metrics');
+        return;
+      }
     } catch (err) {
       console.warn('Failed to persist manual metrics to server:', err);
     }
