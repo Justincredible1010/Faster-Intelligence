@@ -268,15 +268,15 @@ The same Export menu also downloads a **Markdown campaign brief** (`handleExport
 
 | Endpoint | Method | Payload | Description |
 | :--- | :--- | :--- | :--- |
-| `/api/fetch-clarivate-facts` | `POST` | `{ "url": string, "forceRefresh"?: boolean, "issn"?: string }` | Resolves the URL through the URL cache, then the Clarivate metrics store when an ISSN is present, then the page-facts client, then the catalog snapshot. A public refresh does not bypass the once-per-day JCR check. Gemini is not asked for metrics. Returns `verificationStatus: 'missing'` if unknown. |
+| `/api/fetch-clarivate-facts` | `POST` | `{ "url": string, "forceRefresh"?: boolean, "issn"?: string, "eIssn"?: string }` | Resolves the URL through the URL cache, then the Clarivate metrics store when an ISSN is known, then the page-facts client, then the catalog snapshot. The ISSN comes from the request, the page-scraper hook, cached facts, or the catalog `issn`/`eIssn`. A public refresh does not bypass the once-per-day JCR check. Gemini is not asked for metrics. Returns `verificationStatus: 'missing'` if unknown. |
 | `/api/update-journal-metrics` | `POST` | `{ "facts": ClarivateJournalMetrics }` | Saves user-supplied or audited journal metrics into persistent cache (`metrics-cache.json`). |
-| `/api/generate-campaign` | `POST` | `{ "landingPageUrl": string, "funnelStage": "AWA"\|"CON"\|"DEC", "channels": string[], "outputLanguage": "all"\|"EN"\|"ZH", "customPlaybook"?: string, "userProvidedFacts"?: object }` | Generates search, display, and keyword copy. Rejects with `400` only when `verificationStatus` is `missing`. Untrusted numbers are omitted and stripped by the claim guard. |
+| `/api/generate-campaign` | `POST` | `{ "landingPageUrl": string, "funnelStage": "AWA"\|"CON"\|"DEC", "channels": string[], "outputLanguage": "all"\|"EN"\|"ZH", "customPlaybook"?: string, "userProvidedFacts"?: object, "issn"?: string, "eIssn"?: string }` | Generates search, display, and keyword copy. The ISSN is taken from the request, then the page-scraper hook, cached facts, or the catalog. Rejects with `400` only when `verificationStatus` is `missing`. Untrusted numbers are omitted and stripped by the claim guard. |
 | `/api/compare-stages` | `POST` | `{ "landingPageUrl": string, "outputLanguage"?: string }` | Builds AWA, CON, and DEC campaigns with the deterministic template engine. This route does not call Gemini. |
 | `/api/cache/list` | `GET` | — | Lists all currently cached journals, access timestamps, and expiration statuses. |
 | `/api/cache/journal/:id` | `GET` | — | Inspects cached metric details and TTL expiration timestamps for a specific journal. |
 | `/api/cache/refresh/:id` | `POST` | `{ "url"?: string }` | Forces a fresh lookup of the given URL, or the URL already stored on that cache entry. Returns `400` when neither exists. Does not build a URL from the cache id. |
 | `/api/cache/clear` | `POST` | — | Flushes in-memory cache and deletes `metrics-cache.json` on disk. |
-| `/api/admin/clarivate-metrics/refresh` | `POST` | `{ "issn": string }` | Forces a Journals API lookup for that ISSN and writes the metrics store. This is the admin refresh. PR #4 should gate it with `requireAdmin` from `src/server/auth/guard.ts`, the same middleware used on `/api/cache/refresh` and `/api/cache/clear`. |
+| `/api/admin/clarivate-metrics/refresh` | `POST` | `{ "issn": string }` | Forces a Journals API lookup for that ISSN and writes the metrics store. Returns 404 unless `CLARIVATE_ADMIN_REFRESH_ENABLED=true`. TODO: PR #4 should also gate it with `requireAdmin` from `src/server/auth/guard.ts`, the same middleware used on `/api/cache/refresh` and `/api/cache/clear`. |
 
 ---
 
@@ -299,6 +299,7 @@ Copy `.env.example` to `.env`.
 | `METRICS_STORE_PATH` | No | File used when `METRICS_STORE=file`. Default `.data/clarivate-metrics.json`. |
 | `NODE_ENV` | No | `production` serves the prebuilt `dist/` assets. Any other value, including unset, mounts the Vite dev middleware. |
 | `DISABLE_HMR` | No | When `true`, `vite.config.ts` turns off hot module replacement and file watching. |
+| `CLARIVATE_ADMIN_REFRESH_ENABLED` | No | Must be exactly `true` or `POST /api/admin/clarivate-metrics/refresh` returns 404. Leave it unset until `requireAdmin` is wired. |
 
 ### Clarivate Journals API, quota, and refresh
 
@@ -310,9 +311,11 @@ The client calls `https://api.clarivate.com/apis/wos-journals/v1`:
 
 JIF values arrive as strings and are parsed defensively. Missing fields stay null.
 
-The key is shared with another application (about 5 requests/second, plus a quota). This client starts at most 2 requests/second. HTTP 429 and 5xx responses retry with exponential backoff and jitter, and a `Retry-After` header replaces that wait. Concurrent lookups for the same ISSN share one request. An ISSN that returns no hit is remembered for 10 minutes.
+The key is shared with another application (about 5 requests/second, plus a quota). This client starts at most 2 requests/second. HTTP 429 and 5xx responses retry with exponential backoff and jitter. A `Retry-After` header replaces that wait when it is 30 seconds or less. A longer `Retry-After` ends the request without waiting. Concurrent lookups for the same ISSN share one request.
 
-Stored metrics are served without calling the API. A newer JCR year is checked only when the stored year is older than the expected latest release, and at most once per ISSN per UTC day. New JCR data is treated as available on and after 30 June UTC: on 8 October 2026 the expected year is 2025; on 15 January 2026 it is 2024. `POST /api/admin/clarivate-metrics/refresh` with `{ "issn": "0028-0836" }` forces a check. Until PR #4 lands, that route is not authenticated; the handler is marked for `requireAdmin`.
+Stored metrics are served without calling the API. A newer JCR year is checked only when the stored year is older than the expected latest release, and at most once per ISSN per UTC day. An ISSN with no hit, and a journal that has no JCR year or no JIF, are written to the ISSN mapping and rechecked on the same schedule. New JCR data is treated as available on and after 30 June UTC: on 8 October 2026 the expected year is 2025; on 15 January 2026 it is 2024. `POST /api/admin/clarivate-metrics/refresh` with `{ "issn": "0028-0836" }` forces a check only when `CLARIVATE_ADMIN_REFRESH_ENABLED=true`. The handler keeps a TODO for `requireAdmin` so the route stays closed until PR #4's auth middleware is applied.
+
+Clarivate fields are copied onto the landing-page record only when they are non-empty. The display name prefers `jcrTitle` or `isoTitle`, then the landing-page name, then the Web of Science name. An all-caps id is not used in place of a mixed-case landing-page name, and ads do not say "Published by Unknown publisher".
 
 Ad copy and exports cite a Clarivate value as `JIF 56.1 (Clarivate JCR 2025)`. The word Clarivate is allowed only when `provenanceSource` is `clarivate_wos_journals_api`. A hand-edited fact is forced to `user_provided` with `isVerifiedClarivate` false.
 
@@ -332,7 +335,7 @@ npm run verify:clarivate -- 0028-0836
 Documents:
 
 - `wosJournalMetrics/{issn}_{jcrYear}` — metrics plus `source`, `jcrYear`, and `retrievedAt`
-- `wosIssnMappings/{issn}` — Clarivate journal id, latest JCR year, and the last year-check time
+- `wosIssnMappings/{issn}` — Clarivate journal id, latest JCR year, the last year-check time, and a durable `not_found` or `unavailable` state when the API has no journal or no JIF
 
 Print and electronic ISSNs are both indexed. Tests use the in-memory store. A Firestore emulator run is optional and only executes when `FIRESTORE_EMULATOR_HOST` is set. CI does not need the API key or Google credentials.
 

@@ -1,6 +1,6 @@
 import { ClarivateJournalMetrics } from '../types';
 import { normalizeIssn } from './issn';
-import { lookupMetricsByIssn } from './metricSources';
+import { LookupOutcome, lookupJournalByIssn, lookupMetricsByIssn } from './metricSources';
 import { getMetricsStore, JournalMetricsRecord, MetricsStore } from './metricsStore';
 
 /**
@@ -55,12 +55,25 @@ export interface LoadJournalMetricsOptions {
   now?: Date;
   store?: MetricsStore;
   lookup?: typeof lookupMetricsByIssn;
+  /** Test double that can report not-found and no-JIF, not only a metrics object. */
+  resolve?: (issn: string, retrievedAt: Date) => Promise<LookupOutcome>;
+}
+
+async function resolveOutcome(issn: string, now: Date, options: LoadJournalMetricsOptions): Promise<LookupOutcome> {
+  if (options.resolve) return options.resolve(issn, now);
+  if (options.lookup) {
+    const metrics = await options.lookup(issn, undefined, now);
+    return metrics ? { kind: 'metrics', metrics } : { kind: 'unavailable' };
+  }
+  return lookupJournalByIssn(issn, undefined, now);
 }
 
 /**
  * Serve stored Clarivate metrics without calling the API.
  * A newer JCR year is checked only when the stored edition is behind the
  * expected release, and at most once per ISSN per UTC day.
+ * An ISSN with no hit, and a journal with no JCR year or no JIF, are stored
+ * on the ISSN mapping and rechecked at most once per UTC day.
  */
 export async function loadJournalMetrics(
   issn: string,
@@ -70,7 +83,6 @@ export async function loadJournalMetrics(
   if (!normalized) return null;
   const now = options.now ?? new Date();
   const store = options.store ?? (await getMetricsStore());
-  const lookup = options.lookup ?? lookupMetricsByIssn;
   const stored = await store.getLatestByIssn(normalized);
   const expected = expectedLatestJcrYear(now);
 
@@ -84,13 +96,32 @@ export async function loadJournalMetrics(
     if (lastCheck && sameUtcDay(lastCheck, now)) return stored.metrics;
   }
 
-  const fresh = await lookup(normalized, undefined, now);
+  if (!options.force) {
+    const mapping = await store.getIdMapping(normalized);
+    const stateAt = mapping?.lookupStateAt;
+    if (mapping?.lookupState && stateAt && sameUtcDay(stateAt, now)) {
+      if (mapping.lookupState === 'not_found') return null;
+      return stored?.metrics ?? null;
+    }
+  }
+
+  const outcome = await resolveOutcome(normalized, now, options);
+  if (outcome.kind === 'not_found' || outcome.kind === 'no_metrics') {
+    await store.rememberLookupState(
+      normalized,
+      outcome.kind === 'not_found' ? 'not_found' : 'unavailable',
+      now.toISOString(),
+      outcome.kind === 'no_metrics' ? outcome.wosJournalId : undefined
+    );
+  }
+
+  const fresh = outcome.kind === 'metrics' ? outcome.metrics : null;
   const resolvedYear = fresh?.jcrYear ?? stored?.jcrYear ?? null;
   const resolvedIsBehind = resolvedYear != null && resolvedYear < expected;
   if (options.force || resolvedIsBehind) {
     await store.setLastYearCheck(normalized, now.toISOString());
   }
-  if (!fresh) return stored?.metrics ?? null;
+  if (outcome.kind === 'not_found' || !fresh) return outcome.kind === 'not_found' ? null : stored?.metrics ?? null;
 
   const record = metricsRecordFromFacts(fresh);
   if (record) await store.putMetrics(record);

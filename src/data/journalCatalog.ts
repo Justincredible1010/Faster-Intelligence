@@ -37,6 +37,8 @@ export const JOURNAL_CATALOG: CatalogJournal[] = [
     slugs: ['flagship', 'default'],
     journalName: 'Nature',
     publisher: 'Nature Portfolio',
+    issn: '0028-0836',
+    eIssn: '1476-4687',
     // No impact factor is stored for Nature. A JCR value has to come from the Web of Science Journals API.
     impactFactor: null,
     fiveYearImpactFactor: null,

@@ -274,6 +274,20 @@ export function guardMetricClaims(text: string, facts: MetricCarrier): MetricCla
     return '';
   });
 
+  // CiteScore, h-index, and similar labels are not trusted fields. A number
+  // next to one of them is stripped. "Version 2.0", "7 days a week", and
+  // "If 3 authors" do not match these labels.
+  const otherMetricLabel = String.raw`(?:CiteScore|h[-\s]?index|SNIP|SJR|Eigenfactor|immediacy(?:\s+index)?|journal\s+citation\s+indicator)`;
+  const stripOtherMetric = (full: string) => {
+    flags.push(`Stripped untrusted metric claim "${full.trim()}"`);
+    return '';
+  };
+  out = out.replace(
+    new RegExp(String.raw`\b${otherMetricLabel}\b\s*(?:of|is|[:：=])?\s*${CLAIM_NUMBER}`, 'gi'),
+    stripOtherMetric
+  );
+  out = out.replace(new RegExp(String.raw`${CLAIM_NUMBER}\s+\b${otherMetricLabel}\b`, 'gi'), stripOtherMetric);
+
   out = out.replace(
     /中科院[\u4e00-\u9fffA-Za-z0-9/ ]{0,20}?[1-4]区(?:\s*Top)?|[1-4]区(?:\s*Top)?/g,
     (full) => {

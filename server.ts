@@ -11,7 +11,9 @@ import { joinJournalUrl, normalizeJournalUrl, journalUrlsMatch } from './src/uti
 import { installClarivateClient, pageFacts } from './src/utils/metricSources';
 import { clarivateWosJournals as clarivateHttpClient } from './src/utils/clarivateHttp';
 import { factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection, sanitizeUserProvidedFacts } from './src/utils/metricClaims';
+import type { ClarivateJournalMetrics } from './src/types';
 import { loadJournalMetrics } from './src/utils/metricsRefresh';
+import { normalizeIssn } from './src/utils/issn';
 
 dotenv.config();
 installClarivateClient(clarivateHttpClient);
@@ -64,6 +66,9 @@ export interface JCRJournalEntry {
   wosJournalId?: string;
   issn?: string;
   eIssn?: string;
+  jcrTitle?: string;
+  isoTitle?: string;
+  wosName?: string;
   catalogDataYear?: number;
   missingFields?: string[];
   isVerifiedClarivate?: boolean;
@@ -327,13 +332,138 @@ function missingJournalFacts(canonicalUrl: string): JCRJournalEntry {
   };
 }
 
-export async function lookupClarivateFacts(url: string, forceRefresh = false, issn?: string): Promise<JCRJournalEntry> {
+const PLACEHOLDER_LABEL = /^(unknown journal|unknown publisher)$/i;
+
+function labelText(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed || PLACEHOLDER_LABEL.test(trimmed)) return '';
+  return trimmed;
+}
+
+/** True when every letter is uppercase, as in the Web of Science id NATURE. */
+export function isShoutyLabel(value: string): boolean {
+  const letters = value.replace(/[^A-Za-z]/g, '');
+  return letters.length >= 2 && letters === letters.toUpperCase();
+}
+
+function toDisplayCase(value: string): string {
+  if (!isShoutyLabel(value)) return value;
+  return value.toLowerCase().replace(/(^|[^a-z0-9])([a-z])/g, (_match, sep: string, ch: string) => `${sep}${ch.toUpperCase()}`);
+}
+
+function filled(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value === 'string') return labelText(value).length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'number') return Number.isFinite(value);
+  return true;
+}
+
+/**
+ * Display title: isoTitle or jcrTitle, then the landing-page name, then the
+ * Web of Science name. An all-caps id is title-cased so ads do not say NATURE.
+ */
+export function displayJournalName(
+  api: { jcrTitle?: string; isoTitle?: string; journalName?: string; wosName?: string },
+  landingName?: string
+): string {
+  const proper = [api.jcrTitle, api.isoTitle].map(labelText).find((value) => value && !isShoutyLabel(value));
+  if (proper) return proper;
+  const landing = labelText(landingName);
+  if (landing && !isShoutyLabel(landing)) return landing;
+  const raw = labelText(api.journalName) || labelText(api.wosName) || landing;
+  if (!raw) return landing || 'Journal';
+  return toDisplayCase(raw);
+}
+
+/** Keep a mixed-case landing publisher. Never surface "Unknown publisher". */
+export function displayPublisher(apiPublisher: unknown, landingPublisher?: string): string {
+  const api = labelText(apiPublisher);
+  const landing = labelText(landingPublisher);
+  if (api && !(isShoutyLabel(api) && landing && !isShoutyLabel(landing))) return api;
+  if (landing) return landing;
+  return api ? toDisplayCase(api) : '';
+}
+
+/** Copy with a safe journal name and publisher for headlines and callouts. */
+export function withAdIdentity<T extends { journalName?: string; publisher?: string; jcrTitle?: string; isoTitle?: string; wosName?: string }>(
+  facts: T
+): T {
+  return {
+    ...facts,
+    journalName: displayJournalName(facts, facts.journalName),
+    publisher: displayPublisher(facts.publisher, facts.publisher),
+  };
+}
+
+/**
+ * ISSN for a journal URL.
+ * Client input wins, then the landing-page scraper, then cached facts, then the catalog.
+ */
+export function resolveJournalIssn(input: {
+  requested?: string | null;
+  /**
+   * PR #3 landing-page scraper hook. Pass the ISSN printed on the page.
+   * lookupClarivateFacts also reads issn/eIssn from extractFromPage when this is omitted.
+   */
+  pageIssn?: string | null;
+  cached?: { issn?: string | null; eIssn?: string | null } | null;
+  catalog?: { issn?: string | null; eIssn?: string | null } | null;
+}): string {
+  const candidates = [
+    input.requested,
+    input.pageIssn,
+    input.cached?.issn,
+    input.cached?.eIssn,
+    input.catalog?.issn,
+    input.catalog?.eIssn,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeIssn(typeof candidate === 'string' ? candidate : '');
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
+const CLARIVATE_OVERLAY_SKIP = new Set(['journalName', 'publisher', 'jcrTitle', 'isoTitle', 'wosName', 'url', 'slugs']);
+
+/**
+ * Spread Clarivate fields over landing-page facts. Empty Clarivate values
+ * and an all-caps name do not replace a better landing-page name or publisher.
+ */
+export function mergeClarivateOverLanding(landing: JCRJournalEntry, api: ClarivateJournalMetrics): JCRJournalEntry {
+  const merged: JCRJournalEntry = { ...landing };
+  for (const [key, value] of Object.entries(api)) {
+    if (CLARIVATE_OVERLAY_SKIP.has(key) || !filled(value)) continue;
+    (merged as unknown as Record<string, unknown>)[key] = value;
+  }
+  merged.journalName = displayJournalName(api, landing.journalName);
+  merged.publisher = displayPublisher(api.publisher, landing.publisher);
+  merged.jcrTitle = labelText(api.jcrTitle) || landing.jcrTitle;
+  merged.isoTitle = labelText(api.isoTitle) || landing.isoTitle;
+  merged.wosName = labelText(api.wosName) || landing.wosName;
+  merged.url = landing.url;
+  merged.slugs = landing.slugs || [];
+  return merged;
+}
+
+export async function lookupClarivateFacts(
+  url: string,
+  forceRefresh = false,
+  issn?: string,
+  /**
+   * PR #3 landing-page scraper hook. Pass the ISSN the scraper read on the page.
+   * Until that scraper lands, extractFromPage returns null and this stays empty.
+   */
+  pageIssn?: string
+): Promise<JCRJournalEntry> {
   const norm = normalizeJournalUrl(url);
   const journalId = norm.cacheKey;
   if (!norm.canonical) return missingJournalFacts(url || '');
 
   const cachedRecord = metricsCache.get(journalId);
-  const issnToUse = (issn || cachedRecord?.fullFacts?.issn || '').trim();
+  const catalog = CLARIVATE_JCR_CATALOG.find((entry) => journalUrlsMatch(norm, normalizeJournalUrl(entry.url)));
 
   if (!forceRefresh && cachedRecord) {
     const cached = cachedRecord;
@@ -347,13 +477,13 @@ export async function lookupClarivateFacts(url: string, forceRefresh = false, is
       && cached.fullFacts;
     if (usable && cached.fullFacts) {
       console.log(`[Cache HIT] Retrieved ${journalId} (${cached.journalName}) from metrics-cache.json`);
-      return {
+      return withAdIdentity({
         ...cached.fullFacts,
         url: normalizeJournalUrl(cached.fullFacts.url).canonical || norm.canonical,
         isFromCache: true,
         cachedAt: cached.lastAccess,
         cacheExpiresAt: cached.metrics['impactFactor']?.expireAt,
-      };
+      });
     }
     console.log(status === 'catalog_snapshot'
       ? `[Cache SKIP] Catalog snapshot for ${journalId} is re-read from the in-repo catalog.`
@@ -362,21 +492,38 @@ export async function lookupClarivateFacts(url: string, forceRefresh = false, is
       : `[Cache EXPIRED] Cached data for ${journalId} is stale. Refreshing...`);
   }
 
+  const fromPage = await pageFacts.extractFromPage(norm.canonical);
+  const issnToUse = resolveJournalIssn({
+    requested: issn,
+    pageIssn: pageIssn || fromPage?.issn || fromPage?.eIssn,
+    cached: cachedRecord?.fullFacts,
+    catalog,
+  });
+  const landing: JCRJournalEntry = fromPage
+    ? {
+        ...missingJournalFacts(norm.canonical),
+        ...fromPage,
+        url: norm.canonical,
+        slugs: [],
+        verificationStatus: 'page_sourced',
+        provenanceSource: 'page_sourced',
+        isVerifiedClarivate: false,
+        sourceAttribution: fromPage.sourceAttribution || 'Read from the journal page',
+      }
+    : catalog
+      ? { ...catalog, url: normalizeJournalUrl(catalog.url).canonical }
+      : missingJournalFacts(norm.canonical);
+
   if (issnToUse) {
     const fromApi = await loadJournalMetrics(issnToUse);
     if (fromApi) {
-      const facts: JCRJournalEntry = {
-        ...missingJournalFacts(norm.canonical),
-        ...fromApi,
-        url: norm.canonical,
-        slugs: [],
-      };
+      const facts = mergeClarivateOverLanding(landing, fromApi);
+      facts.url = norm.canonical;
       rememberJournal(journalId, facts);
       return facts;
     }
   }
 
-  const fromPage = await pageFacts.extractFromPage(norm.canonical);
   if (fromPage) {
     const facts: JCRJournalEntry = {
       ...missingJournalFacts(norm.canonical),
@@ -414,11 +561,12 @@ export async function lookupClarivateFacts(url: string, forceRefresh = false, is
 // 1. Fetch Clarivate Facts (checks cache first)
 app.post('/api/fetch-clarivate-facts', async (req, res) => {
   try {
-    const { url, forceRefresh = false, issn } = req.body;
+    const { url, forceRefresh = false, issn, eIssn } = req.body;
     if (!url || !url.trim()) {
       return res.status(400).json({ error: 'URL is required' });
     }
-    const facts = await lookupClarivateFacts(url, forceRefresh, typeof issn === 'string' ? issn : undefined);
+    const requestedIssn = typeof issn === 'string' && issn.trim() ? issn : typeof eIssn === 'string' ? eIssn : undefined;
+    const facts = await lookupClarivateFacts(url, forceRefresh, requestedIssn);
     res.json({ success: true, facts });
   } catch (err: any) {
     console.error('Clarivate lookup error:', err);
@@ -481,11 +629,20 @@ app.get('/api/cache/list', (_req, res) => {
 
 /**
  * Admin-only Clarivate refresh. This bypasses the once-per-day JCR check.
- * PR #4 gates /api/cache/refresh and /api/cache/clear with requireAdmin from
- * src/server/auth/guard.ts. Apply that same middleware to this route when
- * auth lands. Do not leave it public after that merge.
+ * Disabled unless CLARIVATE_ADMIN_REFRESH_ENABLED=true, so a merge of this
+ * branch before or after PR #4 cannot burn the shared Journals API quota.
+ * TODO: when PR #4 lands, also gate this route with requireAdmin from
+ * src/server/auth/guard.ts, the same middleware used on /api/cache/refresh
+ * and /api/cache/clear.
  */
+export function clarivateAdminRefreshEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.CLARIVATE_ADMIN_REFRESH_ENABLED === 'true';
+}
+
 app.post('/api/admin/clarivate-metrics/refresh', async (req, res) => {
+  if (!clarivateAdminRefreshEnabled()) {
+    return res.status(404).json({ error: 'Not found' });
+  }
   try {
     const issn = typeof req.body?.issn === 'string' ? req.body.issn : '';
     if (!issn.trim()) {
@@ -613,17 +770,20 @@ export function generateStageHeadlines(
   stage: StageCode,
   outputLanguage: 'all' | 'EN' | 'ZH' = 'all'
 ) {
-  facts = factsForCopy(facts);
+  facts = withAdIdentity(factsForCopy(facts));
   const jifClaim = formatJifClaim(facts);
   const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
   const disciplineShort = (facts.primaryDiscipline || 'Scientific').split('(')[0].trim().slice(0, 14);
+  const publishedBy = facts.publisher ? smartClamp(`Published by ${facts.publisher}`, 30) : '';
 
   // AWA (Awareness)
   if (stage === 'AWA') {
     const en: HeadlineSeed[] = [
       { text: smartClamp(`Discover ${shortName}`, 30), sourceFact: facts.journalName, language: 'EN', category: 'Journal Identity', positionRecommendation: 'Position 1' },
       { text: smartClamp(`Explore ${disciplineShort} Research`, 30), sourceFact: facts.primaryDiscipline, language: 'EN', category: 'Scope & Community', positionRecommendation: 'Position 1' },
-      { text: smartClamp(`Published by ${facts.publisher}`, 30), sourceFact: facts.publisher, language: 'EN', category: 'Journal Identity', positionRecommendation: 'Position 1' },
+      ...(publishedBy
+        ? [{ text: publishedBy, sourceFact: facts.publisher, language: 'EN' as const, category: 'Journal Identity', positionRecommendation: 'Position 1' }]
+        : []),
       { text: smartClamp(`Topics in ${disciplineShort}`, 30), sourceFact: facts.primaryDiscipline, language: 'EN', category: 'Scope & Community', positionRecommendation: 'Position 2' },
       { text: smartClamp(`Global Research Community`, 30), sourceFact: 'Readership', language: 'EN', category: 'Scope & Community', positionRecommendation: 'Position 2' },
       { text: smartClamp(`Read High-Impact Discoveries`, 30), sourceFact: 'Discovery', language: 'EN', category: 'Scope & Community', positionRecommendation: 'Position 2' },
@@ -749,17 +909,37 @@ export function generateStageHeadlines(
 
 // Stage Descriptions with language purity
 export function generateStageDescriptions(facts: any, stage: StageCode, outputLanguage: 'all' | 'EN' | 'ZH' = 'all') {
-  facts = factsForCopy(facts);
+  facts = withAdIdentity(factsForCopy(facts));
   const jifClaim = formatJifClaim(facts);
   if (stage === 'AWA') {
     const en = [
       { text: smartClamp(`Explore research published in ${facts.journalName}. Serving the global scientific community.`, 90), sourceFact: 'Journal Overview', language: 'EN' as const, theme: 'Scope & Relevance' },
       { text: smartClamp(`Discover multidisciplinary advances and innovative discoveries across ${facts.primaryDiscipline}.`, 90), sourceFact: facts.primaryDiscipline, language: 'EN' as const, theme: 'Scope & Relevance' },
-      { text: smartClamp(`Published by ${facts.publisher}. Connect with global readership and open scholarship.`, 90), sourceFact: facts.publisher, language: 'EN' as const, theme: 'Scope & Relevance' },
+      {
+        text: smartClamp(
+          facts.publisher
+            ? `Published by ${facts.publisher}. Connect with global readership and open scholarship.`
+            : 'Connect with global readership and open scholarship.',
+          90
+        ),
+        sourceFact: facts.publisher || 'Readership',
+        language: 'EN' as const,
+        theme: 'Scope & Relevance',
+      },
       { text: smartClamp(`Browse recent articles, view journal scope, and explore research topics today.`, 90), sourceFact: 'Discovery CTA', language: 'EN' as const, theme: 'Scope & Relevance' },
     ];
     const zh = [
-      { text: smartClamp(`了解 ${facts.journalName} 的学术范畴与研究议题，探索 ${facts.publisher} 前沿学术成果。`, 90), sourceFact: 'Journal Scope', language: 'ZH' as const, theme: 'Scope & Relevance' },
+      {
+        text: smartClamp(
+          facts.publisher
+            ? `了解 ${facts.journalName} 的学术范畴与研究议题，探索 ${facts.publisher} 前沿学术成果。`
+            : `了解 ${facts.journalName} 的学术范畴与研究议题，探索前沿学术成果。`,
+          90
+        ),
+        sourceFact: 'Journal Scope',
+        language: 'ZH' as const,
+        theme: 'Scope & Relevance',
+      },
       { text: smartClamp(`汇聚领域前沿论文，促进国际学者学术交流与知识共享，欢迎查阅最新研究成果。`, 90), sourceFact: 'Community Readership', language: 'ZH' as const, theme: 'Scope & Relevance' },
       { text: smartClamp(`查阅期刊学术定位、出版宗旨及最新录用论文成果，探索国际前沿科研动态。`, 90), sourceFact: 'Discovery', language: 'ZH' as const, theme: 'Scope & Relevance' },
       { text: smartClamp(`由知名出版机构提供高质量学术平台，赋能科研人员把握学科发展脉络。`, 90), sourceFact: facts.publisher, language: 'ZH' as const, theme: 'Scope & Relevance' },
@@ -811,7 +991,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
 }
 
 export function generateStageKeywords(facts: any, stage: StageCode) {
-  facts = factsForCopy(facts);
+  facts = withAdIdentity(factsForCopy(facts));
   const shortName = facts.journalName.toLowerCase();
   const disc = (facts.primaryDiscipline || 'science').toLowerCase().split('(')[0].trim();
 
@@ -820,13 +1000,17 @@ export function generateStageKeywords(facts: any, stage: StageCode) {
       englishSearchKeywords: [
         { keyword: `${disc} research articles`, matchType: 'Broad' as const, intent: 'Research Discovery' },
         { keyword: `"${facts.journalName.toLowerCase()}" overview`, matchType: 'Phrase' as const, intent: 'Journal Discovery' },
-        { keyword: `explore ${facts.publisher.toLowerCase()} journals`, matchType: 'Phrase' as const, intent: 'Publisher Discovery' },
+        ...(facts.publisher
+          ? [{ keyword: `explore ${facts.publisher.toLowerCase()} journals`, matchType: 'Phrase' as const, intent: 'Publisher Discovery' }]
+          : []),
         { keyword: `[${facts.journalName.toLowerCase()} scope]`, matchType: 'Exact' as const, intent: 'Scope Discovery' },
       ],
       chineseAuthorKeywords: [
         { keywordZh: `${facts.journalName} 期刊介绍与研究方向`, matchType: '短语 (Phrase)' as const, intentZh: '了解学科范畴' },
         { keywordZh: `${disc} 学术前沿文献`, matchType: '短语 (Phrase)' as const, intentZh: '学术发现与阅读' },
-        { keywordZh: `${facts.publisher} 旗下学术期刊`, matchType: '短语 (Phrase)' as const, intentZh: '出版机构发现' },
+        ...(facts.publisher
+          ? [{ keywordZh: `${facts.publisher} 旗下学术期刊`, matchType: '短语 (Phrase)' as const, intentZh: '出版机构发现' }]
+          : []),
       ],
       negativeKeywords: ['代写', '买卖论文', '包录用', '降重包过', '枪手', '论文代发中介'],
     };
@@ -869,7 +1053,7 @@ export function generateStageKeywords(facts: any, stage: StageCode) {
 }
 
 export function generateStageDisplayAd(facts: any, stage: StageCode) {
-  facts = factsForCopy(facts);
+  facts = withAdIdentity(factsForCopy(facts));
   const jifClaim = formatJifClaim(facts);
   const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
 
@@ -877,17 +1061,24 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
     return {
       shortHeadline: smartClamp(`Explore ${shortName}`, 30),
       shortHeadlineCharCount: 0,
-      longHeadline: smartClamp(`Discover Pioneering Research in ${facts.journalName} · ${facts.publisher}`, 90),
+      longHeadline: smartClamp(
+        facts.publisher
+          ? `Discover Pioneering Research in ${facts.journalName} · ${facts.publisher}`
+          : `Discover Pioneering Research in ${facts.journalName}`,
+        90
+      ),
       longHeadlineCharCount: 0,
       description: smartClamp(`Browse latest scientific advances and breakthroughs across ${facts.primaryDiscipline}.`, 90),
       descriptionCharCount: 0,
-      businessName: facts.publisher,
+      businessName: facts.publisher || facts.journalName,
       ctaText: 'Explore Journal',
       visualConceptPrompt: `An academic research banner focusing on scientific discovery, high-resolution microscopy or molecular lattice, subtle journal cover, and clean Springer Nature branding. Low text density.`,
       imageAccentColor: '#002d62',
       targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'sciencedirect.com', 'nature.com'],
       bannerHeadlineZh: `探索 ${facts.journalName} 学术成果`,
-      bannerSubtextZh: `由 ${facts.publisher} 出版 · 汇聚全球前沿学术发现与学科突破`,
+      bannerSubtextZh: facts.publisher
+        ? `由 ${facts.publisher} 出版 · 汇聚全球前沿学术发现与学科突破`
+        : `汇聚全球前沿学术发现与学科突破`,
     };
   }
 
@@ -900,7 +1091,7 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
       longHeadlineCharCount: 0,
       description: smartClamp(`Transparent editorial standards, accepted formats, and objective journal metrics comparison.`, 90),
       descriptionCharCount: 0,
-      businessName: facts.publisher,
+      businessName: facts.publisher || facts.journalName,
       ctaText: 'Check Journal Fit',
       visualConceptPrompt: `An objective academic evaluation ad featuring the official journal cover and a professional scholarly palette. Do not draw impact-factor, quartile, or Clarivate badges.`,
       imageAccentColor: '#1e1b4b',
@@ -918,7 +1109,7 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
     longHeadlineCharCount: 0,
     description: smartClamp(`Access manuscript preparation checklists and submit directly via the official Springer Nature portal.`, 90),
     descriptionCharCount: 0,
-    businessName: facts.publisher,
+    businessName: facts.publisher || facts.journalName,
     ctaText: 'View Checklist',
     visualConceptPrompt: `A streamlined author guidance banner showcasing a manuscript submission checklist icon, clear typography, verified portal badge, and Springer Nature integrity crest.`,
     imageAccentColor: '#064e3b',
@@ -933,6 +1124,7 @@ export function generateDeterministicCampaign(
   stage: StageCode,
   outputLanguage: 'all' | 'EN' | 'ZH' = 'all'
 ) {
+  facts = withAdIdentity(facts);
   const stageConfig = STAGE_CONFIGS[stage];
   const headlines = generateStageHeadlines(facts, stage, outputLanguage);
   const descriptions = generateStageDescriptions(facts, stage, outputLanguage);
@@ -971,7 +1163,12 @@ export function generateDeterministicCampaign(
 
   const callouts =
     stage === 'AWA'
-      ? [`Published by ${facts.publisher}`, (facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), 'Global Readership', 'Peer-Reviewed Science']
+      ? [
+          ...(facts.publisher ? [`Published by ${facts.publisher}`] : []),
+          (facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(),
+          'Global Readership',
+          'Peer-Reviewed Science',
+        ]
       : stage === 'CON'
       ? [formatJifClaim(copyFacts) || 'Peer-reviewed journal', copyFacts.casZone ? copyFacts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', copyFacts.firstDecisionDays ? `1st Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
       : ['Author Guidelines Ready', 'Standard Preparation Checklist', copyFacts.firstDecisionDays ? `First Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Official Submission Portal'];
@@ -995,7 +1192,7 @@ export function generateDeterministicCampaign(
       callouts,
       structuredSnippet: {
         header: 'Disciplines',
-        values: [(facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), facts.publisher, 'Peer-Reviewed Research'],
+        values: [(facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), facts.publisher, 'Peer-Reviewed Research'].filter(Boolean),
       },
       recommendedFinalUrl: destinationUrl,
     },
@@ -1017,6 +1214,8 @@ app.post('/api/generate-campaign', async (req, res) => {
       outputLanguage = 'all',
       customPlaybook = '',
       userProvidedFacts = null,
+      issn,
+      eIssn,
     } = req.body;
 
     const normalizedStage = normalizeStage(funnelStage);
@@ -1027,7 +1226,9 @@ app.post('/api/generate-campaign', async (req, res) => {
     if (userProvidedFacts && userProvidedFacts.verificationStatus === 'user_provided') {
       facts = sanitizeUserProvidedFacts(userProvidedFacts);
     } else {
-      facts = await lookupClarivateFacts(landingPageUrl);
+      const requestedIssn = typeof issn === 'string' && issn.trim() ? issn : typeof eIssn === 'string' ? eIssn : undefined;
+      // Catalog issn/eIssn, cached facts, and the PR #3 pageIssn hook are resolved inside lookupClarivateFacts.
+      facts = await lookupClarivateFacts(landingPageUrl, false, requestedIssn);
     }
 
     // Unknown journals have no identity to advertise. Snapshot and trusted records can
@@ -1039,6 +1240,7 @@ app.post('/api/generate-campaign', async (req, res) => {
         facts,
       });
     }
+    facts = withAdIdentity(facts);
 
     let campaignOutput: any = null;
     let generationSource: 'ai_grounded' | 'template_fallback' = 'template_fallback';
@@ -1064,7 +1266,7 @@ ${
 }
 
 JOURNAL:
-- Name: ${facts.journalName} (${facts.publisher})
+- Name: ${facts.journalName}${facts.publisher ? ` (${facts.publisher})` : ''}
 - Discipline: ${facts.primaryDiscipline || 'Not stated'}
 - Open access model: ${facts.openAccessType || 'Not stated'}
 - Indexing: ${facts.indexing?.length ? facts.indexing.join(', ') : 'Not stated'}
@@ -1202,8 +1404,9 @@ GOOGLE ADS REQUIREMENTS:
 // 4. API: Compare All 3 Stages (AWA, CON, DEC) Side-by-Side
 app.post('/api/compare-stages', async (req, res) => {
   try {
-    const { landingPageUrl, outputLanguage = 'all' } = req.body;
-    const facts = await lookupClarivateFacts(landingPageUrl);
+    const { landingPageUrl, outputLanguage = 'all', issn, eIssn } = req.body;
+    const requestedIssn = typeof issn === 'string' && issn.trim() ? issn : typeof eIssn === 'string' ? eIssn : undefined;
+    const facts = withAdIdentity(await lookupClarivateFacts(landingPageUrl, false, requestedIssn));
 
     const awa = generateDeterministicCampaign(facts, 'AWA', outputLanguage);
     const con = generateDeterministicCampaign(facts, 'CON', outputLanguage);

@@ -65,7 +65,11 @@ export default function App() {
       const res = await fetch('/api/fetch-clarivate-facts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim(), forceRefresh }),
+        body: JSON.stringify({
+          url: url.trim(),
+          forceRefresh,
+          issn: clarivateFacts?.issn || clarivateFacts?.eIssn,
+        }),
       });
       const data = await res.json();
       if (data.facts) {
@@ -149,6 +153,7 @@ export default function App() {
           outputLanguage: lang,
           channels: activeChannels,
           customPlaybook: playbook,
+          issn: (manualFacts || clarivateFacts)?.issn || (manualFacts || clarivateFacts)?.eIssn,
           userProvidedFacts: manualFacts || (clarivateFacts?.verificationStatus === 'user_provided' ? clarivateFacts : null),
         }),
       });

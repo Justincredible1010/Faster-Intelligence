@@ -465,6 +465,10 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert(!/clarivate/i.test(guardedText), guardedText);
   assert((guardedAi.metricClaimFlags || []).length > 0);
 
+  assert.strictEqual(nature.issn, '0028-0836');
+  assert.strictEqual(nature.eIssn, '1476-4687');
+  const previousClarivateKey = process.env.CLARIVATE_API_KEY;
+  delete process.env.CLARIVATE_API_KEY;
   const homeFacts = await lookupClarivateFacts('https://www.nature.com/', true);
   assert.strictEqual(homeFacts.journalName, 'Nature');
   assert.strictEqual(homeFacts.url, 'https://www.nature.com');
@@ -478,8 +482,6 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
 
   assert.strictEqual(nature.impactFactor, null);
   assert.strictEqual(nature.fiveYearImpactFactor, null);
-  const previousClarivateKey = process.env.CLARIVATE_API_KEY;
-  delete process.env.CLARIVATE_API_KEY;
   assert.strictEqual(await lookupMetricsByIssn('0028-0836'), null);
   if (previousClarivateKey) process.env.CLARIVATE_API_KEY = previousClarivateKey;
   assert.strictEqual(await pageFacts.extractFromPage('https://www.nature.com'), null);

@@ -85,6 +85,8 @@ export class FirestoreMetricsStore implements MetricsStore {
         updatedAt: record.retrievedAt,
         latestJcrYear: Math.max(previous?.latestJcrYear ?? 0, record.jcrYear),
         lastYearCheckAt: previous?.lastYearCheckAt ?? null,
+        lookupState: null,
+        lookupStateAt: null,
       };
       batch.set(this.mappingRef(key), toFirestore(mapping));
     }
@@ -93,6 +95,27 @@ export class FirestoreMetricsStore implements MetricsStore {
 
   async getLastYearCheck(issn: string): Promise<string | null> {
     return (await this.getIdMapping(issn))?.lastYearCheckAt ?? null;
+  }
+
+  async rememberLookupState(
+    issn: string,
+    state: 'not_found' | 'unavailable',
+    at: string,
+    wosJournalId = ''
+  ): Promise<void> {
+    const normalized = normalizeIssn(issn);
+    if (!normalized) return;
+    const previous = await this.getIdMapping(normalized);
+    const mapping: IssnIdMapping = {
+      issn: normalized,
+      wosJournalId: wosJournalId || previous?.wosJournalId || '',
+      updatedAt: at,
+      latestJcrYear: previous?.latestJcrYear ?? null,
+      lastYearCheckAt: previous?.lastYearCheckAt ?? null,
+      lookupState: state,
+      lookupStateAt: at,
+    };
+    await this.mappingRef(normalized).set(toFirestore(mapping));
   }
 
   async setLastYearCheck(issn: string, isoTimestamp: string): Promise<void> {
@@ -116,6 +139,8 @@ export class FirestoreMetricsStore implements MetricsStore {
         updatedAt: previous?.updatedAt || isoTimestamp,
         latestJcrYear: previous?.latestJcrYear ?? latest?.jcrYear ?? null,
         lastYearCheckAt: isoTimestamp,
+        lookupState: previous?.lookupState ?? null,
+        lookupStateAt: previous?.lookupStateAt ?? null,
       };
       batch.set(this.mappingRef(key), toFirestore(mapping));
     }

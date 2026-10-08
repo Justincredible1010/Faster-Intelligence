@@ -17,13 +17,17 @@ export interface JournalMetricsRecord {
   metrics: ClarivateJournalMetrics;
 }
 
-/** ISSN (print or electronic) to the Clarivate journal id. */
+/** ISSN (print or electronic) to the Clarivate journal id, including a durable miss. */
 export interface IssnIdMapping {
   issn: string;
   wosJournalId: string;
   updatedAt: string;
   latestJcrYear: number | null;
   lastYearCheckAt: string | null;
+  /** Set when the API found no journal, or found one with no JCR year and no JIF. */
+  lookupState?: 'not_found' | 'unavailable' | null;
+  /** When lookupState was recorded. Rechecked on the next UTC day. */
+  lookupStateAt?: string | null;
 }
 
 export interface MetricsStore {
@@ -33,6 +37,16 @@ export interface MetricsStore {
   getIdMapping(issn: string): Promise<IssnIdMapping | null>;
   getLastYearCheck(issn: string): Promise<string | null>;
   setLastYearCheck(issn: string, isoTimestamp: string): Promise<void>;
+  /**
+   * Remember a not-found ISSN or a journal with no JCR year / no JIF.
+   * The next UTC day is allowed to try the API again.
+   */
+  rememberLookupState(
+    issn: string,
+    state: 'not_found' | 'unavailable',
+    at: string,
+    wosJournalId?: string
+  ): Promise<void>;
 }
 
 interface StoreSnapshot {
@@ -94,6 +108,8 @@ export class MemoryMetricsStore implements MetricsStore {
         updatedAt: stored.retrievedAt,
         latestJcrYear: latest,
         lastYearCheckAt: previous?.lastYearCheckAt ?? null,
+        lookupState: null,
+        lookupStateAt: null,
       });
     }
   }
@@ -122,8 +138,30 @@ export class MemoryMetricsStore implements MetricsStore {
         updatedAt: previous?.updatedAt || isoTimestamp,
         latestJcrYear: previous?.latestJcrYear ?? latest?.jcrYear ?? null,
         lastYearCheckAt: isoTimestamp,
+        lookupState: previous?.lookupState ?? null,
+        lookupStateAt: previous?.lookupStateAt ?? null,
       });
     }
+  }
+
+  async rememberLookupState(
+    issn: string,
+    state: 'not_found' | 'unavailable',
+    at: string,
+    wosJournalId = ''
+  ): Promise<void> {
+    const normalized = normalizeIssn(issn);
+    if (!normalized) return;
+    const previous = this.mappings.get(normalized);
+    this.mappings.set(normalized, {
+      issn: normalized,
+      wosJournalId: wosJournalId || previous?.wosJournalId || '',
+      updatedAt: at,
+      latestJcrYear: previous?.latestJcrYear ?? null,
+      lastYearCheckAt: previous?.lastYearCheckAt ?? null,
+      lookupState: state,
+      lookupStateAt: at,
+    });
   }
 
   exportSnapshot(): StoreSnapshot {
@@ -208,6 +246,17 @@ export class FileMetricsStore implements MetricsStore {
   async setLastYearCheck(issn: string, isoTimestamp: string): Promise<void> {
     await this.ready();
     await this.memory.setLastYearCheck(issn, isoTimestamp);
+    this.flush();
+  }
+
+  async rememberLookupState(
+    issn: string,
+    state: 'not_found' | 'unavailable',
+    at: string,
+    wosJournalId?: string
+  ): Promise<void> {
+    await this.ready();
+    await this.memory.rememberLookupState(issn, state, at, wosJournalId);
     this.flush();
   }
 }

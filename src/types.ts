@@ -84,6 +84,12 @@ export interface ClarivateJournalMetrics {
   retrievedAt?: string;
   /** Web of Science journal id, for example NATURE. */
   wosJournalId?: string;
+  /** JCR title from the journal profile. Preferred for display when it is not all caps. */
+  jcrTitle?: string;
+  /** ISO title from the journal profile. Used when jcrTitle is absent. */
+  isoTitle?: string;
+  /** All-caps profile name. Not used for ads when a better title exists. */
+  wosName?: string;
   issn?: string;
   eIssn?: string;
   /** ranks.jif[] from the year report. */

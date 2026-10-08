@@ -30,8 +30,12 @@ export interface WosJournalCitationReportRef {
 
 export interface WosJournalProfile {
   id?: string;
-  /** Present on some responses. The documented profile does not require it. */
+  /** Preferred display title: jcrTitle, then isoTitle, then title, then name. */
   title?: string;
+  jcrTitle?: string;
+  isoTitle?: string;
+  /** All-caps Web of Science name, for example NATURE. */
+  wosName?: string;
   issn?: string;
   eIssn?: string;
   publisher?: string;
@@ -92,6 +96,10 @@ export const clarivateWosJournals: ClarivateWosJournalsClient = {
 /**
  * Facts read from the journal page itself (aims, fees, decision time printed
  * on the site). This build does not scrape pages, so the client returns null.
+ *
+ * PR #3 landing-page scraper hook: implement extractFromPage and set `issn`
+ * or `eIssn` from the page. lookupClarivateFacts passes that value into the
+ * Journals API. You can also call lookupClarivateFacts(url, false, issn, pageIssn).
  */
 export interface PageFactsClient {
   extractFromPage(canonicalUrl: string): Promise<ClarivateJournalMetrics | null>;
@@ -118,16 +126,20 @@ function latestJcrYear(profile: WosJournalProfile): number | null {
   return Math.max(...years);
 }
 
-type LookupOutcome =
+export type LookupOutcome =
   | { kind: 'metrics'; metrics: ClarivateJournalMetrics }
   | { kind: 'not_found' }
+  /** Journal id resolved, but the profile has no JCR year or the year report has no JIF. */
+  | { kind: 'no_metrics'; wosJournalId?: string }
+  /** Transport or auth failure. Not stored, so the next request may try again. */
   | { kind: 'unavailable' };
 
-/** Short negative cache so a missing ISSN is not looked up on every request. */
+/** Short in-process cache. Durable not-found and no-JIF state lives on the metrics store. */
 export const NEGATIVE_CACHE_TTL_MS = 10 * 60 * 1000;
 
 export interface IssnLookup {
   lookup(issn: string, retrievedAt?: Date): Promise<ClarivateJournalMetrics | null>;
+  lookupOutcome(issn: string, retrievedAt?: Date): Promise<LookupOutcome>;
   reset(): void;
 }
 
@@ -138,24 +150,20 @@ export function createIssnLookup(
   const negativeTtlMs = options?.negativeTtlMs ?? NEGATIVE_CACHE_TTL_MS;
   const now = options?.now ?? (() => Date.now());
   const negativeUntil = new Map<string, number>();
-  const inflight = new Map<string, Promise<ClarivateJournalMetrics | null>>();
+  const inflight = new Map<string, Promise<LookupOutcome>>();
 
-  const lookup = (issn: string, retrievedAt: Date = new Date()): Promise<ClarivateJournalMetrics | null> => {
+  const lookup = (issn: string, retrievedAt: Date = new Date()): Promise<LookupOutcome> => {
     const cleaned = normalizeIssn(issn);
-    if (!cleaned) return Promise.resolve(null);
+    if (!cleaned) return Promise.resolve({ kind: 'unavailable' });
     const until = negativeUntil.get(cleaned);
-    if (until != null && until > now()) return Promise.resolve(null);
+    if (until != null && until > now()) return Promise.resolve({ kind: 'not_found' });
     const existing = inflight.get(cleaned);
     if (existing) return existing;
 
     const promise = (async () => {
       const outcome = await lookupOnce(cleaned, client, retrievedAt);
-      if (outcome.kind === 'not_found') {
-        negativeUntil.set(cleaned, now() + negativeTtlMs);
-        return null;
-      }
-      if (outcome.kind === 'unavailable') return null;
-      return outcome.metrics;
+      if (outcome.kind === 'not_found') negativeUntil.set(cleaned, now() + negativeTtlMs);
+      return outcome;
     })().finally(() => {
       inflight.delete(cleaned);
     });
@@ -164,7 +172,11 @@ export function createIssnLookup(
   };
 
   return {
-    lookup,
+    async lookup(issn: string, retrievedAt?: Date): Promise<ClarivateJournalMetrics | null> {
+      const outcome = await lookup(issn, retrievedAt);
+      return outcome.kind === 'metrics' ? outcome.metrics : null;
+    },
+    lookupOutcome: lookup,
     reset() {
       negativeUntil.clear();
       inflight.clear();
@@ -205,12 +217,12 @@ async function lookupOnce(
   if (!profile) return { kind: 'unavailable' };
 
   const jcrYear = latestJcrYear(profile);
-  if (jcrYear == null) return { kind: 'unavailable' };
+  if (jcrYear == null) return { kind: 'no_metrics', wosJournalId: profile.id || journalId };
 
   const report = await client.getYearReport(journalId, jcrYear);
   const impact = report?.metrics?.impactMetrics;
   const impactFactor = parseJif(impact?.jif);
-  if (impactFactor == null || !report) return { kind: 'unavailable' };
+  if (!report || impactFactor == null) return { kind: 'no_metrics', wosJournalId: profile.id || journalId };
 
   const retrieved = retrievedAt.toISOString();
   const ranks = Array.isArray(report.ranks?.jif) ? report.ranks.jif : [];
@@ -221,9 +233,12 @@ async function lookupOnce(
   return {
     kind: 'metrics',
     metrics: {
-      journalName: profile.title?.trim() || journalId,
+      journalName: profile.jcrTitle?.trim() || profile.isoTitle?.trim() || profile.title?.trim() || profile.wosName?.trim() || journalId,
+      jcrTitle: profile.jcrTitle,
+      isoTitle: profile.isoTitle,
+      wosName: profile.wosName,
       wosJournalId: journalId,
-      publisher: profile.publisher || 'Unknown publisher',
+      publisher: profile.publisher?.trim() || '',
       issn: printIssn,
       eIssn: electronicIssn,
       impactFactor,
@@ -255,14 +270,22 @@ async function lookupOnce(
  * Does not fill in a hardcoded impact factor.
  * The default client dedupes concurrent lookups and briefly remembers not-found ISSNs.
  */
+export async function lookupJournalByIssn(
+  issn: string,
+  client: ClarivateWosJournalsClient = clarivateWosJournals,
+  retrievedAt: Date = new Date()
+): Promise<LookupOutcome> {
+  if (client === clarivateWosJournals) {
+    return defaultIssnLookup.lookupOutcome(issn, retrievedAt);
+  }
+  return lookupOnce(issn, client, retrievedAt);
+}
+
 export async function lookupMetricsByIssn(
   issn: string,
   client: ClarivateWosJournalsClient = clarivateWosJournals,
   retrievedAt: Date = new Date()
 ): Promise<ClarivateJournalMetrics | null> {
-  if (client === clarivateWosJournals) {
-    return defaultIssnLookup.lookup(issn, retrievedAt);
-  }
-  const outcome = await lookupOnce(issn, client, retrievedAt);
+  const outcome = await lookupJournalByIssn(issn, client, retrievedAt);
   return outcome.kind === 'metrics' ? outcome.metrics : null;
 }

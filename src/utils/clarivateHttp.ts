@@ -9,6 +9,8 @@ import {
 /** Stay under the shared ~5 requests/second budget. */
 export const CLARIVATE_MIN_INTERVAL_MS = 500;
 export const CLARIVATE_MAX_ATTEMPTS = 4;
+/** A Retry-After longer than this is not waited out. The request gives up. */
+export const CLARIVATE_MAX_RETRY_AFTER_MS = 30_000;
 const BACKOFF_BASE_MS = 400;
 const BACKOFF_CAP_MS = 30_000;
 
@@ -140,10 +142,16 @@ export function parseWosJournalProfile(body: unknown, fallbackId?: string): WosJ
   if (!isRecord(body)) return null;
   const categories = parseCategories(body.categories);
   const reports = Array.isArray(body.journalCitationReports) ? body.journalCitationReports : [];
-  const title = namedText(body.jcrTitle) || namedText(body.isoTitle) || namedText(body.title) || namedText(body.name);
+  const jcrTitle = namedText(body.jcrTitle);
+  const isoTitle = namedText(body.isoTitle);
+  const wosName = namedText(body.name);
+  const title = jcrTitle || isoTitle || namedText(body.title) || wosName;
   return {
     id: typeof body.id === 'string' && body.id.trim() ? body.id : fallbackId,
     title,
+    jcrTitle,
+    isoTitle,
+    wosName,
     issn: typeof body.issn === 'string' ? body.issn : undefined,
     eIssn: typeof body.eIssn === 'string' ? body.eIssn : undefined,
     publisher: namedText(body.publisher),
@@ -216,6 +224,12 @@ async function requestJson(
     }
 
     const headerWait = retryAfterMs(response.headers.get('retry-after'), deps.now());
+    if (headerWait != null && headerWait > CLARIVATE_MAX_RETRY_AFTER_MS) {
+      deps.log(
+        `[Clarivate] Retry-After of ${Math.round(headerWait / 1000)}s for ${pathForLog(url)} exceeds 30s. Giving up.`
+      );
+      return null;
+    }
     const wait = headerWait != null ? headerWait : Math.min(BACKOFF_CAP_MS, delay + deps.random() * delay * 0.25);
     await deps.sleep(wait);
     delay = Math.min(BACKOFF_CAP_MS, delay * 2);

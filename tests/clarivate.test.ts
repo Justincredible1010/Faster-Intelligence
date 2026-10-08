@@ -149,6 +149,20 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   await Promise.all([0, 1, 2].map(() => limiter.schedule(async () => gaps.push(clock2))));
   assert.deepStrictEqual(gaps, [0, 500, 1000]);
 
+  let longWait = 0;
+  const gaveUp = createClarivateWosJournalsClient({
+    apiKey: secret,
+    minIntervalMs: 0,
+    random: () => 0,
+    now: () => 0,
+    sleep: async (ms) => {
+      longWait += ms;
+    },
+    fetchImpl: async () => jsonResponse(429, {}, { 'retry-after': '120' }),
+  });
+  assert.strictEqual(await gaveUp.searchByIssn('0028-0836'), null);
+  assert.strictEqual(longWait, 0);
+
   let searches = 0;
   const sharedClient = {
     async searchByIssn() {
@@ -202,7 +216,7 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
     guardMetricClaims,
     sanitizeUserProvidedFacts,
   } = await import('../src/utils/metricClaims.ts');
-  const { generateDeterministicCampaign } = await import('../server.ts');
+  const { clarivateAdminRefreshEnabled, displayJournalName, generateDeterministicCampaign, mergeClarivateOverLanding, resolveJournalIssn } = await import('../server.ts');
   const { generateGoogleAdsEditorCsv } = await import('../src/utils/csvExporter.ts');
   const nature = JOURNAL_CATALOG.find((entry) => entry.journalName === 'Nature');
   assert(nature);
@@ -226,6 +240,10 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   assert.strictEqual(guardMetricClaims('Version 2.0', nature).text, 'Version 2.0');
   assert.strictEqual(guardMetricClaims('7 days a week', nature).text, '7 days a week');
   assert.strictEqual(guardMetricClaims('If 3 authors', nature).text, 'If 3 authors');
+  const otherMetrics = guardMetricClaims('CiteScore 12.3 and h-index 300', nature);
+  assert(!otherMetrics.text.includes('12.3'));
+  assert(!otherMetrics.text.includes('300'));
+  assert(otherMetrics.flags.some((flag) => flag.includes('CiteScore')));
 
   const trustedUser = sanitizeUserProvidedFacts({
     ...nature,
@@ -298,6 +316,64 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
     keywords: campaign.keywords,
   });
   assert(csv.includes('JIF 56.1 (Clarivate JCR 2025)'));
+
+  const merged = mergeClarivateOverLanding(nature, {
+    journalName: 'NATURE',
+    wosName: 'NATURE',
+    publisher: '',
+    impactFactor: 56.1,
+    verificationStatus: 'clarivate_api',
+    provenanceSource: 'clarivate_wos_journals_api',
+    isVerifiedClarivate: true,
+    jcrYear: 2025,
+    issn: '0028-0836',
+    primaryDiscipline: '',
+    indexing: [],
+    sourceAttribution: 'JIF 56.1 (Clarivate JCR 2025)',
+  });
+  assert.strictEqual(merged.journalName, 'Nature');
+  assert.strictEqual(merged.publisher, 'Nature Portfolio');
+  assert.strictEqual(merged.impactFactor, 56.1);
+  assert.strictEqual(merged.primaryDiscipline, nature.primaryDiscipline);
+  assert.strictEqual(merged.aimsAndScopeSummary, nature.aimsAndScopeSummary);
+
+  const titled = mergeClarivateOverLanding(
+    { ...nature, journalName: 'Landing Title' },
+    {
+      journalName: 'NATURE',
+      wosName: 'NATURE',
+      jcrTitle: 'Nature',
+      isoTitle: 'Nat.',
+      publisher: 'NATURE PORTFOLIO',
+      impactFactor: 56.1,
+      verificationStatus: 'clarivate_api',
+      provenanceSource: 'clarivate_wos_journals_api',
+      isVerifiedClarivate: true,
+      jcrYear: 2025,
+      sourceAttribution: 'JIF 56.1 (Clarivate JCR 2025)',
+    }
+  );
+  assert.strictEqual(titled.journalName, 'Nature');
+  assert.strictEqual(titled.publisher, 'Nature Portfolio');
+  assert.strictEqual(displayJournalName({ isoTitle: 'Nature', journalName: 'NATURE' }, 'Landing Title'), 'Nature');
+
+  const shouty = generateDeterministicCampaign(
+    { ...nature, journalName: 'NATURE', publisher: 'Unknown publisher' },
+    'CON',
+    'EN'
+  );
+  const shoutyText = JSON.stringify(shouty);
+  assert(!shoutyText.includes('Evaluate NATURE'));
+  assert(!shoutyText.includes('Unknown publisher'));
+  assert(shoutyText.includes('Evaluate Nature'));
+
+  assert.strictEqual(resolveJournalIssn({ requested: '00280836', catalog: { issn: '1476-4687' } }), '0028-0836');
+  assert.strictEqual(resolveJournalIssn({ cached: { issn: '1234-5678' }, catalog: nature }), '1234-5678');
+  assert.strictEqual(resolveJournalIssn({ pageIssn: '14764687', catalog: nature }), '1476-4687');
+  assert.strictEqual(resolveJournalIssn({ catalog: nature }), '0028-0836');
+  assert.strictEqual(clarivateAdminRefreshEnabled({}), false);
+  assert.strictEqual(clarivateAdminRefreshEnabled({ CLARIVATE_ADMIN_REFRESH_ENABLED: 'true' }), true);
+  assert.strictEqual(clarivateAdminRefreshEnabled({ CLARIVATE_ADMIN_REFRESH_ENABLED: '1' }), false);
 }
 
 {
@@ -362,6 +438,46 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   });
   assert.strictEqual(oldCalls, 3);
 
+  const missNow = new Date('2026-10-08T00:00:00.000Z');
+  const missStore = new MemoryMetricsStore();
+  let missCalls = 0;
+  const notFound = async () => {
+    missCalls += 1;
+    return { kind: 'not_found' as const };
+  };
+  await loadJournalMetrics('1234-5678', { now: missNow, store: missStore, resolve: notFound });
+  await loadJournalMetrics('1234-5678', { now: missNow, store: missStore, resolve: notFound });
+  assert.strictEqual(missCalls, 1);
+  assert.strictEqual((await missStore.getIdMapping('1234-5678'))?.lookupState, 'not_found');
+  await loadJournalMetrics('1234-5678', {
+    now: new Date('2026-10-09T00:00:00.000Z'),
+    store: missStore,
+    resolve: notFound,
+  });
+  assert.strictEqual(missCalls, 2);
+
+  const bareStore = new MemoryMetricsStore();
+  let bareCalls = 0;
+  const noJif = async () => {
+    bareCalls += 1;
+    return { kind: 'no_metrics' as const, wosJournalId: 'NOJIF' };
+  };
+  await loadJournalMetrics('0000-0000', { now: missNow, store: bareStore, resolve: noJif });
+  await loadJournalMetrics('0000-0000', { now: missNow, store: bareStore, resolve: noJif });
+  assert.strictEqual(bareCalls, 1);
+  assert.strictEqual((await bareStore.getIdMapping('0000-0000'))?.lookupState, 'unavailable');
+  assert.strictEqual((await bareStore.getIdMapping('0000-0000'))?.wosJournalId, 'NOJIF');
+
+  let blipCalls = 0;
+  const blip = async () => {
+    blipCalls += 1;
+    return { kind: 'unavailable' as const };
+  };
+  await loadJournalMetrics('1111-1111', { now: missNow, store: bareStore, resolve: blip });
+  await loadJournalMetrics('1111-1111', { now: missNow, store: bareStore, resolve: blip });
+  assert.strictEqual(blipCalls, 2);
+  assert.strictEqual(await bareStore.getIdMapping('1111-1111'), null);
+
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clarivate-store-'));
   const fileStore = new FileMetricsStore(path.join(dir, 'clarivate-metrics.json'));
   await loadJournalMetrics('0028-0836', { now, store: fileStore, lookup });
@@ -419,6 +535,8 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   assert(serverSource.includes("facts.provenanceSource !== 'clarivate_wos_journals_api'"));
   assert(serverSource.includes('/api/admin/clarivate-metrics/refresh'));
   assert(serverSource.includes('requireAdmin'));
+  assert(serverSource.includes('CLARIVATE_ADMIN_REFRESH_ENABLED'));
+  assert(serverSource.includes('pageIssn'));
   assert(!/console\.\w+\([^)]*apiKey/.test(httpSource));
   assert(!httpSource.includes('${apiKey}'));
   assert(!httpSource.includes('${secret}'));
