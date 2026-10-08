@@ -38,6 +38,7 @@ import { pickEditableJournalFacts } from '../utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from '../utils/journalUrl';
 import { metricFieldIsTrusted } from '../utils/metricClaims';
 import { editedStageUrlToApply, suggestStageUrl } from '../utils/stageUrlSuggestion';
+import type { StageUrlRules } from '../utils/stageUrlRules';
 import { formatUsageCount } from '../utils/usageCounts';
 
 function metricSourceLabel(source: string | undefined, field?: string, year?: number): string {
@@ -75,6 +76,7 @@ interface Props {
   hasCustomPlaybook?: boolean;
   isLoading: boolean;
   isFetchingFacts: boolean;
+  stageUrlRules?: StageUrlRules | null;
 }
 
 const JOURNAL_TAGS: Record<string, string> = {
@@ -126,6 +128,7 @@ export const InputStudio: React.FC<Props> = ({
   hasCustomPlaybook,
   isLoading,
   isFetchingFacts,
+  stageUrlRules,
 }) => {
   const [isEditingMetrics, setIsEditingMetrics] = useState(false);
   const [showAdvancedMetrics, setShowAdvancedMetrics] = useState(false);
@@ -188,7 +191,7 @@ export const InputStudio: React.FC<Props> = ({
 
   const currentStageNormalized = normalizeStage(funnelStage);
   const stages: StageCode[] = ['AWA', 'CON', 'DEC'];
-  const stageUrlSuggestion = suggestStageUrl(landingPageUrl, currentStageNormalized, clarivateFacts);
+  const stageUrlSuggestion = suggestStageUrl(landingPageUrl, currentStageNormalized, clarivateFacts, stageUrlRules);
   const suggestedStageUrl = stageUrlSuggestion?.url || '';
 
   useEffect(() => {
@@ -197,7 +200,7 @@ export const InputStudio: React.FC<Props> = ({
   }, [suggestedStageUrl]);
 
   const applyStageUrl = () => {
-    if (!stageUrlSuggestion) return;
+    if (!stageUrlSuggestion?.url) return;
     const decision = editedStageUrlToApply(stageUrlDraft, landingPageUrl, stageUrlSuggestion.url);
     if (!decision.url) {
       setStageUrlWarning(decision.warning);
@@ -811,23 +814,27 @@ export const InputStudio: React.FC<Props> = ({
           >
             <div className="flex-1 space-y-2 min-w-0">
               <p className="text-xs text-amber-950 leading-relaxed">{stageUrlSuggestion.reason}</p>
-              <label htmlFor="stage-url-draft" className="block text-[10px] font-semibold uppercase tracking-wide text-amber-800">
-                Suggested URL
-              </label>
-              <input
-                id="stage-url-draft"
-                type="text"
-                value={stageUrlDraft}
-                spellCheck={false}
-                onChange={(event) => {
-                  setStageUrlDraft(event.target.value);
-                  setStageUrlWarning(null);
-                }}
-                className="w-full text-[11px] font-mono text-amber-950 bg-white border border-amber-300 rounded-lg px-2 py-1.5"
-              />
-              <p className="text-[11px] text-amber-800">
-                Change the path or slug if you want a different page. Using it loads the URL you entered.
-              </p>
+              {stageUrlSuggestion.url && (
+                <>
+                  <label htmlFor="stage-url-draft" className="block text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+                    Suggested URL
+                  </label>
+                  <input
+                    id="stage-url-draft"
+                    type="text"
+                    value={stageUrlDraft}
+                    spellCheck={false}
+                    onChange={(event) => {
+                      setStageUrlDraft(event.target.value);
+                      setStageUrlWarning(null);
+                    }}
+                    className="w-full text-[11px] font-mono text-amber-950 bg-white border border-amber-300 rounded-lg px-2 py-1.5"
+                  />
+                  <p className="text-[11px] text-amber-800">
+                    Change the path or slug if you want a different page. Using it loads the URL you entered.
+                  </p>
+                </>
+              )}
               {!isMissingMetrics && (
                 <p className="text-[11px] text-amber-800">You can still generate with the current URL.</p>
               )}
@@ -837,13 +844,15 @@ export const InputStudio: React.FC<Props> = ({
                 </p>
               )}
             </div>
-            <button
-              type="button"
-              onClick={applyStageUrl}
-              className="shrink-0 px-3 py-2 bg-white border border-amber-300 text-amber-950 text-xs font-bold rounded-lg hover:bg-amber-100 transition"
-            >
-              Use this URL
-            </button>
+            {stageUrlSuggestion.url && (
+              <button
+                type="button"
+                onClick={applyStageUrl}
+                className="shrink-0 px-3 py-2 bg-white border border-amber-300 text-amber-950 text-xs font-bold rounded-lg hover:bg-amber-100 transition"
+              >
+                Use this URL
+              </button>
+            )}
           </div>
         )}
 

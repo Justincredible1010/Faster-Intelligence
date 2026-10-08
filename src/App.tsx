@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from './auth/AuthGate';
 import { Navbar } from './components/Navbar';
+import { StageUrlRulesModal } from './components/StageUrlRulesModal';
 import { InputStudio } from './components/InputStudio';
 import { ChannelSuite } from './components/ChannelSuite';
 import { FrameworkModal } from './components/FrameworkModal';
@@ -25,10 +27,12 @@ import { apiFetch } from './auth/api';
 import { pickEditableJournalFacts } from './utils/editableJournalFacts';
 import { journalUrlsMatch, NATURE_HOMEPAGE_URL, normalizeJournalUrl } from './utils/journalUrl';
 import { formatJifClaim, trustedApcUsd, trustedCasZone, trustedQuartile } from './utils/metricClaims';
+import { DEFAULT_STAGE_URL_RULES, type StageUrlRules } from './utils/stageUrlRules';
 
 const DEFAULT_LANDING_URL = NATURE_HOMEPAGE_URL;
 
 export default function App() {
+  const { admin } = useAuth();
   const [landingPageUrl, setLandingPageUrl] = useState<string>(DEFAULT_LANDING_URL);
   const [selectedChannels, setSelectedChannels] = useState<{ search: boolean; display: boolean }>({
     search: true,
@@ -49,13 +53,31 @@ export default function App() {
   const [customPlaybook, setCustomPlaybook] = useState<string>(PRESET_SKILLS.default);
   const [hasManualEdits, setHasManualEdits] = useState<boolean>(false);
   const [pendingStageChange, setPendingStageChange] = useState<StageCode | null>(null);
+  const [stageUrlRules, setStageUrlRules] = useState<StageUrlRules | null>(null);
+  const [stageUrlRulesSaved, setStageUrlRulesSaved] = useState(false);
+  const [isStageUrlRulesOpen, setIsStageUrlRulesOpen] = useState(false);
 
   // Request race-condition safeguard
   const latestRequestIdRef = useRef<number>(0);
   const activeAbortControllerRef = useRef<AbortController | null>(null);
 
+  const loadStageUrlRules = async () => {
+    try {
+      const res = await apiFetch('/api/stage-url-rules');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.rules) {
+        setStageUrlRules(data.rules);
+        setStageUrlRulesSaved(Boolean(data.saved));
+      }
+    } catch {
+      // The suggestion falls back to the source defaults when the rules cannot be loaded.
+    }
+  };
+
   // Initial load
   useEffect(() => {
+    loadStageUrlRules();
     fetchClarivateFacts(landingPageUrl);
     handleGenerateCampaign(landingPageUrl, funnelStage, selectedChannels, outputLanguage, customPlaybook);
   }, []);
@@ -76,6 +98,7 @@ export default function App() {
       const data = await res.json();
       if (data.facts) {
         setClarivateFacts(data.facts);
+        await loadStageUrlRules();
         if (campaign) {
           setCampaign((prev) => (prev ? { ...prev, clarivateFacts: data.facts } : null));
         }
@@ -395,6 +418,7 @@ ${chinaChannelsExportSection(campaign)}
         hasCampaign={!!campaign}
         hasCustomPlaybook={!!customPlaybook}
         hasPolicyWarnings={hasPolicyWarnings}
+        onOpenStageUrlRules={admin ? () => setIsStageUrlRulesOpen(true) : undefined}
       />
 
       {/* Main Content */}
@@ -469,6 +493,7 @@ ${chinaChannelsExportSection(campaign)}
             hasCustomPlaybook={!!customPlaybook}
             isLoading={isLoading}
             isFetchingFacts={isFetchingFacts}
+            stageUrlRules={stageUrlRules}
           />
         </section>
 
@@ -576,6 +601,19 @@ ${chinaChannelsExportSection(campaign)}
         initialFacts={clarivateFacts}
         onSaveFacts={handleSaveManualJournal}
       />
+
+      {admin && (
+        <StageUrlRulesModal
+          isOpen={isStageUrlRulesOpen}
+          rules={stageUrlRules ?? DEFAULT_STAGE_URL_RULES}
+          saved={stageUrlRulesSaved}
+          onClose={() => setIsStageUrlRulesOpen(false)}
+          onSaved={(rules, rulesSaved) => {
+            setStageUrlRules(rules);
+            setStageUrlRulesSaved(rulesSaved);
+          }}
+        />
+      )}
 
       {/* Google Ads Policy Compliance Modal */}
       <ValidationReportModal

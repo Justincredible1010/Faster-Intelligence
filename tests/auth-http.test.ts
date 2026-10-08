@@ -415,6 +415,75 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(list.status, 200);
   });
 
+  it('lets an admin save stage URL rules and keeps them for the next lookup', async () => {
+    const anon = await api('/api/stage-url-rules');
+    assert.equal(anon.status, 401);
+
+    const jar: Jar = new Map();
+    const user = await devLogin(jar);
+    const defaults = await api('/api/stage-url-rules', { jar });
+    assert.equal(defaults.status, 200);
+    const defaultsBody = await defaults.json();
+    assert.equal(defaultsBody.saved, false);
+    assert.deepEqual(defaultsBody.rules.AWA, ['journal-home']);
+    assert.equal(defaultsBody.rules.DEC[0], 'author-guidelines');
+
+    const denied = await api('/api/admin/stage-url-rules', {
+      jar,
+      csrf: user.csrfToken,
+      method: 'PUT',
+      body: {
+        rules: {
+          AWA: ['article-types'],
+          CON: ['aims-and-scope'],
+          DEC: ['submission-portal'],
+        },
+      },
+    });
+    assert.equal(denied.status, 403);
+
+    applyEnv({ NODE_ENV: 'development', AUTH_DEV_BYPASS: 'true', AUTH_ADMIN_EMAILS: 'dev.user@springernature.com' });
+    const invented = await api('/api/admin/stage-url-rules', {
+      jar,
+      csrf: user.csrfToken,
+      method: 'PUT',
+      body: { rules: { AWA: ['https://www.nature.com/ncomms/invented'], CON: [], DEC: [] } },
+    });
+    assert.equal(invented.status, 400);
+
+    const saved = await api('/api/admin/stage-url-rules', {
+      jar,
+      csrf: user.csrfToken,
+      method: 'PUT',
+      body: {
+        rules: {
+          AWA: ['article-types', 'journal-home'],
+          CON: ['aims-and-scope'],
+          DEC: ['submission-portal', 'author-guidelines'],
+        },
+      },
+    });
+    assert.equal(saved.status, 200);
+    const again = await api('/api/stage-url-rules', { jar });
+    const againBody = await again.json();
+    assert.equal(againBody.saved, true);
+    assert.deepEqual(againBody.rules.DEC, ['submission-portal', 'author-guidelines']);
+    assert.deepEqual(againBody.rules.AWA, ['article-types', 'journal-home']);
+
+    const reset = await api('/api/admin/stage-url-rules', {
+      jar,
+      csrf: user.csrfToken,
+      method: 'PUT',
+      body: { reset: true },
+    });
+    assert.equal(reset.status, 200);
+    const afterReset = await api('/api/stage-url-rules', { jar });
+    const afterBody = await afterReset.json();
+    assert.equal(afterBody.saved, false);
+    assert.deepEqual(afterBody.rules.AWA, ['journal-home']);
+    assert.equal(afterBody.rules.DEC[0], 'author-guidelines');
+  });
+
   it('restricts cache clear and refresh to the admin allowlist', async () => {
     const jar: Jar = new Map();
     const user = await devLogin(jar);

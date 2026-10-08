@@ -18,7 +18,9 @@ import { clarivateWosJournals as clarivateHttpClient } from './src/utils/clariva
 import { factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection } from './src/utils/metricClaims';
 import { withChinaChannels } from './src/china/withChinaChannels';
 import type { ClarivateJournalMetrics, ExtractedPageFacts, PageSourcedFeature } from './src/types';
+import { getMetricsStore } from './src/utils/metricsStore';
 import { loadJournalMetrics } from './src/utils/metricsRefresh';
+import { DEFAULT_STAGE_URL_RULES, parseStageUrlRules } from './src/utils/stageUrlRules';
 import { normalizeIssn } from './src/utils/issn';
 import { formatUsageCount } from './src/utils/usageCounts';
 import {
@@ -960,6 +962,42 @@ app.post('/api/admin/clarivate-metrics/refresh', apiGuard, requireAdmin, async (
   } catch (err: any) {
     console.error('Clarivate refresh failed:', err instanceof Error ? err.message : err);
     res.status(500).json({ error: 'Failed to refresh Clarivate metrics' });
+  }
+});
+
+app.get('/api/stage-url-rules', async (_req, res) => {
+  try {
+    const savedRules = await (await getMetricsStore()).getStageUrlRules();
+    res.json({
+      rules: savedRules ?? DEFAULT_STAGE_URL_RULES,
+      saved: savedRules != null,
+    });
+  } catch (err) {
+    console.error('Stage URL rules lookup failed:', err instanceof Error ? err.message : err);
+    res.status(500).json({ error: 'Failed to load stage URL rules' });
+  }
+});
+
+app.put('/api/admin/stage-url-rules', requireAdmin, async (req, res) => {
+  try {
+    const store = await getMetricsStore();
+    if (req.body?.reset === true) {
+      await store.clearStageUrlRules();
+      res.json({ rules: DEFAULT_STAGE_URL_RULES, saved: false });
+      return;
+    }
+    const rules = parseStageUrlRules(req.body?.rules);
+    if (!rules) {
+      res.status(400).json({
+        error: 'Each funnel stage needs an ordered list of page roles or path patterns. A full URL is not a pattern.',
+      });
+      return;
+    }
+    await store.putStageUrlRules(rules);
+    res.json({ rules, saved: true });
+  } catch (err) {
+    console.error('Stage URL rules save failed:', err instanceof Error ? err.message : err);
+    res.status(500).json({ error: 'Failed to save stage URL rules' });
   }
 });
 

@@ -2,14 +2,22 @@ import { JOURNAL_CATALOG } from '../data/journalCatalog';
 import type { StageCode } from '../types';
 import { journalUrlFetchBlockReason } from './journalHosts';
 import { journalUrlsMatch, normalizeJournalUrl, type NormalizedJournalUrl } from './journalUrl';
+import {
+  DEFAULT_STAGE_URL_RULES,
+  isStageUrlRole,
+  parseStageUrlRules,
+  stageUrlPatternLabel,
+  type StageUrlRules,
+} from './stageUrlRules';
 
 /**
  * A better on-journal URL for the selected funnel stage.
  * Every suggestion is a link the page contained, or the journal landing URL.
  * Nothing here invents a path such as /about or /submission-guidelines.
+ * `url` is null when the journal is known but no real link matches the saved patterns.
  */
 export interface StageUrlSuggestion {
-  url: string;
+  url: string | null;
   reason: string;
 }
 
@@ -111,12 +119,7 @@ function isJournalHome(norm: NormalizedJournalUrl): boolean {
   return norm.segments.length === 2 && norm.segments[0] === 'journal' && /^\d+$/.test(norm.segments[1]);
 }
 
-function stageAccepts(url: string, stage: StageCode): boolean {
-  const kind = pageKind(url);
-  if (stage === 'DEC') return kind === 'decision';
-  if (stage === 'CON') return kind === 'consideration' || kind === 'article';
-  return kind === 'home';
-}
+const GUIDELINE_SLUGS = new Set(['submit', 'submission', 'submission-guidelines', 'for-authors', 'author-guidelines']);
 
 function valueOf(field: FactValue | null | undefined): string {
   return clean(field?.value);
@@ -281,33 +284,122 @@ function sentence(phrase: string): string {
   return phrase.charAt(0).toUpperCase() + phrase.slice(1);
 }
 
-function firstAccepted(stage: StageCode, current: string, urls: string[]): string {
+interface LinkBag {
+  landing: string;
+  about: string;
+  articles: string;
+  aims: string;
+  fees: string;
+  metrics: string;
+  checklist: string;
+  guidelines: string;
+  portal: string;
+  links: string[];
+}
+
+function uniqueUrls(urls: string[]): string[] {
+  const seen: string[] = [];
   for (const url of urls) {
-    if (!url || samePage(url, current)) continue;
-    if (stageAccepts(url, stage)) return url;
+    if (!url || seen.some((item) => samePage(item, url))) continue;
+    seen.push(url);
   }
-  return '';
+  return seen;
+}
+
+function slugOf(url: string): string {
+  return (normalizeJournalUrl(url).segments.at(-1) || '').toLowerCase();
+}
+
+function pathMatches(url: string, pattern: string): boolean {
+  const norm = normalizeJournalUrl(url);
+  const needle = pattern.toLowerCase();
+  const path = norm.pathname.replace(/^\//, '').toLowerCase();
+  const slug = slugOf(url);
+  if (!needle || (!path && !slug)) return false;
+  return slug === needle || path === needle || path.endsWith(`/${needle}`);
+}
+
+/** A role or path pattern matches this real URL. It does not build a new path. */
+function patternMatches(pattern: string, url: string, bag: LinkBag): boolean {
+  if (!url) return false;
+  if (!isStageUrlRole(pattern)) return pathMatches(url, pattern);
+  const slug = slugOf(url);
+  switch (pattern) {
+    case 'journal-home':
+      return Boolean(bag.landing && samePage(url, bag.landing)) || (pageKind(url) === 'home' && onThisJournal(url, bag.landing || url));
+    case 'about':
+      return Boolean(bag.about && samePage(url, bag.about)) || slug === 'about';
+    case 'aims-and-scope':
+      return Boolean(bag.aims && samePage(url, bag.aims)) || slug === 'aims' || slug === 'aims-and-scope';
+    case 'article-types':
+      return Boolean(bag.articles && samePage(url, bag.articles)) || slug === 'article-types' || ARTICLE_SLUGS.has(slug);
+    case 'publishing-options':
+      return Boolean(bag.fees && samePage(url, bag.fees)) || slug === 'open-access';
+    case 'journal-metrics':
+      return Boolean(bag.metrics && samePage(url, bag.metrics)) || slug === 'metrics' || slug === 'journal-metrics';
+    case 'author-guidelines':
+      return Boolean(bag.guidelines && samePage(url, bag.guidelines)) || GUIDELINE_SLUGS.has(slug);
+    case 'submission-checklist':
+      return Boolean(bag.checklist && samePage(url, bag.checklist)) || slug === 'checklist' || slug === 'submission-checklist';
+    case 'submission-portal':
+      return Boolean(bag.portal && samePage(url, bag.portal)) || isPortalHost(normalizeJournalUrl(url).host);
+    default:
+      return false;
+  }
+}
+
+function urlsForPattern(pattern: string, bag: LinkBag): string[] {
+  const preferred: string[] = [];
+  if (isStageUrlRole(pattern)) {
+    if (pattern === 'journal-home') preferred.push(bag.landing);
+    if (pattern === 'about') preferred.push(bag.about);
+    if (pattern === 'aims-and-scope') preferred.push(bag.aims);
+    if (pattern === 'article-types') preferred.push(bag.articles);
+    if (pattern === 'publishing-options') preferred.push(bag.fees);
+    if (pattern === 'journal-metrics') preferred.push(bag.metrics);
+    if (pattern === 'author-guidelines') preferred.push(bag.guidelines);
+    if (pattern === 'submission-checklist') preferred.push(bag.checklist);
+    if (pattern === 'submission-portal') preferred.push(bag.portal);
+  }
+  return uniqueUrls([...preferred, ...bag.links.filter((url) => patternMatches(pattern, url, bag))]);
+}
+
+function activeRules(rules: StageUrlRules | null | undefined): StageUrlRules {
+  if (!rules) return DEFAULT_STAGE_URL_RULES;
+  return parseStageUrlRules(rules) ?? DEFAULT_STAGE_URL_RULES;
+}
+
+function noMatchReason(stage: StageCode, patterns: string[]): string {
+  const stageName = stage === 'AWA' ? 'Awareness' : stage === 'CON' ? 'Consideration' : 'Decision';
+  if (patterns.length === 0) {
+    return `No preferred page patterns are saved for ${stageName}. Nothing was guessed.`;
+  }
+  const list = patterns.map((pattern) => stageUrlPatternLabel(pattern)).join(', ');
+  return `No page already on this journal matches the preferred ${stageName} patterns (${list}). Nothing was guessed.`;
 }
 
 /**
  * Suggest a URL on the same journal that fits the audience better.
- * Returns null when the pasted URL already fits, or when no real link or
- * journal landing URL is a better fit. Generation is never blocked.
+ * Returns null when the journal is unknown, or when the pasted URL already
+ * matches one of the stage's patterns. When the journal is known and nothing
+ * real matches, returns a reason and a null URL. Generation is never blocked.
+ * Saved rules override the source defaults. Passing nothing uses the defaults.
  */
 export function suggestStageUrl(
   currentUrl: string,
   stage: StageCode,
-  facts: StageUrlFacts | null | undefined
+  facts: StageUrlFacts | null | undefined,
+  rules?: StageUrlRules | null
 ): StageUrlSuggestion | null {
   if (!facts) return null;
   const current = clean(currentUrl);
   if (!current || !factsMatchUrl(current, facts)) return null;
-  if (stageAccepts(current, stage)) return null;
 
   const page = facts.extractedFacts;
   const landing = journalLandingUrl(facts, current);
   const keep = (url: string) => (url && onThisJournal(url, landing) ? url : '');
-  const crossHost = (url: string) => (url && portalBelongsToJournal(facts, landing) && isPortalHost(normalizeJournalUrl(url).host) ? url : '');
+  const crossHost = (url: string) =>
+    url && portalBelongsToJournal(facts, landing) && isPortalHost(normalizeJournalUrl(url).host) ? url : '';
   const about = keep(valueOf(page?.aboutUrl));
   const articles = keep(valueOf(page?.articlesUrl));
   const aims = keep(valueOf(page?.aimsUrl));
@@ -318,22 +410,33 @@ export function suggestStageUrl(
   const portalRaw = clean(facts.submissionPortalUrl) || valueOf(page?.submissionPortalUrl);
   const guidelines = keep(guidelinesRaw) || crossHost(guidelinesRaw);
   const portal = keep(portalRaw) || crossHost(portalRaw);
+  const ownUrl = keep(clean(facts.url));
+  const canonical = keep(valueOf(page?.canonicalUrl));
+  const bag: LinkBag = {
+    landing,
+    about,
+    articles,
+    aims,
+    fees,
+    metrics,
+    checklist,
+    guidelines,
+    portal,
+    links: uniqueUrls([landing, about, articles, aims, fees, metrics, checklist, guidelines, portal, canonical, ownUrl]),
+  };
 
-  const allowed = new Set(
-    [landing, about, articles, aims, fees, metrics, checklist, guidelines, portal, valueOf(page?.canonicalUrl), clean(facts.url)].filter(
-      Boolean
-    )
-  );
+  const patterns = activeRules(rules)[stage];
+  if (patterns.some((pattern) => patternMatches(pattern, current, bag))) return null;
 
-  const target =
-    stage === 'AWA'
-      ? firstAccepted(stage, current, [landing, about, articles])
-      : stage === 'CON'
-        ? firstAccepted(stage, current, [aims, articles, fees, metrics])
-        : firstAccepted(stage, current, [guidelines, checklist, portal]);
-
-  if (!target || !allowed.has(target) || samePage(target, current)) return null;
-  return { url: target, reason: reasonFor(stage, target, current, facts) };
+  for (const pattern of patterns) {
+    for (const url of urlsForPattern(pattern, bag)) {
+      if (!url || samePage(url, current)) continue;
+      if (!bag.links.some((link) => samePage(link, url))) continue;
+      return { url, reason: reasonFor(stage, url, current, facts) };
+    }
+  }
+  if (!landing) return null;
+  return { url: null, reason: noMatchReason(stage, patterns) };
 }
 
 export interface EditedStageUrl {

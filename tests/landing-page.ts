@@ -20,6 +20,7 @@ import {
 import { app, generateDeterministicCampaign, lookupClarivateFacts, type JournalLookupOptions } from '../server';
 import { factsForCopy, guardMetricClaims, metricPromptSection } from '../src/utils/metricClaims';
 import { editedStageUrlToApply, suggestStageUrl } from '../src/utils/stageUrlSuggestion';
+import { DEFAULT_STAGE_URL_RULES, parseStageUrlRules } from '../src/utils/stageUrlRules';
 import { parseUsageCount } from '../src/utils/usageCounts';
 import { normalizeJournalUrl } from '../src/utils/journalUrl';
 
@@ -664,7 +665,7 @@ export async function runLandingPageTests() {
       ncommsPage.checklistUrl.value,
       'https://www.nature.com/ncomms',
     ].map((url) => normalizeJournalUrl(url).canonical).filter(Boolean);
-    const expectRealUrl = (url: string | undefined) => {
+    const expectRealUrl = (url: string | null | undefined) => {
       assert.ok(url, 'expected a suggestion');
       assert.ok(stageUrls.includes(url), url);
       assert.doesNotMatch(url, guessedPath);
@@ -749,12 +750,13 @@ export async function runLandingPageTests() {
     assert.equal(catalogOnly?.url, 'https://www.nature.com/ncomms');
     assert.match(catalogOnly?.reason || '', /submission guidelines/);
     assert.doesNotMatch(catalogOnly?.url || '', guessedPath);
-    assert.equal(
-      suggestStageUrl('https://www.nature.com/ncomms/submission-guidelines', 'CON', {
-        url: 'https://www.nature.com/ncomms/submission-guidelines',
-      }),
-      null
-    );
+    const considerationCatalogOnly = suggestStageUrl('https://www.nature.com/ncomms/submission-guidelines', 'CON', {
+      url: 'https://www.nature.com/ncomms/submission-guidelines',
+    });
+    assert.equal(considerationCatalogOnly?.url, null);
+    assert.match(considerationCatalogOnly?.reason || '', /Nothing was guessed/);
+    assert.doesNotMatch(considerationCatalogOnly?.reason || '', /https?:\/\//);
+    assert.doesNotMatch(JSON.stringify(considerationCatalogOnly), /\/aims|\/article-types|\/open-access/);
     assert.equal(
       suggestStageUrl('https://www.nature.com/ncomms/submission-guidelines', 'DEC', {
         url: 'https://www.nature.com/ncomms/submission-guidelines',
@@ -781,6 +783,37 @@ export async function runLandingPageTests() {
       },
     };
     assert.equal(suggestStageUrl('https://www.nature.com/ncomms', 'CON', withAims)?.url, 'https://www.nature.com/ncomms/aims');
+
+    const portalFirst = {
+      ...DEFAULT_STAGE_URL_RULES,
+      DEC: ['submission-portal', 'author-guidelines'],
+    };
+    const decisionPortalFirst = suggestStageUrl('https://www.nature.com/ncomms', 'DEC', ncommsStageFacts, portalFirst);
+    assert.equal(decisionPortalFirst?.url, 'https://mts-ncomms.nature.com');
+    assert.match(decisionPortalFirst?.reason || '', /submission portal/);
+    assert.doesNotMatch(decisionPortalFirst?.reason || '', /author guidelines/);
+    assert.equal(suggestStageUrl('https://www.nature.com/ncomms/submit', 'DEC', ncommsStageFacts, portalFirst), null);
+    const awarenessArticlesFirst = suggestStageUrl(
+      'https://www.nature.com/ncomms/submission-guidelines',
+      'AWA',
+      ncommsStageFacts,
+      { ...DEFAULT_STAGE_URL_RULES, AWA: ['article-types', 'journal-home'] }
+    );
+    assert.equal(awarenessArticlesFirst?.url, 'https://www.nature.com/ncomms/research-articles');
+    assert.doesNotMatch(awarenessArticlesFirst?.url || '', guessedPath);
+    const unmatchedPattern = suggestStageUrl('https://www.nature.com/ncomms', 'AWA', ncommsStageFacts, {
+      ...DEFAULT_STAGE_URL_RULES,
+      AWA: ['not-on-this-page'],
+    });
+    assert.equal(unmatchedPattern?.url, null);
+    assert.match(unmatchedPattern?.reason || '', /Nothing was guessed/);
+    assert.doesNotMatch(JSON.stringify(unmatchedPattern), /not-on-this-page\//);
+    assert.equal(parseStageUrlRules({ AWA: ['https://www.nature.com/ncomms/about'], CON: [], DEC: [] }), null);
+    assert.equal(parseStageUrlRules({ AWA: ['../secret'], CON: [], DEC: [] }), null);
+    assert.deepEqual(
+      parseStageUrlRules({ AWA: ['Journal-home', '/research-articles/'], CON: [], DEC: ['submission-portal'] }),
+      { AWA: ['journal-home', 'research-articles'], CON: [], DEC: ['submission-portal'] }
+    );
     assert.doesNotMatch(awarenessGuidelines?.reason || '', /impact factor|18\.1|14\.7/i);
     assert.doesNotMatch(decisionHome?.reason || '', /impact factor|18\.1|14\.7/i);
 
