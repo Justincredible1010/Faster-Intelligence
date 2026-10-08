@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from './auth/AuthGate';
 import { Navbar } from './components/Navbar';
+import { StageUrlRulesModal } from './components/StageUrlRulesModal';
 import { InputStudio } from './components/InputStudio';
 import { ChannelSuite } from './components/ChannelSuite';
 import { FrameworkModal } from './components/FrameworkModal';
@@ -19,11 +21,13 @@ import {
 } from './types';
 import { runComplianceAudit, autoFixComplianceIssues } from './utils/complianceValidator';
 import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
+import { chinaChannelsExportSection } from './china/exportText';
 import { AlertCircle, AlertTriangle } from 'lucide-react';
 import { apiFetch } from './auth/api';
 import { pickEditableJournalFacts } from './utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from './utils/journalUrl';
-import { trustedApcUsd, trustedCasZone, trustedImpactFactor, trustedQuartile } from './utils/metricClaims';
+import { formatJifClaim, trustedApcUsd, trustedCasZone, trustedQuartile } from './utils/metricClaims';
+import { DEFAULT_STAGE_URL_RULES, type StageUrlRules } from './utils/stageUrlRules';
 
 interface GeneratedFor {
   url: string;
@@ -34,6 +38,7 @@ interface GeneratedFor {
 }
 
 export default function App() {
+  const { admin } = useAuth();
   const [landingPageUrl, setLandingPageUrl] = useState<string>('');
   const [selectedChannels, setSelectedChannels] = useState<{ search: boolean; display: boolean }>({
     search: true,
@@ -55,12 +60,33 @@ export default function App() {
   const [hasManualEdits, setHasManualEdits] = useState<boolean>(false);
   const [confirmReplaceEdits, setConfirmReplaceEdits] = useState(false);
   const [generatedFor, setGeneratedFor] = useState<GeneratedFor | null>(null);
+  const [stageUrlRules, setStageUrlRules] = useState<StageUrlRules | null>(null);
+  const [stageUrlRulesSaved, setStageUrlRulesSaved] = useState(false);
+  const [isStageUrlRulesOpen, setIsStageUrlRulesOpen] = useState(false);
 
   // Request race-condition safeguard
   const latestRequestIdRef = useRef<number>(0);
   const activeAbortControllerRef = useRef<AbortController | null>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
   const shouldScrollRef = useRef(false);
+
+  const loadStageUrlRules = async () => {
+    try {
+      const res = await apiFetch('/api/stage-url-rules');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.rules) {
+        setStageUrlRules(data.rules);
+        setStageUrlRulesSaved(Boolean(data.saved));
+      }
+    } catch {
+      // The suggestion falls back to the source defaults when the rules cannot be loaded.
+    }
+  };
+
+  useEffect(() => {
+    loadStageUrlRules();
+  }, []);
 
   useEffect(() => {
     if (!shouldScrollRef.current) return;
@@ -76,11 +102,16 @@ export default function App() {
     try {
       const res = await apiFetch('/api/fetch-clarivate-facts', {
         method: 'POST',
-        body: JSON.stringify({ url: url.trim(), forceRefresh }),
+        body: JSON.stringify({
+          url: url.trim(),
+          forceRefresh,
+          issn: clarivateFacts?.issn || clarivateFacts?.eIssn,
+        }),
       });
       const data = await res.json();
       if (data.facts) {
         setClarivateFacts(data.facts);
+        await loadStageUrlRules();
         setCampaign((prev) => {
           if (!prev?.clarivateFacts) return prev;
           const samePage = journalUrlsMatch(
@@ -133,8 +164,13 @@ export default function App() {
     if (channels.search) activeChannels.push('search');
     if (channels.display) activeChannels.push('display');
 
-    const browserFacts = manualFacts
-      ?? (clarivateFacts?.verificationStatus === 'user_provided' ? clarivateFacts : null);
+    const savedFacts = manualFacts || clarivateFacts;
+    const savedFactsMatchUrl = Boolean(
+      savedFacts?.url && journalUrlsMatch(normalizeJournalUrl(savedFacts.url), normalizeJournalUrl(url))
+    );
+    const browserFacts = savedFacts?.verificationStatus === 'user_provided' && savedFactsMatchUrl
+      ? savedFacts
+      : null;
 
     try {
       const res = await apiFetch('/api/generate-campaign', {
@@ -146,6 +182,7 @@ export default function App() {
           outputLanguage: lang,
           channels: activeChannels,
           customPlaybook: playbook,
+          issn: (manualFacts || clarivateFacts)?.issn || (manualFacts || clarivateFacts)?.eIssn,
           userProvidedFacts: browserFacts ? pickEditableJournalFacts(browserFacts) : null,
         }),
       });
@@ -290,7 +327,7 @@ export default function App() {
 **Author Stage:** ${cfg.name}
 **Author Mindset:** ${cfg.authorMindset}
 **Campaign Objective:** ${cfg.campaignObjective}
-**Impact factor:** ${trustedImpactFactor(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
+**Impact factor:** ${formatJifClaim(campaign.clarivateFacts) ?? 'omitted'}
 **Quartile:** ${trustedQuartile(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **CAS zone:** ${trustedCasZone(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **APC (USD):** ${trustedApcUsd(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
@@ -351,6 +388,10 @@ ${campaign.keywords.chineseAuthorKeywords
 
 ### Negative Keywords (Academic Integrity Firewall):
 ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
+
+---
+
+${chinaChannelsExportSection(campaign)}
 `;
 
     const blob = new Blob([markdownBrief], { type: 'text/markdown;charset=utf-8' });
@@ -405,6 +446,7 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
         hasCampaign={!!campaign}
         hasCustomPlaybook={playbookIsCustom}
         hasPolicyWarnings={hasPolicyWarnings}
+        onOpenStageUrlRules={admin ? () => setIsStageUrlRulesOpen(true) : undefined}
       />
 
       {/* Main Content */}
@@ -476,6 +518,7 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
             hasCustomPlaybook={playbookIsCustom}
             isLoading={isLoading}
             isFetchingFacts={isFetchingFacts}
+            stageUrlRules={stageUrlRules}
           />
         </section>
 
@@ -483,7 +526,7 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
           <div>
             <h2 className="text-sm font-bold text-slate-900">Campaign preview</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Search ads, display ads, and the keyword list show up here.
+              Search ads, display ads, Weibo, WeChat, and the keyword list show up here.
             </p>
           </div>
 
@@ -601,6 +644,19 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
         initialFacts={clarivateFacts}
         onSaveFacts={handleSaveManualJournal}
       />
+
+      {admin && (
+        <StageUrlRulesModal
+          isOpen={isStageUrlRulesOpen}
+          rules={stageUrlRules ?? DEFAULT_STAGE_URL_RULES}
+          saved={stageUrlRulesSaved}
+          onClose={() => setIsStageUrlRulesOpen(false)}
+          onSaved={(rules, rulesSaved) => {
+            setStageUrlRules(rules);
+            setStageUrlRulesSaved(rulesSaved);
+          }}
+        />
+      )}
 
       {/* Google Ads Policy Compliance Modal */}
       <ValidationReportModal

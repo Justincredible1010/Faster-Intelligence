@@ -1,0 +1,24 @@
+{
+  "id": "NATURE",
+  "name": "NATURE",
+  "jcrTitle": "Nature",
+  "isoTitle": "Nature",
+  "issn": "0028-0836",
+  "eIssn": "1476-4687",
+  "publisher": {
+    "name": "NATURE PORTFOLIO",
+    "address": "publisher address",
+    "countryRegion": "country"
+  },
+  "categories": [
+    {
+      "name": "MULTIDISCIPLINARY SCIENCES",
+      "edition": "SCIE",
+      "url": "https://example.invalid/category"
+    }
+  ],
+  "journalCitationReports": [
+    { "year": 2024 },
+    { "year": "2025" }
+  ]
+}

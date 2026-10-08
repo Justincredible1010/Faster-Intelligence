@@ -29,17 +29,65 @@ export interface ExtractedFactField<T> {
   provenanceLabel?: string;
 }
 
+/** A concrete feature the journal page or the metrics record states. Not an impact factor or a ranking. */
+export interface PageSourcedFeature {
+  kind:
+    | 'aims_and_audience'
+    | 'article_types'
+    | 'publishing_model'
+    | 'speed'
+    | 'submission'
+    | 'usage_date'
+    | 'download_date'
+    | 'data_retrieved'
+    | 'retrieval_date';
+  label: string;
+  text: string;
+  /** page-sourced when the journal site stated it. clarivate_wos_journals_api when the Journals API stated it. */
+  provenance: 'page-sourced' | 'clarivate_wos_journals_api';
+}
+
+/** A number or labelled figure taken from the journal page itself, not from Clarivate or a model guess. */
+export interface PageSourcedMetric {
+  label: string;
+  value: string;
+  numericValue?: number | null;
+  year?: number | null;
+  kind: 'impact_factor' | 'five_year_impact_factor' | 'first_decision_days' | 'downloads' | 'full_text_views' | 'apc' | 'other';
+  provenance: 'page-sourced';
+}
+
 export interface ExtractedPageFacts {
+  journalTitle: ExtractedFactField<string | null>;
+  issnPrint: ExtractedFactField<string | null>;
+  issnElectronic: ExtractedFactField<string | null>;
+  canonicalUrl: ExtractedFactField<string | null>;
+  publisherName: ExtractedFactField<string | null>;
   submissionPortalUrl: ExtractedFactField<string | null>;
   authorGuidelinesUrl: ExtractedFactField<string | null>;
+  /** Real links found on the page. Empty when the page does not contain that link. */
+  aboutUrl: ExtractedFactField<string | null>;
+  articlesUrl: ExtractedFactField<string | null>;
+  editorsUrl: ExtractedFactField<string | null>;
+  collectionsUrl: ExtractedFactField<string | null>;
+  aimsUrl: ExtractedFactField<string | null>;
+  metricsUrl: ExtractedFactField<string | null>;
+  checklistUrl: ExtractedFactField<string | null>;
   aimsAndScopeSummary: ExtractedFactField<string | null>;
   articleProcessingChargeUsd: ExtractedFactField<number | null>;
+  /** Link to an APC explainer when the page mentions fees but does not state an amount. */
+  apcInfoUrl: ExtractedFactField<string | null>;
   firstDecisionDays: ExtractedFactField<number | null>;
   acceptedArticleTypes: ExtractedFactField<string[]>;
   editorInChief: ExtractedFactField<string | null>;
   peerReviewModel: ExtractedFactField<string | null>;
   openAccessPolicy: ExtractedFactField<string | null>;
   specialIssuesAvailable: ExtractedFactField<boolean>;
+  /** Metrics the page itself states. Each item is labelled page-sourced. */
+  pageMetrics: PageSourcedMetric[];
+  /** Features the visible page or its real links state. Each item is page-sourced. */
+  pageFeatures: PageSourcedFeature[];
+  layout: 'nature_portfolio' | 'springer_link' | 'unknown';
   rawConfidenceAverage: number;
   extractedDate: string;
 }
@@ -49,6 +97,7 @@ export interface WosJifRank {
   /** Category rank as returned by the API, for example "1/140". */
   rank?: string;
   quartile?: string;
+  /** The Journals API returns this as a number, for example 99.6. A string is also accepted. */
   jifPercentile?: string | number;
 }
 
@@ -64,6 +113,10 @@ export interface ClarivateJournalMetrics {
   indexing?: string[]; // e.g. ["SCIE", "PubMed Central", "Scopus", "DOAJ"]
   openAccessType?: 'Gold Open Access' | 'Hybrid Open Access' | string | null;
   apcUsd?: number | null;
+  /** Article downloads stated by the journal page. Not a date, and not Clarivate retrievedAt. */
+  articleDownloads?: number | null;
+  /** Full-text views or a similar usage count stated by the journal page. */
+  fullTextViews?: number | null;
   chinaWaiverAvailable?: boolean;
   aimsAndScopeSummary?: string;
   primaryDiscipline?: string;
@@ -83,6 +136,12 @@ export interface ClarivateJournalMetrics {
   retrievedAt?: string;
   /** Web of Science journal id, for example NATURE. */
   wosJournalId?: string;
+  /** JCR title from the journal profile. Preferred for display when it is not all caps. */
+  jcrTitle?: string;
+  /** ISO title from the journal profile. Used when jcrTitle is absent. */
+  isoTitle?: string;
+  /** All-caps profile name. Not used for ads when a better title exists. */
+  wosName?: string;
   issn?: string;
   eIssn?: string;
   /** ranks.jif[] from the year report. */
@@ -97,6 +156,8 @@ export interface ClarivateJournalMetrics {
   cacheExpiresAt?: string;
   submissionPortalUrl?: string | null;
   authorGuidelinesUrl?: string | null;
+  /** Page-sourced features for Google, Weibo, and WeChat copy. Empty when the page did not state them. */
+  pageFeatures?: PageSourcedFeature[];
   extractedFacts?: ExtractedPageFacts;
   provenanceMap?: Record<string, { source: string; confidence: number; year?: number; note?: string }>;
 }
@@ -214,7 +275,16 @@ export interface AcademicKeywordsPack {
 export interface ComplianceIssue {
   id: string;
   type: 'error' | 'warning';
-  category: 'trademark' | 'superlative' | 'misleading_claim' | 'funding_claim' | 'char_limit' | 'missing_fact' | 'stale_fact' | 'source_mismatch';
+  category:
+    | 'trademark'
+    | 'superlative'
+    | 'misleading_claim'
+    | 'funding_claim'
+    | 'char_limit'
+    | 'missing_fact'
+    | 'stale_fact'
+    | 'source_mismatch'
+    | 'china_ad_law';
   message: string;
   targetText: string;
   suggestedFix?: string;
@@ -254,12 +324,55 @@ export interface AssetGenerationContext {
   aiModel?: 'gemini' | null;
 }
 
+export interface WeiboEnglishOption {
+  hook: string;
+  body: string;
+  hashtags: string[];
+  /** Same resolved landing URL as the Chinese post. */
+  link: string;
+}
+
+/** Organic Weibo post. Hook + body stay within Weibo's practical length. */
+export interface WeiboPost {
+  hook: string;
+  body: string;
+  practicalLength: number;
+  practicalLimit: number;
+  hashtags: string[];
+  link: string;
+  /** Present only when the campaign language is bilingual. */
+  englishOption?: WeiboEnglishOption;
+  factNotes: string[];
+}
+
+export interface WeChatAdFields {
+  headline: string;
+  description: string;
+  cta: string;
+}
+
+/** Paid WeChat ad (Moments and Official Account). Not an organic post. */
+export interface WeChatAd extends WeChatAdFields {
+  headlineLimit: number;
+  descriptionLimit: number;
+  ctaLimit: number;
+  landingUrl: string;
+  placements: Array<'moments' | 'official_account'>;
+  /** Present only when the campaign language is bilingual. */
+  englishOption?: WeChatAdFields;
+  factNotes: string[];
+}
+
 export interface GeneratedAdCampaign {
   funnelStage: StageCode;
   legacyStage?: 'TOFU' | 'MOFU' | 'BOFU';
   clarivateFacts: ClarivateJournalMetrics;
   searchAds?: GoogleSearchAds;
   displayAds?: GoogleDisplayAd;
+  /** Organic Weibo post for this journal and stage. */
+  weiboPost?: WeiboPost;
+  /** Paid WeChat Moments / Official Account ad for this journal and stage. */
+  wechatAd?: WeChatAd;
   keywords: AcademicKeywordsPack;
   funnelStrategyNote: string;
   primaryCta: string;
@@ -301,8 +414,8 @@ export const STAGE_CONFIGS: Record<StageCode, StageStrategyDefinition> = {
     exampleCtas: ['Explore the journal', 'Browse articles', 'Discover the scope', 'Explore latest research'],
     recommendedDestination: {
       label: 'Journal Overview & Latest Articles',
-      pathSuffix: '/about',
-      purpose: 'Overview, research scope, and article highlights for first-time visitors.',
+      pathSuffix: '',
+      purpose: 'The journal landing page, or an about/articles link extracted from that page.',
     },
   },
   CON: {
@@ -330,8 +443,8 @@ export const STAGE_CONFIGS: Record<StageCode, StageStrategyDefinition> = {
     exampleCtas: ['Check journal fit', 'Review aims and scope', 'Compare publishing options', 'View indexing & metrics'],
     recommendedDestination: {
       label: 'Aims, Scope & Publishing Criteria',
-      pathSuffix: '/aims-and-scope',
-      purpose: 'Detailed scope, accepted formats, fees, and editorial standards.',
+      pathSuffix: '',
+      purpose: 'The journal landing page, or an aims link extracted from that page.',
     },
   },
   DEC: {
@@ -358,8 +471,8 @@ export const STAGE_CONFIGS: Record<StageCode, StageStrategyDefinition> = {
     exampleCtas: ['View submission checklist', 'Read author guidelines', 'Start submission', 'Prepare your manuscript'],
     recommendedDestination: {
       label: 'Author Guidelines & Submission Portal',
-      pathSuffix: '/submission-guidelines',
-      purpose: 'Manuscript preparation instructions, checklist, and direct submission link.',
+      pathSuffix: '',
+      purpose: 'An extracted author-guidelines or submission link, otherwise the journal landing page.',
     },
   },
 };

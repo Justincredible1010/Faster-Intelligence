@@ -12,7 +12,8 @@ import { loadMetricsCacheFromDisk } from '../src/utils/metricsCache';
 import { runComplianceAudit, autoFixComplianceIssues } from '../src/utils/complianceValidator';
 import { generateGoogleAdsEditorCsv, deriveDisplayUrl } from '../src/utils/csvExporter';
 import { GeneratedAdCampaign, ClarivateJournalMetrics } from '../src/types';
-import { factSourceCopy, factSourceKind, metricCaption } from '../src/utils/factSourceLabel';
+import { factSourceCopy, factSourceKind, impactPanel, metricCaption, otherFactCaption } from '../src/utils/factSourceLabel';
+import { runLandingPageTests } from './landing-page';
 
 console.log('--- RUNNING ADENGINE UNIT TEST SUITE ---');
 
@@ -194,8 +195,9 @@ console.log('\n[Test Suite 4] Google Ads Editor CSV Schema...');
   assert.strictEqual(lines[0], expectedHeader, 'CSV header must include the 12 editor columns plus Fact Provenance, Confidence, and Quality Notes');
   assert.strictEqual(lines[0].split(',').length, 15, 'CSV header must have 15 columns');
 
-  // user_provided rows cite the number without calling it a Clarivate result
-  assert(lines[1].includes('IF 6.9 (user_provided)'), 'Fact Provenance should cite the impact factor and verification status');
+  // A hand-entered impact factor stays out of the export.
+  assert(lines[1].includes('Impact factor omitted'), 'Fact Provenance should omit an impact factor that did not come from the Journals API');
+  assert(!lines[1].includes('6.9'), 'A user-provided impact factor must not be exported');
   assert(!lines[1].includes('Clarivate'), 'A user-provided impact factor must not be labeled Clarivate');
   assert(lines[1].includes('"0.85"'), 'user_provided confidence should be 0.85');
   assert(lines[1].includes('User-provided metrics; verify before scale'), 'Quality Notes should describe user-provided metrics');
@@ -305,7 +307,6 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   const { JOURNAL_CATALOG, CATALOG_DATA_YEAR } = await import('../src/data/journalCatalog.ts');
   const {
     NATURE_HOMEPAGE_URL,
-    joinJournalUrl,
     journalUrlsMatch,
     normalizeJournalUrl,
   } = await import('../src/utils/journalUrl.ts');
@@ -327,23 +328,29 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert.strictEqual(homepage.cacheKey, 'host:nature.com');
   assert.strictEqual(apex.cacheKey, homepage.cacheKey);
   assert.strictEqual(journalUrlsMatch(homepage, apex), true);
-  assert.strictEqual(staleSlug.cacheKey, 'nature');
+  assert.strictEqual(staleSlug.cacheKey, 'host:nature.com/nature');
   assert.notStrictEqual(staleSlug.cacheKey, homepage.cacheKey);
   assert.strictEqual(journalUrlsMatch(homepage, staleSlug), false);
+  assert.notStrictEqual(
+    normalizeJournalUrl('https://www.nature.com/aps/about').cacheKey,
+    normalizeJournalUrl('https://www.nature.com/cr/about').cacheKey
+  );
+  assert.strictEqual(normalizeJournalUrl('https://www.nature.com/aps/about').cacheKey, 'host:nature.com/aps/about');
+  assert.strictEqual(normalizeJournalUrl('https://www.nature.com/cr/about').cacheKey, 'host:nature.com/cr/about');
   assert.strictEqual(
     normalizeJournalUrl('https://example.com/host:nature.com').cacheKey,
-    'path:host:nature.com'
+    'host:example.com/host:nature.com'
   );
-  assert.strictEqual(joinJournalUrl('https://www.nature.com/', '/about'), 'https://www.nature.com/about');
-  assert.strictEqual(joinJournalUrl('https://www.nature.com/nature', '/about'), 'https://www.nature.com/nature/about');
-
   const nature = JOURNAL_CATALOG.find((entry) => entry.journalName === 'Nature');
   assert(nature, 'Catalog should include Nature');
   assert.strictEqual(nature.url, 'https://www.nature.com');
+  assert.strictEqual(nature.issn, '0028-0836');
+  assert.strictEqual(nature.eIssn, '1476-4687');
   assert.strictEqual(journalUrlsMatch(normalizeJournalUrl(nature.url), staleSlug), false);
   const cacheKeys = JOURNAL_CATALOG.map((entry) => normalizeJournalUrl(entry.url).cacheKey);
   assert.strictEqual(new Set(cacheKeys).size, cacheKeys.length, 'Catalog cache keys must not collide');
   for (const entry of JOURNAL_CATALOG) {
+    assert(entry.issn || entry.eIssn, `${entry.journalName} needs issn or eIssn`);
     assert.strictEqual(entry.verificationStatus, 'catalog_snapshot');
     assert.strictEqual(entry.isVerifiedClarivate, false);
     assert.strictEqual(entry.catalogDataYear, CATALOG_DATA_YEAR);
@@ -396,8 +403,10 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
     apcUsd: null,
     sourceAttribution: 'Manually supplied by user',
   };
+  assert.strictEqual(factsForCopy(trusted).impactFactor, null);
+  assert(!metricPromptSection(trusted).includes('6.9'));
   const kept = guardMetricClaims('IF 6.9 and First Decision in 23 Days. Q1. Clarivate IF 50.5.', trusted);
-  assert(kept.text.includes('IF 6.9'));
+  assert(!kept.text.includes('6.9'));
   assert(kept.text.includes('23 Days'));
   assert(kept.text.includes('Q1'));
   assert(!kept.text.includes('50.5'));
@@ -415,7 +424,13 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
     snapshotCampaign.displayAds?.bannerSubtextZh,
     snapshotCampaign.recommendedDestination.url,
   ].join('\n');
-  assert.strictEqual(snapshotCampaign.recommendedDestination.url, 'https://www.nature.com/aims-and-scope');
+  assert.strictEqual(snapshotCampaign.recommendedDestination.url, 'https://www.nature.com');
+  assert.deepStrictEqual(snapshotCampaign.searchAds?.sitelinks || [], []);
+  for (const stage of ['AWA', 'DEC'] as const) {
+    const campaign = generateDeterministicCampaign(nature, stage, 'EN');
+    assert.strictEqual(campaign.recommendedDestination.url, 'https://www.nature.com');
+    assert.deepStrictEqual(campaign.searchAds?.sitelinks || [], [], stage);
+  }
   assert(!snapshotLines.includes('/nature/'));
   assert(!snapshotLines.includes('50.5'));
   assert(!snapshotLines.includes('32'));
@@ -427,7 +442,7 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
 
   const trustedCampaign = generateDeterministicCampaign(trusted, 'CON', 'EN');
   const trustedCopy = JSON.stringify(trustedCampaign.searchAds);
-  assert(trustedCopy.includes('6.9'));
+  assert(!trustedCopy.includes('6.9'));
   assert(trustedCopy.includes('23'));
   assert(!/clarivate/i.test(trustedCopy));
 
@@ -466,20 +481,51 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert(!/clarivate/i.test(guardedText), guardedText);
   assert((guardedAi.metricClaimFlags || []).length > 0);
 
-  const homeFacts = await lookupClarivateFacts('https://www.nature.com/', true);
+  assert.strictEqual(nature.issn, '0028-0836');
+  assert.strictEqual(nature.eIssn, '1476-4687');
+  const previousClarivateKey = process.env.CLARIVATE_API_KEY;
+  delete process.env.CLARIVATE_API_KEY;
+  const homeHtml = fs.readFileSync(new URL('./fixtures/landing-pages/nature-portfolio-nature.html', import.meta.url), 'utf8');
+  const homeFacts = await lookupClarivateFacts('https://www.nature.com/', true, {
+    persist: false,
+    cache: new Map(),
+    fetchPage: async () => homeHtml,
+  });
   assert.strictEqual(homeFacts.journalName, 'Nature');
   assert.strictEqual(homeFacts.url, 'https://www.nature.com');
-  assert.strictEqual(homeFacts.verificationStatus, 'catalog_snapshot');
+  assert.strictEqual(homeFacts.isVerifiedClarivate, false);
+  assert.notStrictEqual(homeFacts.provenanceSource, 'clarivate_wos_journals_api');
+  if (homeFacts.provenanceMap?.impactFactor?.source === 'page_sourced') {
+    assert.strictEqual(homeFacts.verificationStatus, 'page_sourced');
+  } else {
+    assert.strictEqual(homeFacts.verificationStatus, 'catalog_snapshot');
+    assert.strictEqual(homeFacts.impactFactor, null);
+  }
   assert.strictEqual(normalizeJournalUrl(homeFacts.url).cacheKey, 'host:nature.com');
 
-  const slugFacts = await lookupClarivateFacts('https://www.nature.com/nature', true);
-  assert.strictEqual(slugFacts.verificationStatus, 'missing');
-  assert.strictEqual(slugFacts.impactFactor, null);
-  assert.notStrictEqual(slugFacts.journalName, 'Nature');
+  const slugFacts = await lookupClarivateFacts('https://www.nature.com/nature', true, {
+    persist: false,
+    cache: new Map(),
+    fetchPage: async () => '<html><head><title>Unrelated page</title></head><body>No journal metrics.</body></html>',
+  });
+  assert.strictEqual(slugFacts.url, 'https://www.nature.com/nature');
+  assert.notStrictEqual(slugFacts.verificationStatus, 'catalog_snapshot');
+  assert.strictEqual(slugFacts.isVerifiedClarivate, false);
+  assert.notStrictEqual(normalizeJournalUrl(slugFacts.url).cacheKey, normalizeJournalUrl(NATURE_HOMEPAGE_URL).cacheKey);
 
   assert.strictEqual(nature.impactFactor, null);
   assert.strictEqual(nature.fiveYearImpactFactor, null);
   assert.strictEqual(await lookupMetricsByIssn('0028-0836'), null);
+  if (previousClarivateKey) process.env.CLARIVATE_API_KEY = previousClarivateKey;
+  assert.strictEqual(await pageFacts.extractFromPage('https://www.nature.com'), null);
+  const { setPageFactsClientForTests } = await import('../src/utils/metricSources.ts');
+  setPageFactsClientForTests({
+    async extractFromPage() {
+      return { journalName: 'From page', publisher: 'Nature Portfolio', impactFactor: null, verificationStatus: 'page_sourced', sourceAttribution: 'page' };
+    },
+  });
+  assert.strictEqual((await pageFacts.extractFromPage('https://www.nature.com'))?.journalName, 'From page');
+  setPageFactsClientForTests(null);
   assert.strictEqual(await pageFacts.extractFromPage('https://www.nature.com'), null);
 
   const retrievedAt = new Date('2026-10-08T00:00:00.000Z');
@@ -524,15 +570,56 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert.strictEqual(fromApi.isVerifiedClarivate, true);
   assert.strictEqual(fromApi.jcrYear, 2025);
   assert.strictEqual(fromApi.retrievedAt, retrievedAt.toISOString());
+  assert.strictEqual(fromApi.articleDownloads ?? null, null);
+  assert.strictEqual(fromApi.fullTextViews ?? null, null);
+  assert.strictEqual('downloadDate' in fromApi, false);
+  assert.strictEqual(fromApi.pageFeatures?.find((feature) => feature.kind === 'retrieval_date')?.text, '2026-10-08');
+  assert.strictEqual(fromApi.pageFeatures?.find((feature) => feature.kind === 'retrieval_date')?.provenance, 'clarivate_wos_journals_api');
+  assert.equal(fromApi.pageFeatures?.some((feature) => feature.kind === 'download_date'), false);
   assert.strictEqual(fromApi.wosJournalId, 'NATURE');
   assert.strictEqual(fromApi.jcrQuartile, 'Q1');
   assert.strictEqual(fromApi.jifRanks?.[0]?.rank, '1/140');
   assert.notStrictEqual(fromApi.impactFactor, 50.5);
 
+  const wosPrompt = metricPromptSection(fromApi);
+  assert(wosPrompt.includes('56.1'));
+  assert(wosPrompt.includes('clarivate_wos_journals_api'));
+  assert(wosPrompt.includes('JCR 2025'));
   const wosCopy = guardMetricClaims('Clarivate IF 56.1. JCR quartile Q1.', fromApi);
   assert(wosCopy.text.includes('56.1'));
   assert(wosCopy.text.includes('Q1'));
   assert(/clarivate/i.test(wosCopy.text));
+  const wosCampaign = JSON.stringify(generateDeterministicCampaign(fromApi, 'CON', 'EN').searchAds);
+  assert(wosCampaign.includes('clarivate_wos_journals_api'));
+  assert(wosCampaign.includes('JCR 2025'));
+  assert(wosCampaign.includes('56.1'));
+  assert(wosCampaign.includes('Retrieval date: 2026-10-08 (clarivate_wos_journals_api)'));
+  assert(!/download date/i.test(wosCampaign));
+  const inventedDownloadDate = guardMetricClaims('Download date 2025-01-01 and Retrieval date 2026-10-08', fromApi);
+  assert(!/download date/i.test(inventedDownloadDate.text));
+  assert(inventedDownloadDate.text.includes('2026-10-08'));
+
+  const withDownloadDate = await lookupMetricsByIssn('0028-0836', {
+    async searchByIssn() {
+      return { hits: [{ id: 'NATURE' }] };
+    },
+    async getJournal() {
+      return { journalCitationReports: [{ year: 2025 }] };
+    },
+    async getYearReport() {
+      return {
+        downloadDate: '2024-06-20',
+        metrics: { impactMetrics: { jif: '56.1' } },
+      };
+    },
+  }, retrievedAt);
+  assert(withDownloadDate, 'A payload that states a download date should map it');
+  assert.strictEqual(withDownloadDate.pageFeatures?.find((feature) => feature.kind === 'download_date')?.text, '2024-06-20');
+  assert.strictEqual(withDownloadDate.pageFeatures?.find((feature) => feature.kind === 'download_date')?.provenance, 'clarivate_wos_journals_api');
+  assert.strictEqual(withDownloadDate.pageFeatures?.find((feature) => feature.kind === 'retrieval_date')?.label, 'Retrieval date');
+  const datedCampaign = JSON.stringify(generateDeterministicCampaign(withDownloadDate, 'CON', 'EN').searchAds);
+  assert(datedCampaign.includes('Download date: 2024-06-20 (clarivate_wos_journals_api)'));
+  assert(datedCampaign.includes('Retrieval date: 2026-10-08 (clarivate_wos_journals_api)'));
 
   const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
   assert(!serverSource.includes('academic publishing metrics database'));
@@ -579,7 +666,7 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
       negativeKeywords: [],
     },
   });
-  assert(snapshotCsv.includes('No trusted impact factor'));
+  assert(snapshotCsv.includes('Impact factor omitted'));
   assert(!snapshotCsv.includes('6.9'));
   assert(!snapshotCsv.includes('50.5'));
   assert(!/clarivate/i.test(snapshotCsv));
@@ -593,7 +680,8 @@ console.log('\n[Test Suite 7] Plain labels for where journal figures came from..
   assert.strictEqual(sample.badge, 'Sample figures');
   assert.strictEqual(sample.usedInAds, false);
   assert.strictEqual(sample.impactFactorIsClarivate, false);
-  assert.match(metricCaption('sample', 'impact'), /Left out of the ads/);
+  assert.match(metricCaption('sample', 'impact'), /Not used in the ads/);
+  assert.match(metricCaption('sample', 'other'), /Left out of the ads/);
 
   const clarivate = factSourceCopy(factSourceKind({
     verificationStatus: 'clarivate_api',
@@ -602,17 +690,63 @@ console.log('\n[Test Suite 7] Plain labels for where journal figures came from..
   assert.strictEqual(clarivate.badge, 'From Clarivate');
   assert.strictEqual(clarivate.usedInAds, true);
   assert.strictEqual(clarivate.impactFactorIsClarivate, true);
+  assert.match(clarivate.detail, /JIF 56\.1 \(Clarivate JCR 2025\)/);
+
+  const clarivatePanel = impactPanel({
+    verificationStatus: 'clarivate_api',
+    provenanceSource: 'clarivate_wos_journals_api',
+    impactFactor: 56.1,
+    jcrYear: 2025,
+    provenanceMap: {
+      impactFactor: { source: 'clarivate_wos_journals_api', confidence: 1, year: 2025 },
+    },
+  });
+  assert.strictEqual(clarivatePanel.valueText, 'JIF 56.1 (Clarivate JCR 2025)');
+  assert.strictEqual(clarivatePanel.fromClarivate, true);
+  assert.match(clarivatePanel.caption, /JCR year/);
 
   const website = factSourceCopy(factSourceKind({ verificationStatus: 'page_sourced', provenanceSource: 'page_sourced' }));
   assert.strictEqual(website.badge, 'From the journal website');
   assert.strictEqual(website.usedInAds, true);
   assert.strictEqual(website.impactFactorIsClarivate, false);
-  assert.match(metricCaption('website', 'impact'), /Not described as Clarivate/);
+  assert.match(website.detail, /not used in the ads/i);
+  assert.doesNotMatch(website.detail, /impact factor from the website can appear/i);
+  assert.match(metricCaption('website', 'impact'), /Not used in the ads/);
+  assert.doesNotMatch(metricCaption('website', 'impact'), /can appear|Can be used/i);
   assert.match(metricCaption('website', 'other'), /journal website/);
+  assert.match(metricCaption('website', 'other'), /Can be used/);
+
+  const pagePanel = impactPanel({
+    verificationStatus: 'page_sourced',
+    provenanceSource: 'page_sourced',
+    impactFactor: 14.7,
+    provenanceMap: {
+      impactFactor: { source: 'page_sourced', confidence: 0.8 },
+    },
+  });
+  assert.strictEqual(pagePanel.valueText, '14.7');
+  assert.match(pagePanel.caption, /From the journal website/);
+  assert.match(pagePanel.caption, /Not used in the ads/);
+  assert.doesNotMatch(pagePanel.valueText, /Clarivate/);
+  assert.doesNotMatch(pagePanel.caption, /can appear|Can be used/i);
+
+  assert.match(otherFactCaption({
+    verificationStatus: 'page_sourced',
+    provenanceSource: 'page_sourced',
+    apcUsd: 4790,
+    provenanceMap: { apcUsd: { source: 'page_sourced', confidence: 0.8 } },
+  }, 'apcUsd'), /From the journal website/);
+  assert.match(otherFactCaption({
+    verificationStatus: 'page_sourced',
+    provenanceSource: 'page_sourced',
+    apcUsd: 4790,
+    provenanceMap: { apcUsd: { source: 'page_sourced', confidence: 0.8 } },
+  }, 'apcUsd'), /Can be used/);
 
   const entered = factSourceCopy(factSourceKind({ verificationStatus: 'user_provided' }));
   assert.strictEqual(entered.badge, 'You entered these');
   assert.strictEqual(entered.impactFactorIsClarivate, false);
+  assert.match(metricCaption('entered', 'impact'), /Not used in the ads/);
 
   const missing = factSourceCopy(factSourceKind({ verificationStatus: 'missing' }));
   assert.strictEqual(missing.badge, 'Figures missing');
@@ -621,6 +755,14 @@ console.log('\n[Test Suite 7] Plain labels for where journal figures came from..
   console.log('✓ Test Suite 7 Passed: Sample, website, and Clarivate figures stay distinct.');
 }
 
+const landingPageKey = process.env.CLARIVATE_API_KEY;
+delete process.env.CLARIVATE_API_KEY;
+try {
+  await runLandingPageTests();
+} finally {
+  if (landingPageKey) process.env.CLARIVATE_API_KEY = landingPageKey;
+}
+
 console.log('\n=======================================');
-console.log('ALL 7 TEST SUITES PASSED WITHOUT ERRORS');
+console.log('ALL TEST SUITES PASSED WITHOUT ERRORS');
 console.log('=======================================\n');

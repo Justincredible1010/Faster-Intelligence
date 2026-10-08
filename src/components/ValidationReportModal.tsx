@@ -59,7 +59,7 @@ export const ValidationReportModal: React.FC<Props> = ({
                 Ad policy check
               </h3>
               <p className="text-xs text-slate-500">
-                Flags competitor names, claims that cannot be checked, and lines that are too long. A China advertising-law note stays a warning. This check does not rewrite that copy.
+                Flags competitor names, claims that cannot be checked, and lines that are too long. A China advertising-law note stays a warning and does not change the copy.
               </p>
             </div>
           </div>
@@ -138,7 +138,7 @@ export const ValidationReportModal: React.FC<Props> = ({
                           : 'bg-amber-200 text-amber-800'
                       }`}
                     >
-                      {issue.category.replace('_', ' ')}
+                      {issue.category.replaceAll('_', ' ')}
                     </span>
                     <span className="font-mono text-[10px] text-slate-500">
                       {issue.fieldLocation}
@@ -154,7 +154,7 @@ export const ValidationReportModal: React.FC<Props> = ({
                     <span className="text-rose-700 font-medium">{issue.targetText}</span>
                   </div>
 
-                  {issue.suggestedFix && (
+                  {issue.suggestedFix && issue.category !== 'china_ad_law' && (
                     <div className="flex items-center justify-between text-[11px] pt-1">
                       <div className="text-emerald-700 flex items-center gap-1">
                         <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
@@ -180,7 +180,7 @@ export const ValidationReportModal: React.FC<Props> = ({
                 className="px-3.5 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5"
               >
                 <Wand2 className="w-3.5 h-3.5" />
-                <span>Apply Auto-Fix</span>
+                <span>Apply the suggested wording</span>
               </button>
             )}
             <button

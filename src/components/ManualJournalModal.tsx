@@ -124,7 +124,7 @@ export const ManualJournalModal: React.FC<Props> = ({
                   : 'Type the journal figures'}
               </h3>
               <p className="text-[11px] text-slate-500">
-                Saved as figures you entered. They can appear in the ads, and they are not described as Clarivate.
+                Saved as figures you entered. Fees, decision time, and open access can appear in the ads. An impact factor you type stays on this panel and is not used in the ads.
               </p>
             </div>
           </div>

@@ -30,12 +30,26 @@ import {
   STAGE_CONFIGS,
   ClarivateJournalMetrics,
   OutputLanguage,
+  PageSourcedFeature,
   normalizeStage,
 } from '../types';
 import { JOURNAL_CATALOG } from '../data/journalCatalog';
 import { pickEditableJournalFacts } from '../utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from '../utils/journalUrl';
-import { factCacheLine, factSourceCopy, factSourceKind, metricCaption, shownFigure } from '../utils/factSourceLabel';
+import {
+  factCacheLine,
+  factSourceCopy,
+  factSourceKind,
+  fiveYearPanel,
+  impactPanel,
+  otherFactCaption,
+  plainSourceLabel,
+  shownFigure,
+} from '../utils/factSourceLabel';
+import { metricFieldIsTrusted } from '../utils/metricClaims';
+import { editedStageUrlToApply, suggestStageUrl } from '../utils/stageUrlSuggestion';
+import type { StageUrlRules } from '../utils/stageUrlRules';
+import { formatUsageCount } from '../utils/usageCounts';
 
 interface Props {
   landingPageUrl: string;
@@ -56,6 +70,7 @@ interface Props {
   hasCustomPlaybook?: boolean;
   isLoading: boolean;
   isFetchingFacts: boolean;
+  stageUrlRules?: StageUrlRules | null;
 }
 
 const JOURNAL_TAGS: Record<string, string> = {
@@ -107,11 +122,14 @@ export const InputStudio: React.FC<Props> = ({
   hasCustomPlaybook,
   isLoading,
   isFetchingFacts,
+  stageUrlRules,
 }) => {
   const [isEditingMetrics, setIsEditingMetrics] = useState(false);
   const [showAdvancedMetrics, setShowAdvancedMetrics] = useState(false);
   const [editedFacts, setEditedFacts] = useState<ClarivateJournalMetrics | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [stageUrlDraft, setStageUrlDraft] = useState('');
+  const [stageUrlWarning, setStageUrlWarning] = useState<string | null>(null);
 
   useEffect(() => {
     if (clarivateFacts) {
@@ -169,6 +187,8 @@ export const InputStudio: React.FC<Props> = ({
   const stages: StageCode[] = ['AWA', 'CON', 'DEC'];
   const sourceKind = factSourceKind(clarivateFacts);
   const sourceCopy = factSourceCopy(sourceKind);
+  const impactCopy = impactPanel(clarivateFacts);
+  const fiveYearCopy = fiveYearPanel(clarivateFacts);
   const noChannelSelected = !selectedChannels.search && !selectedChannels.display;
   const channelSummary = selectedChannels.search && selectedChannels.display
     ? 'Search ads and display ads'
@@ -177,6 +197,25 @@ export const InputStudio: React.FC<Props> = ({
       : selectedChannels.display
         ? 'Display ads only'
         : 'No channel selected';
+  const stageUrlSuggestion = suggestStageUrl(landingPageUrl, currentStageNormalized, clarivateFacts, stageUrlRules);
+  const suggestedStageUrl = stageUrlSuggestion?.url || '';
+
+  useEffect(() => {
+    setStageUrlDraft(suggestedStageUrl);
+    setStageUrlWarning(null);
+  }, [suggestedStageUrl]);
+
+  const applyStageUrl = () => {
+    if (!stageUrlSuggestion?.url) return;
+    const decision = editedStageUrlToApply(stageUrlDraft, landingPageUrl, stageUrlSuggestion.url);
+    if (!decision.url) {
+      setStageUrlWarning(decision.warning);
+      return;
+    }
+    setStageUrlWarning(null);
+    onChangeUrl(decision.url);
+    onFetchFacts(decision.url, true);
+  };
 
   // Check if metrics are missing
   const isMissingMetrics = clarivateFacts?.verificationStatus === 'missing';
@@ -410,10 +449,10 @@ export const InputStudio: React.FC<Props> = ({
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                   <span className="text-[10px] text-slate-400 font-semibold uppercase block">Impact factor</span>
                   <div className="text-base font-extrabold text-slate-900 flex items-center gap-1.5">
-                    <span>{shownFigure(clarivateFacts.impactFactor, sourceKind)}</span>
+                    <span>{impactCopy.valueText}</span>
                     {clarivateFacts.jcrQuartile && (
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
-                        sourceCopy.impactFactorIsClarivate
+                        impactCopy.fromClarivate && metricFieldIsTrusted(clarivateFacts, 'jcrQuartile')
                           ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
                           : 'text-slate-600 bg-slate-100 border-slate-200'
                       }`}>
@@ -422,9 +461,12 @@ export const InputStudio: React.FC<Props> = ({
                     )}
                   </div>
                   <span className="text-[10px] text-slate-400 block">
-                    5-year: {shownFigure(clarivateFacts.fiveYearImpactFactor, sourceKind)}
+                    5-year: {fiveYearCopy.valueText}
                   </span>
-                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{metricCaption(sourceKind, 'impact')}</span>
+                  {fiveYearCopy.fromClarivate && (
+                    <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{fiveYearCopy.caption}</span>
+                  )}
+                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{impactCopy.caption}</span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -432,7 +474,7 @@ export const InputStudio: React.FC<Props> = ({
                   <span className="text-xs font-bold text-slate-900 line-clamp-1">
                     {clarivateFacts.casZone || (sourceKind === 'sample' ? 'Not in this sample' : 'Not stated')}
                   </span>
-                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{metricCaption(sourceKind, 'other')}</span>
+                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{otherFactCaption(clarivateFacts, 'casZone')}</span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -442,7 +484,7 @@ export const InputStudio: React.FC<Props> = ({
                       ? `${clarivateFacts.firstDecisionDays} days`
                       : shownFigure(clarivateFacts.firstDecisionDays, sourceKind)}
                   </span>
-                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{metricCaption(sourceKind, 'other')}</span>
+                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{otherFactCaption(clarivateFacts, 'firstDecisionDays')}</span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -455,10 +497,48 @@ export const InputStudio: React.FC<Props> = ({
                       ? `Fee: $${clarivateFacts.apcUsd}`
                       : sourceKind === 'sample' ? 'Fee not in this sample' : 'Fee not stated'}
                   </span>
-                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{metricCaption(sourceKind, 'other')}</span>
+                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">
+                    {typeof clarivateFacts.apcUsd === 'number'
+                      ? otherFactCaption(clarivateFacts, 'apcUsd')
+                      : otherFactCaption(clarivateFacts, 'openAccessType')}
+                  </span>
                 </div>
               </div>
-            ) : (
+            ) : null}
+            {!isEditingMetrics && (clarivateFacts.articleDownloads || clarivateFacts.fullTextViews) ? (
+              <div className="mt-2.5 bg-white p-2.5 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-400 font-semibold uppercase block">Usage</span>
+                <span className="text-sm font-bold text-slate-900">
+                  {clarivateFacts.articleDownloads
+                    ? `${formatUsageCount(clarivateFacts.articleDownloads)} downloads`
+                    : ''}
+                  {clarivateFacts.articleDownloads && clarivateFacts.fullTextViews ? ' · ' : ''}
+                  {clarivateFacts.fullTextViews
+                    ? `${formatUsageCount(clarivateFacts.fullTextViews)} full-text views`
+                    : ''}
+                </span>
+                <span className="text-[10px] text-slate-500 block">
+                  {plainSourceLabel(
+                    clarivateFacts.provenanceMap?.articleDownloads?.source ||
+                      clarivateFacts.provenanceMap?.fullTextViews?.source
+                  ) || 'From the journal website'}
+                </span>
+              </div>
+            ) : null}
+            {!isEditingMetrics && (clarivateFacts.pageFeatures?.length || 0) > 0 ? (
+              <ul className="mt-2.5 space-y-1">
+                {(clarivateFacts.pageFeatures || []).map((feature: PageSourcedFeature) => (
+                  <li key={feature.kind} className="bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase">{feature.label}</span>
+                    <span className="text-xs font-semibold text-slate-900 block">{feature.text}</span>
+                    <span className="text-[10px] text-slate-500">
+                      {feature.provenance === 'clarivate_wos_journals_api' ? 'From Clarivate' : 'From the journal website'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {isEditingMetrics ? (
               /* Inline Editable Form */
               <div className="space-y-3 bg-white p-3 rounded-lg border border-blue-200">
                 <span className="font-bold text-xs text-slate-800 block">Edit the figures on this page</span>
@@ -554,7 +634,7 @@ export const InputStudio: React.FC<Props> = ({
                   </button>
                 </div>
               </div>
-            )}
+            ) : null}
 
             {/* Cache indicator */}
             <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/60">
@@ -573,12 +653,15 @@ export const InputStudio: React.FC<Props> = ({
                 <div className="flex flex-wrap items-center gap-4 text-slate-500">
                   <span>
                     Indexing: <strong>{clarivateFacts.indexing?.length ? clarivateFacts.indexing.join(', ') : 'Not stated'}</strong>
+                    {plainSourceLabel(clarivateFacts.provenanceMap?.indexing?.source)
+                      ? ` (${plainSourceLabel(clarivateFacts.provenanceMap?.indexing?.source)})`
+                      : ''}
                   </span>
                   <span>
                     Discipline: <strong>{clarivateFacts.primaryDiscipline}</strong>
                   </span>
                   <span>
-                    Reporting Period: <strong>{clarivateFacts.reportingYear || 'JCR 2024'}</strong>
+                    Reporting Period: <strong>{clarivateFacts.reportingYear || 'Not stated'}</strong>
                   </span>
                 </div>
               </div>
@@ -666,6 +749,55 @@ export const InputStudio: React.FC<Props> = ({
             );
           })}
         </div>
+
+        {stageUrlSuggestion && (
+          <div
+            className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-xl"
+            role="status"
+          >
+            <div className="flex-1 space-y-2 min-w-0">
+              <p className="text-xs text-amber-950 leading-relaxed">{stageUrlSuggestion.reason}</p>
+              {stageUrlSuggestion.url && (
+                <>
+                  <label htmlFor="stage-url-draft" className="block text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+                    Suggested URL
+                  </label>
+                  <input
+                    id="stage-url-draft"
+                    type="text"
+                    value={stageUrlDraft}
+                    spellCheck={false}
+                    onChange={(event) => {
+                      setStageUrlDraft(event.target.value);
+                      setStageUrlWarning(null);
+                    }}
+                    className="w-full text-[11px] font-mono text-amber-950 bg-white border border-amber-300 rounded-lg px-2 py-1.5"
+                  />
+                  <p className="text-[11px] text-amber-800">
+                    Change the path or slug if you want a different page. Using it loads the URL you entered.
+                  </p>
+                </>
+              )}
+              {!isMissingMetrics && (
+                <p className="text-[11px] text-amber-800">You can still generate with the current URL.</p>
+              )}
+              {stageUrlWarning && (
+                <p className="text-[11px] text-red-800" role="alert">
+                  {stageUrlWarning}
+                </p>
+              )}
+            </div>
+            {stageUrlSuggestion.url && (
+              <button
+                type="button"
+                onClick={applyStageUrl}
+                className="shrink-0 px-3 py-2 bg-white border border-amber-300 text-amber-950 text-xs font-bold rounded-lg hover:bg-amber-100 transition"
+              >
+                Use this URL
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Ad Channels & Output Language Row */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
@@ -762,6 +894,7 @@ export const InputStudio: React.FC<Props> = ({
             <span className="text-xs font-bold uppercase tracking-wider text-slate-800 block">Write the ads</span>
             <span className="text-xs text-slate-600">
               {STAGE_CONFIGS[currentStageNormalized].shortLabel} · {channelSummary}
+              {' · Weibo post and WeChat ad'}
             </span>
           </div>
         </div>
