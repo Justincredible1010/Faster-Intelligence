@@ -12,7 +12,7 @@ function escapeCsvField(field: string | number | undefined | null): string {
 
 /**
  * Extracts a Google Ads compliant Display URL with max 15 chars per path segment
- * e.g. "nature.com/nature/about" -> Display Path 1: "nature", Display Path 2: "about"
+ * e.g. "nature.com/aps/about" -> Display Path 1: "aps", Display Path 2: "about"
  */
 export function deriveDisplayUrl(finalUrl: string): string {
   try {

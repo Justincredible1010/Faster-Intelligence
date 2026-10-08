@@ -81,7 +81,7 @@ console.log('\n[Test Suite 2] Language Purity Verification...');
 console.log('\n[Test Suite 3] Policy Compliance & Trademark Audit...');
 {
   const mockFacts: ClarivateJournalMetrics = {
-    url: 'https://www.nature.com/nature',
+    url: 'https://www.nature.com/',
     journalName: 'Nature',
     publisher: 'Nature Portfolio',
     impactFactor: 50.5,
@@ -99,7 +99,7 @@ console.log('\n[Test Suite 3] Policy Compliance & Trademark Audit...');
     primaryCta: 'Check journal fit',
     recommendedDestination: {
       label: 'Scope',
-      url: 'https://www.nature.com/nature/about',
+      url: 'https://www.nature.com/about',
       description: 'About',
     },
     generationSource: 'template_fallback',
@@ -204,6 +204,9 @@ console.log('\n[Test Suite 4] Google Ads Editor CSV Schema...');
   // Check derived display URL
   const displayUrl = deriveDisplayUrl('https://www.nature.com/aps/about');
   assert.strictEqual(displayUrl, 'nature.com/aps/about', 'Display URL should derive domain and first 2 path segments');
+
+  const homepageDisplayUrl = deriveDisplayUrl('https://www.nature.com/');
+  assert.strictEqual(homepageDisplayUrl, 'nature.com', 'A URL with no path segment should display the bare domain');
 
   console.log('✓ Test Suite 4 Passed: Google Ads Editor CSV format matches exact specifications.');
 }

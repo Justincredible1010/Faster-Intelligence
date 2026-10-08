@@ -21,7 +21,7 @@ import { runComplianceAudit, autoFixComplianceIssues } from './utils/complianceV
 import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
 import { AlertCircle, AlertTriangle, Sparkles } from 'lucide-react';
 
-const DEFAULT_LANDING_URL = 'https://www.nature.com/nature';
+const DEFAULT_LANDING_URL = 'https://www.nature.com/';
 
 export default function App() {
   const [landingPageUrl, setLandingPageUrl] = useState<string>(DEFAULT_LANDING_URL);

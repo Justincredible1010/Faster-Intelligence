@@ -55,7 +55,7 @@ interface Props {
 }
 
 const POPULAR_JOURNALS = [
-  { name: 'Nature', url: 'https://www.nature.com/nature', ifValue: 50.5, tag: 'Flagship' },
+  { name: 'Nature', url: 'https://www.nature.com/', ifValue: 50.5, tag: 'Flagship' },
   { name: 'Acta Pharmacologica Sinica (APS)', url: 'https://www.nature.com/aps', ifValue: 6.9, tag: 'CAS 1区' },
   { name: 'Cell Research', url: 'https://www.nature.com/cr', ifValue: 28.1, tag: 'CAS 1区' },
   { name: 'Nature Communications', url: 'https://www.nature.com/ncomms', ifValue: 14.7, tag: 'Gold OA' },
@@ -235,6 +235,7 @@ export const InputStudio: React.FC<Props> = ({
                 (j.name === 'Nature' &&
                   (landingPageUrl === 'nature.com' ||
                     landingPageUrl === 'https://www.nature.com' ||
+                    landingPageUrl === 'https://www.nature.com/' ||
                     landingPageUrl === 'https://www.nature.com/nature'))
                   ? 'bg-blue-50 text-blue-900 border-blue-300 font-semibold'
                   : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
