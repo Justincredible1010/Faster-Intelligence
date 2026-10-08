@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Search, Layout, Target, ArrowRight, Info, Layers, ShieldCheck, Image as ImageIcon } from 'lucide-react';
+import { Search, Layout, Target, ShieldCheck, Image as ImageIcon, MessageCircle, Megaphone } from 'lucide-react';
 import { GeneratedAdCampaign, STAGE_CONFIGS, normalizeStage } from '../types';
 import { formatJifClaim, trustedCasZone, trustedImpactFactor } from '../utils/metricClaims';
 import { GoogleAdPreview } from './GoogleAdPreview';
 import { DisplayAdCanvas } from './DisplayAdCanvas';
 import { GoogleDisplayPreview } from './GoogleDisplayPreview';
 import { TargetingViewer } from './TargetingViewer';
+import { WeiboPreview } from './WeiboPreview';
+import { WeChatAdPreview } from './WeChatAdPreview';
 
 interface Props {
   campaign: GeneratedAdCampaign;
@@ -24,7 +26,7 @@ export const ChannelSuite: React.FC<Props> = ({
   onEditDescription,
   onOpenCompliance,
 }) => {
-  const [activeTab, setActiveTab] = useState<'search' | 'display' | 'keywords'>(
+  const [activeTab, setActiveTab] = useState<'search' | 'display' | 'keywords' | 'weibo' | 'wechat'>(
     selectedChannels.search ? 'search' : 'display'
   );
   const [displayMode, setDisplayMode] = useState<'iab_canvas' | 'custom_generator'>('iab_canvas');
@@ -76,6 +78,32 @@ export const ChannelSuite: React.FC<Props> = ({
           >
             <Target className="w-3.5 h-3.5" />
             <span>Keywords &amp; Negative Shield</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('weibo')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition ${
+              activeTab === 'weibo'
+                ? 'bg-[#002d62] text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <MessageCircle className="w-3.5 h-3.5" />
+            <span>Weibo</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('wechat')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition ${
+              activeTab === 'wechat'
+                ? 'bg-[#002d62] text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Megaphone className="w-3.5 h-3.5" />
+            <span>WeChat Ads</span>
           </button>
         </div>
 
@@ -176,6 +204,30 @@ export const ChannelSuite: React.FC<Props> = ({
             journalName={campaign.clarivateFacts.journalName}
             stage={stage}
           />
+        )}
+
+        {activeTab === 'weibo' && (
+          campaign.weiboPost ? (
+            <WeiboPreview
+              post={campaign.weiboPost}
+              accountName={campaign.clarivateFacts.publisher || campaign.clarivateFacts.journalName}
+              issues={campaign.complianceReport?.issues || []}
+            />
+          ) : (
+            <p className="text-sm text-slate-500">Generate the campaign again to include the Weibo post.</p>
+          )
+        )}
+
+        {activeTab === 'wechat' && (
+          campaign.wechatAd ? (
+            <WeChatAdPreview
+              ad={campaign.wechatAd}
+              accountName={campaign.clarivateFacts.publisher || campaign.clarivateFacts.journalName}
+              issues={campaign.complianceReport?.issues || []}
+            />
+          ) : (
+            <p className="text-sm text-slate-500">Generate the campaign again to include the WeChat ad.</p>
+          )
         )}
       </div>
     </div>

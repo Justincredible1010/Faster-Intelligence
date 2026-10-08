@@ -164,7 +164,7 @@ export const Navbar: React.FC<Props> = ({
                     <div>
                       <div>Google Ads Editor CSV</div>
                       <div className="text-[10px] text-slate-400 font-normal">
-                        Import-ready columns + README
+                        Editor columns. Weibo and WeChat are in the instructions.
                       </div>
                     </div>
                   </button>

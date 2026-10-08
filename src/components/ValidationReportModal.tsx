@@ -59,7 +59,7 @@ export const ValidationReportModal: React.FC<Props> = ({
                 Google Ads Policy &amp; Academic Integrity Audit
               </h3>
               <p className="text-xs text-slate-500">
-                Pre-flight validation for trademark usage, superlatives, and claim veracity
+                Pre-flight validation for trademark usage, superlatives, and claim veracity. China Advertising Law notices do not change copy.
               </p>
             </div>
           </div>
@@ -138,7 +138,7 @@ export const ValidationReportModal: React.FC<Props> = ({
                           : 'bg-amber-200 text-amber-800'
                       }`}
                     >
-                      {issue.category.replace('_', ' ')}
+                      {issue.category.replaceAll('_', ' ')}
                     </span>
                     <span className="font-mono text-[10px] text-slate-500">
                       {issue.fieldLocation}

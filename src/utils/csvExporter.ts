@@ -1,4 +1,5 @@
 import { GeneratedAdCampaign, STAGE_CONFIGS, normalizeStage } from '../types';
+import { chinaChannelsExportSection } from '../china/exportText';
 import { smartClampWithWidth } from './textUtils';
 import { formatJifClaim, metricsAreTrusted, metricsFromClarivateWos, trustedApcUsd, trustedCasZone, trustedFirstDecisionDays } from './metricClaims';
 
@@ -249,6 +250,8 @@ ${qualityWarnings}
 7. Post changes to live Google Ads campaigns.
 
 All headlines (<=30 visual width) and descriptions (<=90 visual width) have been pre-tested for Google Ads character policies.
+
+${chinaChannelsExportSection(campaign)}
 `;
 
   const readmeBlob = new Blob([readmeText], { type: 'text/markdown;charset=utf-8;' });
