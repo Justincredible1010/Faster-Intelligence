@@ -5,6 +5,7 @@ import {
   ClarivateJournalMetrics,
 } from '../types';
 import { countCharacterWidth, smartClampWithWidth } from './textUtils';
+import { metricsFromClarivateWos, trustedImpactFactor } from './metricClaims';
 
 // Common competitor academic journal trademarks to flag in ad copy
 export const COMPETITOR_TRADEMARKS = [
@@ -84,7 +85,10 @@ export function runComplianceAudit(
           id: `fact-stale-year`,
           type: 'warning',
           category: 'stale_fact',
-          message: `Impact Factor is from ${year}, consider refreshing metrics from latest Clarivate JCR release.`,
+          message:
+            metricsFromClarivateWos(currentFacts)
+              ? `Impact Factor is from ${year}, consider refreshing metrics from the latest Clarivate JCR release.`
+              : `Record year ${year} is outside the current release window. This record did not come from the Clarivate API.`,
           targetText: currentFacts.reportingYear,
           fieldLocation: 'Journal Reporting Year',
         });
@@ -111,9 +115,9 @@ export function runComplianceAudit(
         });
       }
 
-      // Missing fact check: mentions IF but impactFactor is null
+      // Missing fact check: mentions IF without a trusted impact factor
       if (/\b(if|impact\s+factor)\b/i.test(h.text) || /影响因子/.test(h.text)) {
-        if (!currentFacts?.impactFactor) {
+        if (trustedImpactFactor(currentFacts) == null) {
           issues.push({
             id: `hl-missing-if-${idx}`,
             type: 'error',
@@ -126,13 +130,13 @@ export function runComplianceAudit(
         }
       }
 
-      // Source credibility check: cites Clarivate when user_provided
-      if (currentFacts?.verificationStatus === 'user_provided' && /\bclarivate\b/i.test(h.text)) {
+      // Clarivate may be named only when the value came from the Clarivate API
+      if (!metricsFromClarivateWos(currentFacts) && /\bclarivate\b/i.test(h.text)) {
         issues.push({
           id: `hl-source-mismatch-${idx}`,
           type: 'warning',
           category: 'source_mismatch',
-          message: 'Headline cites Clarivate metrics but facts are user-provided. Use verified data or remove Clarivate attribution.',
+          message: 'Headline cites Clarivate, but this record did not come from the Clarivate API.',
           targetText: h.text,
           suggestedFix: h.text.replace(/\bclarivate\b/i, 'Indexed'),
           fieldLocation: location,
@@ -209,7 +213,7 @@ export function runComplianceAudit(
 
       // Missing fact check
       if (/\b(if|impact\s+factor)\b/i.test(d.text) || /影响因子/.test(d.text)) {
-        if (!currentFacts?.impactFactor) {
+        if (trustedImpactFactor(currentFacts) == null) {
           issues.push({
             id: `desc-missing-if-${idx}`,
             type: 'error',

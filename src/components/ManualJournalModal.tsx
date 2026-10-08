@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Check, BookOpen, ShieldCheck, AlertCircle, Save, Plus } from 'lucide-react';
 import { ClarivateJournalMetrics } from '../types';
+import { normalizeJournalUrl } from '../utils/journalUrl';
 
 interface Props {
   isOpen: boolean;
@@ -18,7 +19,7 @@ export const ManualJournalModal: React.FC<Props> = ({
   if (!isOpen) return null;
 
   const [journalName, setJournalName] = useState(initialFacts?.journalName || '');
-  const [publisher, setPublisher] = useState(initialFacts?.publisher || 'Springer Nature');
+  const [publisher, setPublisher] = useState(initialFacts?.publisher || '');
   const [impactFactor, setImpactFactor] = useState<string>(
     initialFacts?.impactFactor !== null && initialFacts?.impactFactor !== undefined
       ? String(initialFacts.impactFactor)
@@ -29,39 +30,35 @@ export const ManualJournalModal: React.FC<Props> = ({
       ? String(initialFacts.fiveYearImpactFactor)
       : ''
   );
-  const [jcrQuartile, setJcrQuartile] = useState<string>(initialFacts?.jcrQuartile || 'Q1');
-  const [casZone, setCasZone] = useState<string>(initialFacts?.casZone || '中科院综合性期刊1区 Top');
+  const [jcrQuartile, setJcrQuartile] = useState<string>(initialFacts?.jcrQuartile || '');
+  const [casZone, setCasZone] = useState<string>(initialFacts?.casZone || '');
   const [firstDecisionDays, setFirstDecisionDays] = useState<string>(
     initialFacts?.firstDecisionDays !== null && initialFacts?.firstDecisionDays !== undefined
       ? String(initialFacts.firstDecisionDays)
-      : '28'
+      : ''
   );
   const [apcUsd, setApcUsd] = useState<string>(
     initialFacts?.apcUsd !== null && initialFacts?.apcUsd !== undefined
       ? String(initialFacts.apcUsd)
-      : '3200'
+      : ''
   );
-  const [openAccessType, setOpenAccessType] = useState<string>(
-    initialFacts?.openAccessType || 'Hybrid Open Access'
-  );
+  const [openAccessType, setOpenAccessType] = useState<string>(initialFacts?.openAccessType || '');
   const [chinaWaiver, setChinaWaiver] = useState<boolean>(initialFacts?.chinaWaiverAvailable || false);
-  const [primaryDiscipline, setPrimaryDiscipline] = useState<string>(
-    initialFacts?.primaryDiscipline || 'Scientific & Multidisciplinary'
-  );
-  const [indexingText, setIndexingText] = useState<string>(
-    initialFacts?.indexing?.join(', ') || 'SCIE, Scopus, PubMed Central'
-  );
-  const [aimsAndScope, setAimsAndScope] = useState<string>(
-    initialFacts?.aimsAndScopeSummary ||
-      'Peer-reviewed scholarly journal publishing original research and review articles.'
-  );
+  const [primaryDiscipline, setPrimaryDiscipline] = useState<string>(initialFacts?.primaryDiscipline || '');
+  const [indexingText, setIndexingText] = useState<string>(initialFacts?.indexing?.join(', ') || '');
+  const [aimsAndScope, setAimsAndScope] = useState<string>(initialFacts?.aimsAndScopeSummary || '');
 
   const [formError, setFormError] = useState<string | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const canonicalUrl = normalizeJournalUrl(initialFacts?.url || '').canonical;
     if (!journalName.trim()) {
       setFormError('Journal name is required.');
+      return;
+    }
+    if (!canonicalUrl) {
+      setFormError('A journal URL is required. Metrics are saved against the page URL, not an invented path.');
       return;
     }
 
@@ -76,16 +73,16 @@ export const ManualJournalModal: React.FC<Props> = ({
       .filter(Boolean);
 
     const updated: ClarivateJournalMetrics = {
-      url: initialFacts?.url || `https://www.nature.com/${journalName.toLowerCase().replace(/\s+/g, '-')}`,
+      url: canonicalUrl,
       journalName: journalName.trim(),
       publisher: publisher.trim(),
       impactFactor: ifNum,
       fiveYearImpactFactor: fiveYearNum,
-      jcrQuartile: (jcrQuartile as any) || 'Q1',
+      jcrQuartile: jcrQuartile || null,
       casZone: casZone.trim() || null,
       firstDecisionDays: daysNum,
       indexing: indexingList,
-      openAccessType,
+      openAccessType: openAccessType || null,
       apcUsd: apcNum,
       chinaWaiverAvailable: chinaWaiver,
       aimsAndScopeSummary: aimsAndScope.trim(),
@@ -117,7 +114,7 @@ export const ManualJournalModal: React.FC<Props> = ({
                   : 'Add / Edit Journal Metrics'}
               </h3>
               <p className="text-[11px] text-slate-500">
-                Supplied values are verified as user-provided and unlock campaign generation
+                Saved as user-provided. They are not labeled as a Clarivate API result.
               </p>
             </div>
           </div>
@@ -160,6 +157,7 @@ export const ManualJournalModal: React.FC<Props> = ({
                 onChange={(e) => setPublisher(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
               >
+                <option value="">Not provided</option>
                 <option value="Springer Nature">Springer Nature</option>
                 <option value="Nature Portfolio">Nature Portfolio</option>
                 <option value="BMC (Part of Springer Nature)">BMC</option>
@@ -200,6 +198,7 @@ export const ManualJournalModal: React.FC<Props> = ({
                 onChange={(e) => setJcrQuartile(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
+                <option value="">Not provided</option>
                 <option value="Q1">Q1</option>
                 <option value="Q2">Q2</option>
                 <option value="Q3">Q3</option>
@@ -251,6 +250,7 @@ export const ManualJournalModal: React.FC<Props> = ({
                 onChange={(e) => setOpenAccessType(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
+                <option value="">Not provided</option>
                 <option value="Hybrid Open Access">Hybrid Open Access</option>
                 <option value="Gold Open Access">Gold Open Access</option>
                 <option value="Subscription / Free Option">Subscription / Free Option</option>
