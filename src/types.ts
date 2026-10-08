@@ -49,6 +49,7 @@ export interface WosJifRank {
   /** Category rank as returned by the API, for example "1/140". */
   rank?: string;
   quartile?: string;
+  /** The Journals API returns this as a number, for example 99.6. A string is also accepted. */
   jifPercentile?: string | number;
 }
 

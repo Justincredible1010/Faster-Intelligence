@@ -95,6 +95,66 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** A plain string, or the `name` on `{ name, ... }` objects the Journals API returns. */
+function namedText(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (isRecord(value)) return namedText(value.name);
+  return undefined;
+}
+
+function parseCategories(value: unknown): { names: string[]; editions: string[] } {
+  if (!Array.isArray(value)) return { names: [], editions: [] };
+  const names: string[] = [];
+  const editions: string[] = [];
+  for (const item of value) {
+    const name = namedText(item);
+    if (name && !names.includes(name)) names.push(name);
+    if (isRecord(item)) {
+      const edition = namedText(item.edition);
+      if (edition && !editions.includes(edition)) editions.push(edition);
+    }
+  }
+  return { names, editions };
+}
+
+/**
+ * Journal Impact Factor percentile from a year report. The live API sends a
+ * number such as 99.6. A string is kept when that is what the payload used.
+ */
+function parseJifPercentile(value: unknown): string | number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  return undefined;
+}
+
+/**
+ * Map a GET /journals/{id} body onto the profile used by lookup.
+ * Publisher may be a string or `{ name, address, countryRegion }`.
+ * Categories may be strings or `{ name, edition, url }`.
+ * Display title prefers jcrTitle, then isoTitle, then title, then the all-caps name.
+ */
+export function parseWosJournalProfile(body: unknown, fallbackId?: string): WosJournalProfile | null {
+  if (!isRecord(body)) return null;
+  const categories = parseCategories(body.categories);
+  const reports = Array.isArray(body.journalCitationReports) ? body.journalCitationReports : [];
+  const title = namedText(body.jcrTitle) || namedText(body.isoTitle) || namedText(body.title) || namedText(body.name);
+  return {
+    id: typeof body.id === 'string' && body.id.trim() ? body.id : fallbackId,
+    title,
+    issn: typeof body.issn === 'string' ? body.issn : undefined,
+    eIssn: typeof body.eIssn === 'string' ? body.eIssn : undefined,
+    publisher: namedText(body.publisher),
+    categories: categories.names,
+    categoryEditions: categories.editions,
+    journalCitationReports: reports
+      .map((report) => (isRecord(report) ? { year: report.year as number | string } : null))
+      .filter((report): report is { year: number | string } => !!report && (typeof report.year === 'number' || typeof report.year === 'string')),
+  };
+}
+
 function pathForLog(url: string): string {
   try {
     const parsed = new URL(url);
@@ -202,19 +262,7 @@ export function createClarivateWosJournalsClient(options: ClarivateHttpDependenc
 
     async getJournal(journalId: string): Promise<WosJournalProfile | null> {
       const body = await getJson(`${WOS_JOURNALS_API_BASE}/journals/${encodeURIComponent(journalId)}`);
-      if (!isRecord(body)) return null;
-      const reports = Array.isArray(body.journalCitationReports) ? body.journalCitationReports : [];
-      return {
-        id: typeof body.id === 'string' ? body.id : journalId,
-        issn: typeof body.issn === 'string' ? body.issn : undefined,
-        eIssn: typeof body.eIssn === 'string' ? body.eIssn : undefined,
-        publisher: typeof body.publisher === 'string' ? body.publisher : undefined,
-        categories: Array.isArray(body.categories) ? body.categories.filter((item): item is string => typeof item === 'string') : undefined,
-        title: typeof body.title === 'string' ? body.title : typeof body.name === 'string' ? body.name : undefined,
-        journalCitationReports: reports
-          .map((report) => (isRecord(report) ? { year: report.year as number | string } : null))
-          .filter((report): report is { year: number | string } => !!report && (typeof report.year === 'number' || typeof report.year === 'string')),
-      };
+      return parseWosJournalProfile(body, journalId);
     },
 
     async getYearReport(journalId: string, year: number): Promise<WosJournalYearReport | null> {
@@ -222,7 +270,32 @@ export function createClarivateWosJournalsClient(options: ClarivateHttpDependenc
         `${WOS_JOURNALS_API_BASE}/journals/${encodeURIComponent(journalId)}/reports/year/${encodeURIComponent(String(year))}`
       );
       if (!isRecord(body)) return null;
-      return body as WosJournalYearReport;
+      const metrics = isRecord(body.metrics) ? body.metrics : undefined;
+      const impact = metrics && isRecord(metrics.impactMetrics) ? metrics.impactMetrics : undefined;
+      const ranks = isRecord(body.ranks) && Array.isArray(body.ranks.jif) ? body.ranks.jif : [];
+      return {
+        metrics: impact
+          ? {
+              impactMetrics: {
+                jif: typeof impact.jif === 'string' || typeof impact.jif === 'number' ? String(impact.jif) : undefined,
+                jif5Years: typeof impact.jif5Years === 'string' || typeof impact.jif5Years === 'number' ? String(impact.jif5Years) : undefined,
+                immediacyIndex:
+                  typeof impact.immediacyIndex === 'string' || typeof impact.immediacyIndex === 'number'
+                    ? String(impact.immediacyIndex)
+                    : undefined,
+                jci: typeof impact.jci === 'string' || typeof impact.jci === 'number' ? String(impact.jci) : undefined,
+              },
+            }
+          : undefined,
+        ranks: {
+          jif: ranks.filter(isRecord).map((rank) => ({
+            category: namedText(rank.category),
+            rank: typeof rank.rank === 'string' ? rank.rank : undefined,
+            quartile: typeof rank.quartile === 'string' ? rank.quartile : undefined,
+            jifPercentile: parseJifPercentile(rank.jifPercentile),
+          })),
+        },
+      };
     },
   };
 }

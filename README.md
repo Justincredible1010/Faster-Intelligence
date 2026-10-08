@@ -305,8 +305,8 @@ Copy `.env.example` to `.env`.
 The client calls `https://api.clarivate.com/apis/wos-journals/v1`:
 
 1. `GET /journals?q=<ISSN>` resolves a print or electronic ISSN to `hits[].id`.
-2. `GET /journals/{id}` reads the ISSN pair, publisher, categories, and `journalCitationReports[]`.
-3. `GET /journals/{id}/reports/year/{year}` reads `metrics.impactMetrics` and `ranks.jif[]`.
+2. `GET /journals/{id}` reads the ISSN pair, publisher, categories, and `journalCitationReports[]`. Publisher is a string or `{ name, address, countryRegion }`. Each category is a string or `{ name, edition, url }`. The display name prefers `jcrTitle`, then `isoTitle`, over the all-caps `name`.
+3. `GET /journals/{id}/reports/year/{year}` reads `metrics.impactMetrics` and `ranks.jif[]`. `jifPercentile` arrives as a number, for example `99.6`.
 
 JIF values arrive as strings and are parsed defensively. Missing fields stay null.
 

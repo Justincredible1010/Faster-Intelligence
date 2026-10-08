@@ -28,6 +28,7 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   const {
     createClarivateWosJournalsClient,
     createRateLimiter,
+    parseWosJournalProfile,
     resetClarivateKeyWarning,
     retryAfterMs,
   } = await import('../src/utils/clarivateHttp.ts');
@@ -99,9 +100,29 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   assert.strictEqual(parsed.jcrYear, 2025);
   assert.strictEqual(parsed.issn, '0028-0836');
   assert.strictEqual(parsed.eIssn, '1476-4687');
+  assert.strictEqual(parsed.publisher, 'NATURE PORTFOLIO');
+  assert(parsed.primaryDiscipline?.includes('MULTIDISCIPLINARY SCIENCES'), parsed.primaryDiscipline);
+  assert.strictEqual(parsed.journalName, 'Nature');
+  assert.notStrictEqual(parsed.journalName, 'NATURE');
+  assert.deepStrictEqual(parsed.indexing, ['SCIE']);
+  assert.strictEqual(parsed.jifRanks?.[0]?.jifPercentile, 99.6);
   assert.strictEqual(parsed.jcrQuartile, 'Q1');
   assert.strictEqual(parsed.provenanceSource, 'clarivate_wos_journals_api');
   assert.strictEqual(parsed.sourceAttribution, 'JIF 56.1 (Clarivate JCR 2025), retrieved 2026-10-08T00:00:00.000Z');
+
+  const stringProfile = parseWosJournalProfile({
+    name: 'NATURE',
+    isoTitle: 'Nature',
+    publisher: 'NATURE PORTFOLIO',
+    categories: ['MULTIDISCIPLINARY SCIENCES'],
+    journalCitationReports: [{ year: 2025 }],
+  });
+  assert.strictEqual(stringProfile?.publisher, 'NATURE PORTFOLIO');
+  assert.deepStrictEqual(stringProfile?.categories, ['MULTIDISCIPLINARY SCIENCES']);
+  assert.strictEqual(stringProfile?.title, 'Nature');
+
+  const isoOnly = parseWosJournalProfile({ name: 'NATURE', isoTitle: 'Nature (ISO)' });
+  assert.strictEqual(isoOnly?.title, 'Nature (ISO)');
 
   const missingJif = createClarivateWosJournalsClient({
     apiKey: secret,
@@ -135,8 +156,8 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
       await new Promise((resolve) => setTimeout(resolve, 15));
       return { hits: [{ id: 'NATURE' }] };
     },
-    async getJournal() {
-      return journalBody as { issn: string; eIssn: string; publisher: string; categories: string[]; journalCitationReports: { year: number }[] };
+    async getJournal(id: string) {
+      return parseWosJournalProfile(journalBody, id);
     },
     async getYearReport() {
       return reportBody as { metrics: { impactMetrics: { jif: string } } };

@@ -35,7 +35,10 @@ export interface WosJournalProfile {
   issn?: string;
   eIssn?: string;
   publisher?: string;
+  /** Category names. Editions, when the API sent them, are on categoryEditions. */
   categories?: string[];
+  /** JCR edition on a category object, for example SCIE. */
+  categoryEditions?: string[];
   journalCitationReports?: WosJournalCitationReportRef[];
 }
 
@@ -231,7 +234,7 @@ async function lookupOnce(
       jifRanks: ranks,
       casZone: null,
       firstDecisionDays: null,
-      indexing: [],
+      indexing: profile.categoryEditions?.filter(Boolean) || [],
       apcUsd: null,
       primaryDiscipline: profile.categories?.filter(Boolean).join(', ') || '',
       aimsAndScopeSummary: '',
