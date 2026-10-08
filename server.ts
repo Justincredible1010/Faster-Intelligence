@@ -410,6 +410,21 @@ function catalogForUrl(canonical: string): JCRJournalEntry | undefined {
   return CLARIVATE_JCR_CATALOG.find((entry) => journalUrlsMatch(norm, normalizeJournalUrl(entry.url)));
 }
 
+/** Longest catalog landing page that is a real parent of this URL. Never invents a path. */
+function catalogForChildUrl(canonical: string): JCRJournalEntry | undefined {
+  const current = normalizeJournalUrl(canonical);
+  const matches = CLARIVATE_JCR_CATALOG
+    .map((entry) => ({ entry, norm: normalizeJournalUrl(entry.url) }))
+    .filter(
+      ({ norm }) =>
+        Boolean(norm.pathname) &&
+        norm.hostKey === current.hostKey &&
+        current.pathname.startsWith(`${norm.pathname}/`)
+    )
+    .sort((a, b) => b.norm.pathname.length - a.norm.pathname.length);
+  return matches[0]?.entry;
+}
+
 const NATURE_HOME_CACHE_MS = 24 * 60 * 60 * 1000;
 
 function isNatureHomepage(canonical: string): boolean {
@@ -457,6 +472,7 @@ export async function lookupClarivateFacts(
   }
 
   const urlKey = journalCacheKey({ requestUrl: norm.canonical });
+  let aliasChild = false;
   const cachedUrl = forceRefresh ? null : freshCachedFacts(cache.get(urlKey), norm.canonical);
   if (cachedUrl) {
     console.log(`[Cache HIT] Retrieved ${urlKey} (${cachedUrl.journalName})`);
@@ -546,6 +562,27 @@ export async function lookupClarivateFacts(
     }
   }
 
+  if (base.verificationStatus === 'missing') {
+    const parent = catalogForChildUrl(norm.canonical);
+    if (parent) {
+      const parentUrl = normalizeJournalUrl(parent.url).canonical;
+      const parentKeys = [
+        journalCacheKey({ issn: parent.issn, eIssn: parent.eIssn, requestUrl: parentUrl }),
+        journalCacheKey({ requestUrl: parentUrl }),
+      ];
+      let parentFacts: JCRJournalEntry | null = null;
+      if (!forceRefresh) {
+        for (const key of parentKeys) {
+          parentFacts = freshCachedFacts(cache.get(key), parentUrl);
+          if (parentFacts) break;
+        }
+      }
+      console.log(`[Catalog CHILD] ${norm.canonical} uses ${parent.journalName}`);
+      base = parentFacts ? { ...parentFacts, url: parentUrl } : { ...parent, url: parentUrl };
+      aliasChild = true;
+    }
+  }
+
   const merged = mergeLandingPageFacts(base, page, { fetchError }) as JCRJournalEntry;
   merged.url = norm.canonical;
   merged.slugs = merged.slugs || [];
@@ -557,6 +594,15 @@ export async function lookupClarivateFacts(
     eIssn: merged.eIssn,
     requestUrl: norm.canonical,
   });
+  if (aliasChild) {
+    const cachedEntry = rememberJournal(urlKey, merged, cache, persist);
+    return {
+      ...merged,
+      isFromCache: false,
+      cachedAt: cachedEntry.lastAccess,
+      cacheExpiresAt: cachedEntry.metrics['impactFactor']?.expireAt,
+    };
+  }
   if (merged.issn || merged.eIssn || merged.verificationStatus !== 'missing') {
     const cachedEntry = rememberJournal(storeKey, merged, cache, persist);
     if (urlKey !== storeKey) rememberJournal(urlKey, merged, cache, persist);

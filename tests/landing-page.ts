@@ -776,6 +776,39 @@ export async function runLandingPageTests() {
     assert.doesNotMatch(awarenessGuidelines?.reason || '', /impact factor|18\.1|14\.7/i);
     assert.doesNotMatch(decisionHome?.reason || '', /impact factor|18\.1|14\.7/i);
 
+    const childCache = new Map();
+    const childFacts = await lookupClarivateFacts('https://www.nature.com/ncomms/submission-guidelines', false, {
+      persist: false,
+      cache: childCache,
+      fetchPage: async () => {
+        throw new LandingPageError('Landing page redirected to itself.', 'http');
+      },
+    });
+    assert.equal(childFacts.journalName, 'Nature Communications');
+    assert.equal(childFacts.url, 'https://www.nature.com/ncomms/submission-guidelines');
+    assert.notEqual(childFacts.verificationStatus, 'missing');
+    assert.equal(factsForCopy(childFacts).impactFactor, null);
+    assert.equal(suggestStageUrl(childFacts.url || '', 'AWA', childFacts)?.url, 'https://www.nature.com/ncomms');
+    assert.equal(childCache.has('issn:2041-1723'), false);
+    assert.equal(childCache.has('host:nature.com/ncomms/submission-guidelines'), true);
+    const notAChild = await lookupClarivateFacts('https://www.nature.com/ncomms-extra/submission-guidelines', false, {
+      persist: false,
+      cache: new Map(),
+      fetchPage: async () => {
+        throw new LandingPageError('Landing page redirected to itself.', 'http');
+      },
+    });
+    assert.equal(notAChild.journalName, 'Unknown journal');
+    assert.equal(notAChild.verificationStatus, 'missing');
+    const flagshipSection = await lookupClarivateFacts('https://www.nature.com/nature/for-authors', false, {
+      persist: false,
+      cache: new Map(),
+      fetchPage: async () => {
+        throw new LandingPageError('Landing page redirected to itself.', 'http');
+      },
+    });
+    assert.equal(flagshipSection.verificationStatus, 'missing');
+
     const catalogRankings = mergeLandingPageFacts(
       {
         journalName: 'Example Journal',
