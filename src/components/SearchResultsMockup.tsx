@@ -22,6 +22,7 @@ import {
 } from '../types';
 import { countCharacterWidth, formatCharCountLabel } from '../utils/textUtils';
 import { deriveDisplayUrl } from '../utils/csvExporter';
+import { metricsFromClarivateWos, trustedApcUsd, trustedImpactFactor } from '../utils/metricClaims';
 
 interface Props {
   ads: GoogleSearchAds;
@@ -54,7 +55,9 @@ export const SearchResultsMockup: React.FC<Props> = ({
     stage === 'AWA'
       ? `${facts.primaryDiscipline?.split('(')[0]?.trim().toLowerCase() || 'scientific'} research articles`
       : stage === 'CON'
-      ? `[${facts.journalName.toLowerCase()} impact factor]`
+      ? trustedImpactFactor(facts) != null
+        ? `[${facts.journalName.toLowerCase()} impact factor]`
+        : `"${facts.journalName.toLowerCase()} aims and scope"`
       : `[submit manuscript ${facts.journalName.toLowerCase()}]`;
 
   const [searchQuery, setSearchQuery] = useState(defaultQuery);
@@ -317,14 +320,19 @@ export const SearchResultsMockup: React.FC<Props> = ({
             <div className="space-y-1">
               <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
                 <Globe className="w-3 h-3 text-slate-400" />
-                <span>clarivate.com &gt; jcr &gt; browse</span>
+                <span>
+                  {metricsFromClarivateWos(facts)
+                    ? 'clarivate.com > jcr > browse'
+                    : 'www.nature.com > journal-metrics'}
+                </span>
               </div>
               <h3 className="text-sm font-normal text-[#1a0dab] hover:underline cursor-pointer">
-                Clarivate Journal Citation Reports: {facts.journalName} Metrics
+                {facts.journalName} journal information
               </h3>
               <p className="text-xs text-[#4d5156] leading-relaxed">
-                {facts.journalName} Journal Impact Factor {facts.impactFactor || 'N/A'}. Indexed in{' '}
-                {facts.indexing?.join(', ') || 'Web of Science Core Collection'}.
+                {trustedImpactFactor(facts) != null
+                  ? `${facts.journalName} impact factor ${trustedImpactFactor(facts)}${metricsFromClarivateWos(facts) ? ` (clarivate_wos_journals_api JCR ${facts.jcrYear ?? ''})` : ''}.`
+                  : `${facts.journalName}. Aims, scope, and author information.`}
               </p>
             </div>
 
@@ -338,7 +346,7 @@ export const SearchResultsMockup: React.FC<Props> = ({
               </h3>
               <p className="text-xs text-[#4d5156] leading-relaxed">
                 Prepare your manuscript for peer review. Download article templates, check open
-                access APC details (${facts.apcUsd || 'standard'}), and view submission checklists.
+                access APC details ({trustedApcUsd(facts) != null ? `$${trustedApcUsd(facts)}` : 'see the journal page'}), and view submission checklists.
               </p>
             </div>
           </div>

@@ -20,8 +20,10 @@ import {
 import { runComplianceAudit, autoFixComplianceIssues } from './utils/complianceValidator';
 import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
 import { AlertCircle, AlertTriangle, Sparkles } from 'lucide-react';
+import { NATURE_HOMEPAGE_URL } from './utils/journalUrl';
+import { trustedApcUsd, trustedCasZone, trustedImpactFactor, trustedQuartile } from './utils/metricClaims';
 
-const DEFAULT_LANDING_URL = 'https://www.nature.com/nature';
+const DEFAULT_LANDING_URL = NATURE_HOMEPAGE_URL;
 
 export default function App() {
   const [landingPageUrl, setLandingPageUrl] = useState<string>(DEFAULT_LANDING_URL);
@@ -66,15 +68,11 @@ export default function App() {
         body: JSON.stringify({ url: url.trim(), forceRefresh }),
       });
       const data = await res.json();
-      if (!res.ok || !data.facts) {
-        setClarivateFacts(null);
-        setCampaign(null);
-        setError(data.error || 'That URL could not be read as a Springer Nature journal page.');
-        return;
-      }
-      setClarivateFacts(data.facts);
-      if (campaign) {
-        setCampaign((prev) => (prev ? { ...prev, clarivateFacts: data.facts } : null));
+      if (data.facts) {
+        setClarivateFacts(data.facts);
+        if (campaign) {
+          setCampaign((prev) => (prev ? { ...prev, clarivateFacts: data.facts } : null));
+        }
       }
     } catch (err: any) {
       console.error('Failed to fetch Clarivate JCR facts:', err);
@@ -117,12 +115,7 @@ export default function App() {
 
     // Check if facts are missing before generating
     const currentFacts = manualFacts || clarivateFacts;
-    if (
-      currentFacts &&
-      (currentFacts.verificationStatus === 'missing' ||
-        (currentFacts.missingFields && currentFacts.missingFields.length > 0) ||
-        currentFacts.impactFactor === null)
-    ) {
+    if (currentFacts && currentFacts.verificationStatus === 'missing') {
       setError('Please complete journal metrics before generating campaigns. Key metrics are missing.');
       setIsManualJournalOpen(true);
       return;
@@ -288,9 +281,10 @@ export default function App() {
 **Author Stage:** ${cfg.name}
 **Author Mindset:** ${cfg.authorMindset}
 **Campaign Objective:** ${cfg.campaignObjective}
-**Impact factor (${campaign.clarivateFacts.provenanceMap?.impactFactor?.source || campaign.clarivateFacts.verificationStatus}):** ${campaign.clarivateFacts.impactFactor ?? 'N/A'} (5-Year IF: ${campaign.clarivateFacts.fiveYearImpactFactor ?? 'N/A'})
-**JCR Quartile & CAS Zone:** ${campaign.clarivateFacts.jcrQuartile ?? 'N/A'} · ${campaign.clarivateFacts.casZone ?? 'N/A'}
-**Publishing Model & APC:** ${campaign.clarivateFacts.openAccessType ?? 'Open Access'} ($${campaign.clarivateFacts.apcUsd ?? 'N/A'} USD)
+**Impact factor:** ${trustedImpactFactor(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
+**Quartile:** ${trustedQuartile(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
+**CAS zone:** ${trustedCasZone(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
+**APC (USD):** ${trustedApcUsd(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **Primary Call-to-Action:** "${campaign.primaryCta || cfg.primaryCta}"
 **Recommended Destination:** ${campaign.recommendedDestination?.url || campaign.clarivateFacts.url} (${campaign.recommendedDestination?.label || cfg.recommendedDestination.label})
 **Generation Engine:** ${campaign.generationSource === 'ai_grounded' ? 'AI-Grounded (Gemini 3.8)' : 'Curated Publishing Strategy Fallback'}

@@ -1,5 +1,6 @@
 import { GeneratedAdCampaign, STAGE_CONFIGS, normalizeStage } from '../types';
 import { smartClampWithWidth } from './textUtils';
+import { metricsAreTrusted, metricsFromClarivateWos, trustedApcUsd, trustedCasZone, trustedFirstDecisionDays, trustedImpactFactor } from './metricClaims';
 
 function escapeCsvField(field: string | number | undefined | null): string {
   if (field === undefined || field === null) return '""';
@@ -12,7 +13,7 @@ function escapeCsvField(field: string | number | undefined | null): string {
 
 /**
  * Extracts a Google Ads compliant Display URL with max 15 chars per path segment
- * e.g. "nature.com/nature/about" -> Display Path 1: "nature", Display Path 2: "about"
+ * e.g. "nature.com/aps/about" -> Display Path 1: "aps", Display Path 2: "about"
  */
 export function deriveDisplayUrl(finalUrl: string): string {
   try {
@@ -28,7 +29,7 @@ export function deriveDisplayUrl(finalUrl: string): string {
     }
     return domain;
   } catch {
-    return 'nature.com';
+    return '';
   }
 }
 
@@ -42,45 +43,37 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
   const journalName = facts.journalName || 'Journal';
   const campaignName = `${journalName} - ${cfg.shortLabel} - Search`;
   const adGroupName = `${cfg.shortLabel} Author Keywords`;
-  const finalUrl = campaign.recommendedDestination?.url || facts?.url || 'https://www.nature.com';
+  const finalUrl = campaign.recommendedDestination?.url || facts?.url || '';
   const displayUrl = deriveDisplayUrl(finalUrl);
+  const impactFactor = trustedImpactFactor(facts);
 
-  // Provenance string
-  const ifSource = facts.provenanceMap?.impactFactor?.source;
-  const pageSourcedIf = ifSource === 'landing_page';
-  const catalogSnapshotIf = ifSource === 'catalog_snapshot';
-  const ifProv = !facts.impactFactor
-    ? 'No IF Reported'
-    : pageSourcedIf
-      ? `Page-sourced IF ${facts.impactFactor} (${facts.reportingYear || 'landing page'}, page-sourced)`
-      : catalogSnapshotIf
-        ? `Catalog snapshot IF ${facts.impactFactor} (${facts.reportingYear || 'catalog snapshot'}, catalog_snapshot)`
-        : facts.verificationStatus === 'source_verified'
-          ? `Clarivate IF ${facts.impactFactor} (${facts.reportingYear || '2024'}, ${facts.verificationStatus})`
-          : `Unverified IF ${facts.impactFactor} (${facts.reportingYear || 'unverified'}, ${facts.verificationStatus})`;
+  const fromWos = metricsFromClarivateWos(facts);
+  const ifProv = impactFactor == null
+    ? 'No trusted impact factor'
+    : fromWos
+    ? `clarivate_wos_journals_api JCR ${facts.jcrYear ?? 'undated'} IF ${impactFactor} (retrieved ${facts.retrievedAt || 'undated'})`
+    : `IF ${impactFactor} (${facts.verificationStatus})`;
   const portalProv = facts.submissionPortalUrl
     ? `Extracted Portal URL (${facts.submissionPortalUrl})`
-    : 'Verified Portal Default';
+    : 'Submission portal not provided';
   const factProvenance = `${ifProv} | ${portalProv}`;
 
-  const confidenceScore = catalogSnapshotIf
-    ? 0.5
-    : facts.verificationStatus === 'source_verified'
+  const confidenceScore =
+    fromWos
       ? 0.95
       : facts.verificationStatus === 'user_provided'
       ? 0.85
-      : 0.6;
+      : facts.verificationStatus === 'page_sourced'
+      ? 0.8
+      : 0;
 
-  const qualityNotes =
-    facts.verificationStatus === 'user_provided'
-      ? 'User-provided metrics; verify before scale'
-      : catalogSnapshotIf
-      ? 'Catalog snapshot; not Clarivate-verified'
-      : facts.verificationStatus === 'source_verified'
-      ? 'Source-grounded via Clarivate JCR & Web of Science'
-      : pageSourcedIf
-      ? 'Page-sourced from the journal landing page; not Clarivate-verified'
-      : 'Estimated web data; review in editor';
+  const qualityNotes = !metricsAreTrusted(facts)
+    ? 'No trusted metrics; numeric claims omitted'
+    : facts.verificationStatus === 'user_provided'
+    ? 'User-provided metrics; verify before scale'
+    : fromWos
+    ? 'Metrics from clarivate_wos_journals_api'
+    : 'Metrics read from the journal page';
 
   // Extract first 3 headlines and 2 descriptions (clamped strictly)
   const headlines = campaign.searchAds?.headlines || [];
@@ -213,24 +206,19 @@ export function downloadGoogleAdsEditorPackage(campaign: GeneratedAdCampaign) {
   // 2. Generate and download README instructions with Provenance details
   const usedFactsSummary = `
 - Journal Title: ${facts.journalName} (${facts.publisher})
-- Impact factor: ${facts.impactFactor ?? 'None'} (Provenance: ${facts.provenanceMap?.impactFactor?.source || facts.verificationStatus}; ${facts.sourceAttribution})
-- CAS Zone Ranking: ${facts.casZone ?? 'None'}
-- Peer Review Turnaround: ${facts.firstDecisionDays ? `${facts.firstDecisionDays} days` : 'Not stated'}
-- Publishing Model & APC: ${facts.openAccessType ?? 'Open Access'} ($${facts.apcUsd ?? 'None'})
-- Submission Portal: ${facts.submissionPortalUrl ?? `${facts.url}/submit`}
+- Impact factor: ${trustedImpactFactor(facts) ?? 'omitted (no trusted value)'} (Provenance: ${facts.sourceAttribution})
+- CAS zone: ${trustedCasZone(facts) ?? 'omitted (no trusted value)'}
+- First decision days: ${trustedFirstDecisionDays(facts) ?? 'omitted (no trusted value)'}
+- APC (USD): ${trustedApcUsd(facts) ?? 'omitted (no trusted value)'}
+- Submission portal: ${facts.submissionPortalUrl ?? 'Not provided'}
 `;
 
-  const impactSource = facts.provenanceMap?.impactFactor?.source;
-  const qualityWarnings =
-    facts.verificationStatus === 'user_provided'
-      ? '⚠️ Quality Notice: 3 facts are user-provided. Confirm institutional metrics before campaign launch.'
-      : impactSource === 'catalog_snapshot'
-      ? 'Catalog snapshot metrics. Not a Clarivate lookup and not verified.'
-      : impactSource === 'landing_page'
-      ? 'Page-sourced metrics from the journal landing page. Not Clarivate-verified.'
-      : facts.verificationStatus === 'source_verified'
-      ? '✅ Provenance Notice: All metrics verified via official Clarivate JCR & Web of Science records.'
-      : 'Estimated web data; review before launch.';
+  const fromWos = metricsFromClarivateWos(facts);
+  const qualityWarnings = !metricsAreTrusted(facts)
+    ? 'Numeric and ranking claims were omitted because this record has no trusted metrics.'
+    : fromWos
+    ? `Impact-factor values in this package came from clarivate_wos_journals_api, JCR ${facts.jcrYear ?? 'undated'}, retrieved ${facts.retrievedAt || 'undated'}.`
+    : 'Metrics in this package were supplied by the user or read from the journal page. They are not a Clarivate API result.';
 
   const readmeText = `# Google Ads Editor Import Package & Quality Audit
 Campaign: ${facts.journalName} (${stage})

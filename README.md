@@ -20,7 +20,7 @@ Marketing Content Generation Engine combines **Gemini 3.8 Flash** with determini
 ## 2. Strategic Objectives
 
 1. **Grounded Provenance (No Invented Defaults)**
-   Every numeric claim (Impact Factor, 5-Year IF, CAS Zone, Decision Days, APC fee) must trace back to verified Clarivate Journal Citation Reports (JCR) data or explicitly audited user entries. If a journal is unknown or unindexed, the system returns `null` metrics, marks the record as `missing`, and strictly blocks campaign generation until official data is verified.
+   A number in an ad can come only from a manual entry, a fact read on the journal page, or the Clarivate API. The in-repo catalog is a labeled snapshot: it can name the journal, and its figures stay out of ads. An unknown URL is marked `missing`, with null metrics, and campaign generation stays blocked.
 2. **True Funnel Differentiation (AWA · CON · DEC)**
    Move past generic promotional slogans. The engine synthesizes stage-specific intent, landing destinations, primary CTAs, search keywords, and responsive display banners calibrated to author psychology.
 3. **Realistic Ad Previews with Real-Time Ad Strength**
@@ -84,24 +84,27 @@ The engine organizes all ad generation, keywords, and call-to-actions around thr
 
 ## 4. Fact Provenance & Metric Verification Architecture
 
-Scientific advertising demands rigorous data verification. AdEngine enforces a strict four-tier verification hierarchy:
+Scientific advertising demands rigorous data verification. Metric numbers in ads may come only from a manual entry, a fact read on the journal page, or a future Clarivate API client. The in-repo catalog is a labeled snapshot, not a Clarivate verification.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                     METRIC PROVENANCE HIERARCHY                        │
 ├────────────────────────────┬───────────────────────────────────────────┤
-│ source_verified            │ Verified from the built-in Clarivate JCR  │
-│                            │ catalog shipped with the server           │
+│ clarivate_wos_journals_api │ Web of Science Journals API               │
+│                            │ (api.clarivate.com/.../wos-journals/v1).  │
+│                            │ Records the JCR year and retrieved-at.    │
+│                            │ The HTTP client is unwired in this build. │
 ├────────────────────────────┼───────────────────────────────────────────┤
-│ user_provided              │ Manually supplied & confirmed by user in  │
-│                            │ the "Add / Edit Journal Metrics" modal    │
+│ page_sourced               │ Read from the journal page. The page      │
+│                            │ client is unwired in this build.          │
 ├────────────────────────────┼───────────────────────────────────────────┤
-│ unverified                 │ Retrieved via external web search engine; │
-│                            │ requires user audit before launch         │
+│ user_provided              │ Typed and saved by the user.              │
 ├────────────────────────────┼───────────────────────────────────────────┤
-│ missing                    │ Unknown journal or unindexed record;      │
-│                            │ ALL numeric fields return null.           │
-│                            │ Campaign generation is BLOCKED.           │
+│ catalog_snapshot           │ In-repo snapshot with a data year.        │
+│                            │ Shown as a snapshot. Not used in ad copy. │
+├────────────────────────────┼───────────────────────────────────────────┤
+│ missing                    │ Unknown URL. Numeric fields are null.     │
+│                            │ Campaign generation is blocked.           │
 └────────────────────────────┴───────────────────────────────────────────┘
 ```
 
@@ -172,7 +175,7 @@ Each metric stores its own `expireAt`. A cached journal is treated as stale only
 - **Styling:** Tailwind CSS v4 (`@tailwindcss/vite`) using modern CSS variable configurations.
 - **Icons:** `lucide-react` for iconography.
 - **Server:** Express 4.x running in tandem with Vite development middlewares in dev mode, serving pre-built assets in production.
-- **AI Engine:** Google `@google/genai` SDK using `gemini-3.8-flash`. Calls set `responseMimeType` to `application/json` and the server `JSON.parse`s `response.text`. No response schema is sent. If the key is missing, the call fails, or the body is not usable JSON, lookup and generation fall back to the catalog and the deterministic template engine.
+- **AI Engine:** Google `@google/genai` SDK using `gemini-3.8-flash` for ad copy only. Calls set `responseMimeType` to `application/json` and the server `JSON.parse`s `response.text`. No response schema is sent. Gemini is not asked for metric values. If the key is missing, the call fails, or the body is not usable JSON, generation uses the deterministic template engine. A claim guard then strips any number or ranking that is not a trusted fact.
 - **Build System:** Vite 8.x with TypeScript compilation (`tsc --noEmit`).
 
 ---
@@ -250,7 +253,7 @@ The navbar **Google Ads Editor CSV** action (`downloadGoogleAdsEditorPackage`) d
 
    `Campaign`, `Ad Group`, `Keyword`, `Match Type`, `Max CPC`, `Headline 1`, `Headline 2`, `Headline 3`, `Description 1`, `Description 2`, `Final URL`, `Display URL`, `Fact Provenance`, `Confidence`, `Quality Notes`
 
-   Only the first three headlines and first two descriptions are written. `Max CPC` is left blank. `Fact Provenance`, `Confidence`, and `Quality Notes` are audit columns for the importer to map or ignore. `Confidence` is `0.95` for `source_verified`, `0.85` for `user_provided`, and `0.60` otherwise.
+   Only the first three headlines and first two descriptions are written. `Max CPC` is left blank. `Fact Provenance`, `Confidence`, and `Quality Notes` are audit columns for the importer to map or ignore. `Confidence` is `0.95` for `clarivate_wos_journals_api`, `0.85` for `user_provided`, `0.80` for `page_sourced`, and `0` otherwise. A row without a trusted impact factor says so and does not print a number.
 
 2. **`{journal}-{stage}-import-instructions.txt`** — a short import guide and fact-audit note, not a fourth CSV.
 
@@ -262,13 +265,13 @@ The same Export menu also downloads a **Markdown campaign brief** (`handleExport
 
 | Endpoint | Method | Payload | Description |
 | :--- | :--- | :--- | :--- |
-| `/api/fetch-clarivate-facts` | `POST` | `{ "url": string, "forceRefresh"?: boolean }` | Resolves Clarivate JCR metrics from cache, verified catalog, or AI lookup. Returns `verificationStatus: 'missing'` if unknown. |
+| `/api/fetch-clarivate-facts` | `POST` | `{ "url": string, "forceRefresh"?: boolean, "issn"?: string }` | Resolves the URL through cache, then `lookupMetricsByIssn` when an ISSN is present, then the page-facts client, then the catalog snapshot. Gemini is not asked for metrics. Returns `verificationStatus: 'missing'` if unknown. |
 | `/api/update-journal-metrics` | `POST` | `{ "facts": ClarivateJournalMetrics }` | Saves user-supplied or audited journal metrics into persistent cache (`metrics-cache.json`). |
-| `/api/generate-campaign` | `POST` | `{ "landingPageUrl": string, "funnelStage": "AWA"\|"CON"\|"DEC", "channels": string[], "outputLanguage": "all"\|"EN"\|"ZH", "customPlaybook"?: string, "userProvidedFacts"?: object }` | Generates full Google Search, Display, and Keywords pack. Rejects with `400` if required metrics are missing. |
+| `/api/generate-campaign` | `POST` | `{ "landingPageUrl": string, "funnelStage": "AWA"\|"CON"\|"DEC", "channels": string[], "outputLanguage": "all"\|"EN"\|"ZH", "customPlaybook"?: string, "userProvidedFacts"?: object }` | Generates search, display, and keyword copy. Rejects with `400` only when `verificationStatus` is `missing`. Untrusted numbers are omitted and stripped by the claim guard. |
 | `/api/compare-stages` | `POST` | `{ "landingPageUrl": string, "outputLanguage"?: string }` | Builds AWA, CON, and DEC campaigns with the deterministic template engine. This route does not call Gemini. |
 | `/api/cache/list` | `GET` | — | Lists all currently cached journals, access timestamps, and expiration statuses. |
 | `/api/cache/journal/:id` | `GET` | — | Inspects cached metric details and TTL expiration timestamps for a specific journal. |
-| `/api/cache/refresh/:id` | `POST` | `{ "url"?: string }` | Forces a fresh lookup (catalog, then Gemini if configured), bypassing the existing cache entry. |
+| `/api/cache/refresh/:id` | `POST` | `{ "url"?: string }` | Forces a fresh lookup of the given URL, or the URL already stored on that cache entry. Returns `400` when neither exists. Does not build a URL from the cache id. |
 | `/api/cache/clear` | `POST` | — | Flushes in-memory cache and deletes `metrics-cache.json` on disk. |
 
 ---

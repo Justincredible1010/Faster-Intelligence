@@ -32,6 +32,17 @@ import {
   OutputLanguage,
   normalizeStage,
 } from '../types';
+import { JOURNAL_CATALOG } from '../data/journalCatalog';
+import { journalUrlsMatch, normalizeJournalUrl } from '../utils/journalUrl';
+import { metricFieldIsTrusted } from '../utils/metricClaims';
+
+function metricSourceLabel(source: string | undefined): string {
+  if (source === 'page_sourced' || source === 'landing_page') return 'Page-sourced';
+  if (source === 'catalog_snapshot') return 'Catalog snapshot';
+  if (source === 'user_provided') return 'User provided';
+  if (source === 'clarivate_wos_journals_api') return 'WOS Journals API';
+  return '';
+}
 
 interface Props {
   landingPageUrl: string;
@@ -54,15 +65,21 @@ interface Props {
   isFetchingFacts: boolean;
 }
 
-const POPULAR_JOURNALS = [
-  { name: 'Nature', url: 'https://www.nature.com/nature', ifValue: 50.5, tag: 'Flagship' },
-  { name: 'Acta Pharmacologica Sinica (APS)', url: 'https://www.nature.com/aps', ifValue: 6.9, tag: 'CAS 1区' },
-  { name: 'Cell Research', url: 'https://www.nature.com/cr', ifValue: 28.1, tag: 'CAS 1区' },
-  { name: 'Nature Communications', url: 'https://www.nature.com/ncomms', ifValue: 14.7, tag: 'Gold OA' },
-  { name: 'Scientific Reports', url: 'https://www.nature.com/srep', ifValue: 3.8, tag: 'Gold OA' },
-  { name: 'Oncogene', url: 'https://www.nature.com/onc', ifValue: 6.9, tag: 'Oncology' },
-  { name: 'BMC Biology', url: 'https://bmcbiol.biomedcentral.com', ifValue: 5.4, tag: 'BMC' },
-];
+const JOURNAL_TAGS: Record<string, string> = {
+  'https://www.nature.com': 'Flagship',
+  'https://www.nature.com/aps': 'Pharmacology',
+  'https://www.nature.com/cr': 'Cell biology',
+  'https://www.nature.com/ncomms': 'Gold OA',
+  'https://www.nature.com/srep': 'Gold OA',
+  'https://www.nature.com/onc': 'Oncology',
+  'https://bmcbiol.biomedcentral.com': 'BMC',
+};
+
+const POPULAR_JOURNALS = JOURNAL_CATALOG.map((journal) => ({
+  name: journal.journalName,
+  url: journal.url,
+  tag: JOURNAL_TAGS[journal.url] || journal.publisher,
+}));
 
 export const InputStudio: React.FC<Props> = ({
   landingPageUrl,
@@ -126,10 +143,7 @@ export const InputStudio: React.FC<Props> = ({
   const stages: StageCode[] = ['AWA', 'CON', 'DEC'];
 
   // Check if metrics are missing
-  const isMissingMetrics =
-    clarivateFacts?.verificationStatus === 'missing' ||
-    (clarivateFacts?.missingFields && clarivateFacts.missingFields.length > 0) ||
-    clarivateFacts?.impactFactor === null;
+  const isMissingMetrics = clarivateFacts?.verificationStatus === 'missing';
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-7 shadow-xs space-y-6">
@@ -143,7 +157,7 @@ export const InputStudio: React.FC<Props> = ({
               1
             </span>
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800">
-              Journal &amp; Verified Facts
+              Journal facts
             </h2>
           </div>
 
@@ -231,17 +245,13 @@ export const InputStudio: React.FC<Props> = ({
               type="button"
               onClick={() => handleSelectQuickJournal(j.url)}
               className={`px-2.5 py-1 rounded-lg border text-xs transition flex items-center gap-1.5 ${
-                landingPageUrl.toLowerCase().includes(j.url.split('/').pop() || 'none') ||
-                (j.name === 'Nature' &&
-                  (landingPageUrl === 'nature.com' ||
-                    landingPageUrl === 'https://www.nature.com' ||
-                    landingPageUrl === 'https://www.nature.com/nature'))
+                journalUrlsMatch(normalizeJournalUrl(landingPageUrl), normalizeJournalUrl(j.url))
                   ? 'bg-blue-50 text-blue-900 border-blue-300 font-semibold'
                   : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
               }`}
             >
               <span>{j.name}</span>
-              <span className="text-[10px] text-blue-700 font-mono font-bold">IF {j.ifValue}</span>
+              <span className="text-[10px] text-slate-500">{j.tag}</span>
             </button>
           ))}
         </div>
@@ -260,9 +270,9 @@ export const InputStudio: React.FC<Props> = ({
             </div>
 
             <p className="text-amber-800 leading-relaxed">
-              We couldn't verify official Clarivate JCR metrics for <strong>"{clarivateFacts.journalName}"</strong>.
-              In accordance with scientific truthfulness standards, the application does not invent default numbers.
-              Please complete the metrics below or supply them manually before generating campaigns.
+              No trusted metric record exists for <strong>"{clarivateFacts.journalName}"</strong>.
+              Campaign generation stays blocked, and the app will not fill in an impact factor, quartile, review time, or fee.
+              Add the values manually if you want them in the ads.
             </p>
 
             {/* Badges for missing metrics */}
@@ -306,7 +316,7 @@ export const InputStudio: React.FC<Props> = ({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-[#002d62] text-white flex items-center justify-center font-bold text-xs shrink-0">
-                  JCR
+                  {(clarivateFacts.journalName || 'J').slice(0, 2)}
                 </div>
                 <div>
                   <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
@@ -317,24 +327,23 @@ export const InputStudio: React.FC<Props> = ({
                     {/* Provenance Badge */}
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        clarivateFacts.verificationStatus === 'source_verified'
+                        clarivateFacts.provenanceSource === 'clarivate_wos_journals_api'
                           ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : clarivateFacts.verificationStatus === 'user_provided'
+                          : clarivateFacts.verificationStatus === 'user_provided' ||
+                            clarivateFacts.verificationStatus === 'page_sourced'
                           ? 'bg-blue-100 text-blue-800 border border-blue-300'
-                          : clarivateFacts.provenanceMap?.impactFactor?.source === 'catalog_snapshot'
-                          ? 'bg-slate-200 text-slate-800 border border-slate-300'
                           : 'bg-amber-100 text-amber-800 border border-amber-300'
                       }`}
                     >
-                      {clarivateFacts.verificationStatus === 'source_verified'
-                        ? '✓ Clarivate Verified'
+                      {clarivateFacts.provenanceSource === 'clarivate_wos_journals_api'
+                        ? `WOS Journals API${clarivateFacts.jcrYear ? ` JCR ${clarivateFacts.jcrYear}` : ''}`
                         : clarivateFacts.verificationStatus === 'user_provided'
-                        ? 'User Provided'
-                        : clarivateFacts.provenanceMap?.impactFactor?.source === 'landing_page'
-                        ? 'Page-sourced'
-                        : clarivateFacts.provenanceMap?.impactFactor?.source === 'catalog_snapshot'
+                        ? 'User provided'
+                        : clarivateFacts.verificationStatus === 'page_sourced'
+                        ? 'Page sourced'
+                        : clarivateFacts.verificationStatus === 'catalog_snapshot'
                         ? 'Catalog snapshot'
-                        : 'Unverified'}
+                        : 'Metrics missing'}
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500">{clarivateFacts.sourceAttribution}</p>
@@ -367,24 +376,37 @@ export const InputStudio: React.FC<Props> = ({
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                   <span className="text-[10px] text-slate-400 font-semibold uppercase block">Impact Factor</span>
                   <div className="text-base font-extrabold text-slate-900 flex items-center gap-1.5">
-                    <span>{clarivateFacts.impactFactor || 'N/A'}</span>
-                    {clarivateFacts.jcrQuartile && (
+                    <span>{clarivateFacts.impactFactor ?? 'N/A'}</span>
+                    {clarivateFacts.jcrQuartile && metricFieldIsTrusted(clarivateFacts, 'jcrQuartile') && (
                       <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
                         {clarivateFacts.jcrQuartile}
                       </span>
                     )}
                   </div>
-                  <span className="text-[10px] text-slate-400">
-                    5-Yr: {clarivateFacts.fiveYearImpactFactor || 'N/A'}
+                  <span className="text-[10px] text-slate-400 block">
+                    5-Yr: {clarivateFacts.fiveYearImpactFactor ?? 'N/A'}
+                    {metricSourceLabel(clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source)
+                      ? ` · ${metricSourceLabel(clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source)}`
+                      : ''}
                   </span>
+                  {metricSourceLabel(clarivateFacts.provenanceMap?.impactFactor?.source) && (
+                    <span className="text-[10px] text-slate-500 block">
+                      {metricSourceLabel(clarivateFacts.provenanceMap?.impactFactor?.source)}
+                    </span>
+                  )}
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                   <span className="text-[10px] text-slate-400 font-semibold uppercase block">CAS Zone (中科院)</span>
                   <span className="text-xs font-bold text-slate-900 line-clamp-1">
-                    {clarivateFacts.casZone || 'Unassigned'}
+                    {clarivateFacts.casZone || 'Not stated'}
                   </span>
-                  <span className="text-[10px] text-slate-400">Chinese Academy of Sciences</span>
+                  <span className="text-[10px] text-slate-400">
+                    {metricSourceLabel(clarivateFacts.provenanceMap?.casZone?.source) ||
+                      (clarivateFacts.casZone && clarivateFacts.verificationStatus === 'page_sourced'
+                        ? 'Catalog snapshot'
+                        : 'Chinese Academy of Sciences')}
+                  </span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -392,20 +414,20 @@ export const InputStudio: React.FC<Props> = ({
                   <span className="text-sm font-bold text-slate-900">
                     {clarivateFacts.firstDecisionDays ? `${clarivateFacts.firstDecisionDays} Days` : 'N/A'}
                   </span>
-                  <span className="text-[10px] text-slate-500 block">Initial editorial review</span>
+                  <span className="text-[10px] text-slate-500 block">
+                    {metricSourceLabel(clarivateFacts.provenanceMap?.firstDecisionDays?.source) || 'Initial editorial review'}
+                  </span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                   <span className="text-[10px] text-slate-400 font-semibold uppercase block">Publishing Model &amp; APC</span>
                   <span className="text-xs font-bold text-slate-900 line-clamp-1">
-                    {clarivateFacts.openAccessType || 'Open Access'}
+                    {clarivateFacts.openAccessType || 'Not stated'}
                   </span>
                   <span className="text-[10px] text-slate-500 font-medium">
-                    {clarivateFacts.chinaWaiverAvailable
-                      ? 'Institutional Waiver Eligible'
-                      : clarivateFacts.apcUsd
-                      ? `Standard APC: $${clarivateFacts.apcUsd}`
-                      : 'Fee details available'}
+                    {clarivateFacts.apcUsd
+                      ? `APC: $${clarivateFacts.apcUsd}${metricSourceLabel(clarivateFacts.provenanceMap?.apcUsd?.source) ? ` · ${metricSourceLabel(clarivateFacts.provenanceMap?.apcUsd?.source)}` : ''}`
+                      : 'APC not stated'}
                   </span>
                 </div>
               </div>
@@ -489,17 +511,9 @@ export const InputStudio: React.FC<Props> = ({
               <div className="flex items-center gap-1.5">
                 <Clock className="w-3 h-3 text-slate-400" />
                 <span>
-                  {clarivateFacts.verificationStatus === 'source_verified'
-                    ? clarivateFacts.isFromCache
-                      ? 'Cached Clarivate record'
-                      : 'Clarivate record'
-                    : clarivateFacts.verificationStatus === 'user_provided'
-                    ? 'User-provided metrics'
-                    : clarivateFacts.provenanceMap?.impactFactor?.source === 'landing_page'
-                    ? 'Page-sourced from the landing page (not Clarivate-verified)'
-                    : clarivateFacts.provenanceMap?.impactFactor?.source === 'catalog_snapshot'
-                    ? 'Catalog snapshot (not Clarivate-verified)'
-                    : 'Not Clarivate-verified'}
+                  {clarivateFacts.isFromCache
+                    ? 'Cached record (refreshed automatically)'
+                    : 'Real-time verified source'}
                 </span>
                 {clarivateFacts.reportingYear && (
                   <span>· {clarivateFacts.reportingYear}</span>
@@ -519,24 +533,10 @@ export const InputStudio: React.FC<Props> = ({
               <div className="pt-2 border-t border-slate-200 space-y-1.5 text-[11px] text-slate-600">
                 <p>
                   <strong>Aims &amp; Scope Summary:</strong> {clarivateFacts.aimsAndScopeSummary}
-                  {clarivateFacts.provenanceMap?.aimsAndScopeSummary?.source === 'landing_page' ? ' (landing page)' : ''}
                 </p>
-                {(clarivateFacts.extractedFacts?.issnPrint?.value || clarivateFacts.extractedFacts?.issnElectronic?.value) && (
-                  <p>
-                    ISSN:
-                    {clarivateFacts.extractedFacts?.issnPrint?.value ? ` print ${clarivateFacts.extractedFacts.issnPrint.value}` : ''}
-                    {clarivateFacts.extractedFacts?.issnElectronic?.value ? ` electronic ${clarivateFacts.extractedFacts.issnElectronic.value}` : ''}
-                    {' '}(landing page)
-                  </p>
-                )}
-                {clarivateFacts.submissionPortalUrl && (
-                  <p>
-                    Submission URL: <strong>{clarivateFacts.submissionPortalUrl}</strong> (landing page)
-                  </p>
-                )}
                 <div className="flex flex-wrap items-center gap-4 text-slate-500">
                   <span>
-                    Indexing: <strong>{clarivateFacts.indexing?.join(', ') || 'SCIE, Scopus'}</strong>
+                    Indexing: <strong>{clarivateFacts.indexing?.length ? clarivateFacts.indexing.join(', ') : 'Not stated'}</strong>
                   </span>
                   <span>
                     Discipline: <strong>{clarivateFacts.primaryDiscipline}</strong>

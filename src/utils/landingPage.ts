@@ -2,7 +2,8 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import { lookup as dnsLookup } from 'node:dns/promises';
-import type { ExtractedFactField, ExtractedPageFacts, PageSourcedMetric } from '../types';
+import type { ExtractedFactField, ExtractedPageFacts, FactVerificationStatus, MetricProvenanceSource, PageSourcedMetric } from '../types';
+import { normalizeJournalUrl } from './journalUrl';
 
 /**
  * Journal landing pages are fetched only from Springer Nature hosts.
@@ -72,7 +73,8 @@ export interface MergeableJournalFacts {
   openAccessType?: string | null;
   apcUsd?: number | null;
   aimsAndScopeSummary?: string;
-  verificationStatus: 'source_verified' | 'user_provided' | 'unverified' | 'missing';
+  verificationStatus: FactVerificationStatus;
+  provenanceSource?: MetricProvenanceSource;
   isVerifiedClarivate?: boolean;
   reportingYear?: string;
   sourceAttribution: string;
@@ -253,25 +255,13 @@ export function journalCacheKey(input: {
   if (print) return `issn:${print}`;
   if (electronic) return `issn:${electronic}`;
 
-  const raw = input.canonicalUrl || input.requestUrl;
-  if (!raw) return 'url:unknown';
-  try {
-    const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`;
-    const url = new URL(withScheme);
-    const host = url.hostname.toLowerCase().replace(/\.$/, '').replace(/^www\./, '');
-    const path = url.pathname.replace(/\/+$/, '').toLowerCase() || '/';
-    return `url:${host}${path === '/' ? '' : path}`;
-  } catch {
-    return 'url:unknown';
-  }
+  const norm = normalizeJournalUrl(input.canonicalUrl || input.requestUrl);
+  if (!norm.canonical) return 'url:unknown';
+  return `url:${norm.hostKey}${norm.pathname}`;
 }
 
 export function normalizedRequestUrl(raw: string): string {
-  const url = parseAllowedJournalUrl(raw);
-  url.hash = '';
-  url.search = '';
-  url.pathname = url.pathname.replace(/\/+$/, '') || '/';
-  return url.toString();
+  return normalizeJournalUrl(raw).canonical;
 }
 
 async function defaultResolveHost(hostname: string, signal?: AbortSignal): Promise<string[]> {
@@ -467,7 +457,18 @@ async function readLandingPage(rawUrl: string, deps: FetchLandingPageDeps, signa
   throw new LandingPageError('Landing page redirected too many times.', 'http');
 }
 
-export async function fetchLandingPage(rawUrl: string, deps: FetchLandingPageDeps = {}): Promise<FetchedLandingPage> {
+export type FetchPageResult = string | { html: string; finalUrl?: string };
+
+export async function fetchLandingPage(
+  rawUrl: string,
+  deps: FetchLandingPageDeps = {},
+  fetchPage?: (url: string) => Promise<FetchPageResult>
+): Promise<FetchedLandingPage> {
+  if (fetchPage) {
+    const provided = await fetchPage(rawUrl);
+    if (typeof provided === 'string') return { html: provided, finalUrl: rawUrl };
+    return { html: provided.html, finalUrl: provided.finalUrl || rawUrl };
+  }
   const timeoutMs = deps.timeoutMs ?? FETCH_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -989,18 +990,17 @@ export const CATALOG_SNAPSHOT_NOTE = 'Hardcoded catalog snapshot. Not a Clarivat
 
 type NumberFactKey = 'impactFactor' | 'fiveYearImpactFactor' | 'firstDecisionDays' | 'apcUsd';
 
-/**
- * The hardcoded catalog is still stored as source_verified until the catalog_snapshot
- * relabel lands. Live Clarivate API rows should use a different provenance source.
- */
 function isHardcodedCatalogRecord(base: MergeableJournalFacts): boolean {
-  if (base.verificationStatus === 'user_provided') return false;
+  if (base.verificationStatus === 'user_provided' || base.verificationStatus === 'clarivate_api') return false;
+  if (base.provenanceSource === 'clarivate_wos_journals_api') return false;
+  if (base.verificationStatus === 'catalog_snapshot' || base.provenanceSource === 'catalog_snapshot') return true;
   const provenance = Object.values(base.provenanceMap || {});
   if (provenance.some((item) => item?.source === 'catalog_snapshot')) return true;
+  // Older in-repo rows used source_verified plus a Clarivate label. They are snapshots.
   const claimsClarivate = provenance.some((item) => item?.source === 'Clarivate' || item?.source === 'Clarivate JCR');
   const hardcodedAttribution = /verified via clarivate/i.test(base.sourceAttribution || '');
   return (
-    base.verificationStatus === 'source_verified' &&
+    (base.verificationStatus as string) === 'source_verified' &&
     base.isVerifiedClarivate === true &&
     (claimsClarivate || hardcodedAttribution || provenance.length === 0)
   );
@@ -1026,15 +1026,16 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
 ): T {
   const catalogSnapshot = isHardcodedCatalogRecord(base);
   const userProvided = base.verificationStatus === 'user_provided';
-  const verifiedLive = base.verificationStatus === 'source_verified' && !catalogSnapshot;
+  const verifiedLive = base.verificationStatus === 'clarivate_api' && !catalogSnapshot;
   const result: T = { ...base, provenanceMap: { ...(base.provenanceMap || {}) } };
   const provenance: Record<string, Provenance> = { ...(result.provenanceMap || {}) };
 
   if (catalogSnapshot) {
-    result.verificationStatus = 'unverified';
+    result.verificationStatus = 'catalog_snapshot';
+    result.provenanceSource = 'catalog_snapshot';
     result.isVerifiedClarivate = false;
-    result.reportingYear = 'Catalog snapshot';
-    result.sourceAttribution = CATALOG_SNAPSHOT_NOTE;
+    result.reportingYear = base.reportingYear && /catalog snapshot/i.test(base.reportingYear) ? base.reportingYear : 'Catalog snapshot';
+    result.sourceAttribution = base.sourceAttribution && /catalog snapshot/i.test(base.sourceAttribution) ? base.sourceAttribution : CATALOG_SNAPSHOT_NOTE;
     for (const factKey of ['impactFactor', 'fiveYearImpactFactor', 'firstDecisionDays', 'apcUsd'] as const) {
       const existing = base[factKey];
       if (existing === null || existing === undefined) continue;
@@ -1051,7 +1052,7 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
   }
 
   if (notes?.fetchError) {
-    provenance.landingPage = { source: 'landing_page', confidence: 0, note: notes.fetchError };
+    provenance.landingPage = { source: 'page_sourced', confidence: 0, note: notes.fetchError };
   }
   result.provenanceMap = provenance;
   if (!page) return result;
@@ -1061,30 +1062,30 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
 
   if (page.journalTitle.value && !textLocked && !verifiedLive) {
     result.journalName = page.journalTitle.value;
-    provenance.journalName = { source: 'landing_page', confidence: page.journalTitle.confidence };
+    provenance.journalName = { source: 'page_sourced', confidence: page.journalTitle.confidence };
   }
 
   const aimsMissing = !base.aimsAndScopeSummary || /not verified/i.test(base.aimsAndScopeSummary);
   if (page.aimsAndScopeSummary.value && (aimsMissing || !textLocked)) {
     result.aimsAndScopeSummary = page.aimsAndScopeSummary.value;
-    provenance.aimsAndScopeSummary = { source: 'landing_page', confidence: page.aimsAndScopeSummary.confidence };
+    provenance.aimsAndScopeSummary = { source: 'page_sourced', confidence: page.aimsAndScopeSummary.confidence };
   }
 
   if (page.submissionPortalUrl.value && (!textLocked || !base.submissionPortalUrl)) {
     result.submissionPortalUrl = page.submissionPortalUrl.value;
-    provenance.submissionPortalUrl = { source: 'landing_page', confidence: page.submissionPortalUrl.confidence };
+    provenance.submissionPortalUrl = { source: 'page_sourced', confidence: page.submissionPortalUrl.confidence };
   }
   if (page.authorGuidelinesUrl.value && (!textLocked || !base.authorGuidelinesUrl)) {
     result.authorGuidelinesUrl = page.authorGuidelinesUrl.value;
-    provenance.authorGuidelinesUrl = { source: 'landing_page', confidence: page.authorGuidelinesUrl.confidence };
+    provenance.authorGuidelinesUrl = { source: 'page_sourced', confidence: page.authorGuidelinesUrl.confidence };
   }
   if (page.publisherName.value && !textLocked && !verifiedLive) {
     result.publisher = page.publisherName.value;
-    provenance.publisher = { source: 'landing_page', confidence: page.publisherName.confidence };
+    provenance.publisher = { source: 'page_sourced', confidence: page.publisherName.confidence };
   }
   if (page.openAccessPolicy.value && !textLocked && !verifiedLive) {
     result.openAccessType = page.openAccessPolicy.value;
-    provenance.openAccessType = { source: 'landing_page', confidence: page.openAccessPolicy.confidence, note: 'page-sourced' };
+    provenance.openAccessType = { source: 'page_sourced', confidence: page.openAccessPolicy.confidence, note: 'page-sourced' };
   }
 
   const applyNumber = (factKey: NumberFactKey, value: number | null | undefined, year?: number | null, note?: string) => {
@@ -1096,7 +1097,7 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
     if ((userProvided || verifiedLive) && hasExisting) {
       const kept = provenance[factKey];
       provenance[factKey] = {
-        source: userProvided ? 'user_provided' : kept?.source || 'source_verified',
+        source: userProvided ? 'user_provided' : kept?.source || 'clarivate_wos_journals_api',
         confidence: userProvided ? 0.85 : kept?.confidence ?? 0.95,
         year: kept?.year,
         note: `Existing value kept. Landing page also stated ${value}${year ? ` (${year})` : ''}, labelled page-sourced.`,
@@ -1115,7 +1116,7 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
     }
 
     writeNumber(result, factKey, value);
-    provenance[factKey] = { source: 'landing_page', confidence: 0.8, year: year ?? undefined, note: pageNote };
+    provenance[factKey] = { source: 'page_sourced', confidence: 0.8, year: year ?? undefined, note: pageNote };
   };
 
   const impact = metric(page, 'impact_factor');
@@ -1129,25 +1130,27 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
 
   if (!userProvided && !verifiedLive) {
     result.isVerifiedClarivate = false;
-    if (provenance.impactFactor?.source === 'landing_page') {
-      result.verificationStatus = 'unverified';
+    const pageSuppliedNumber = (['impactFactor', 'fiveYearImpactFactor', 'firstDecisionDays', 'apcUsd'] as const).some(
+      (key) => provenance[key]?.source === 'page_sourced'
+    );
+    if (pageSuppliedNumber) {
+      result.verificationStatus = 'page_sourced';
+      result.provenanceSource = 'page_sourced';
       result.missingFields = undefined;
       result.reportingYear = impact?.year ? `Page-sourced (${impact.year})` : 'Page-sourced';
       result.sourceAttribution = provenance.impactFactorCatalogSnapshot
         ? 'Page-sourced from the journal landing page. The catalog snapshot figure is kept only in provenance and is not Clarivate-verified.'
         : 'Page-sourced from the journal landing page. Not Clarivate-verified.';
     } else if (catalogSnapshot) {
-      result.verificationStatus = 'unverified';
+      result.verificationStatus = 'catalog_snapshot';
+      result.provenanceSource = 'catalog_snapshot';
       result.missingFields = undefined;
-      result.reportingYear = 'Catalog snapshot';
-      result.sourceAttribution = CATALOG_SNAPSHOT_NOTE;
-    } else if (base.verificationStatus === 'unverified') {
-      result.verificationStatus = 'unverified';
       result.isVerifiedClarivate = false;
     } else if (page.journalTitle.value || page.issnPrint.value || page.issnElectronic.value) {
       result.verificationStatus = 'missing';
+      result.provenanceSource = 'missing';
       result.isVerifiedClarivate = false;
-      result.sourceAttribution = 'Journal landing page was read, but it did not state an impact factor. Nothing on this record is verified.';
+      result.sourceAttribution = 'Journal landing page was read, but it did not state an impact factor. Nothing on this record is a trusted metric.';
       result.missingFields = [
         result.impactFactor === null ? 'impactFactor' : '',
         'casZone',
@@ -1167,7 +1170,7 @@ export function formatLandingPagePromptSection(facts: MergeableJournalFacts): st
   const page = facts.extractedFacts;
   if (!page) return 'No landing page facts were extracted.';
   const lines = [
-    'LANDING PAGE FACTS (provenance: landing_page). Metrics below are page-sourced and must not be called Clarivate-verified.',
+    'LANDING PAGE FACTS (provenance: page_sourced). Metrics below are page-sourced and must not be called Clarivate-verified.',
     page.journalTitle.value ? `- Title: ${page.journalTitle.value}` : '',
     page.issnPrint.value ? `- Print ISSN: ${page.issnPrint.value}` : '',
     page.issnElectronic.value ? `- Electronic ISSN: ${page.issnElectronic.value}` : '',
