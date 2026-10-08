@@ -69,13 +69,3 @@ export function journalUrlsMatch(a: NormalizedJournalUrl, b: NormalizedJournalUr
   if (!a.hostKey || !b.hostKey) return false;
   return a.hostKey === b.hostKey && a.pathname === b.pathname;
 }
-
-/** Append a destination path onto a canonical journal URL. Never invents a slug. */
-export function joinJournalUrl(base: string | null | undefined, suffix: string | null | undefined): string {
-  const root = normalizeJournalUrl(base).canonical;
-  if (!root) return '';
-  const extra = (suffix || '').trim();
-  if (!extra || extra === '/') return root;
-  const path = extra.startsWith('/') ? extra : `/${extra}`;
-  return `${root}${path}`.replace(/([^:]\/)\/+/g, '$1');
-}

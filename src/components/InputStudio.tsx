@@ -36,7 +36,13 @@ import { JOURNAL_CATALOG } from '../data/journalCatalog';
 import { journalUrlsMatch, normalizeJournalUrl } from '../utils/journalUrl';
 import { metricFieldIsTrusted } from '../utils/metricClaims';
 
-function metricSourceLabel(source: string | undefined): string {
+function metricSourceLabel(source: string | undefined, field?: string): string {
+  if (
+    (field === 'impactFactor' || field === 'fiveYearImpactFactor') &&
+    (source === 'page_sourced' || source === 'landing_page')
+  ) {
+    return 'from journal website';
+  }
   if (source === 'page_sourced' || source === 'landing_page') return 'Page-sourced';
   if (source === 'catalog_snapshot') return 'Catalog snapshot';
   if (source === 'user_provided') return 'User provided';
@@ -385,13 +391,13 @@ export const InputStudio: React.FC<Props> = ({
                   </div>
                   <span className="text-[10px] text-slate-400 block">
                     5-Yr: {clarivateFacts.fiveYearImpactFactor ?? 'N/A'}
-                    {metricSourceLabel(clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source)
-                      ? ` · ${metricSourceLabel(clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source)}`
+                    {metricSourceLabel(clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source, 'fiveYearImpactFactor')
+                      ? ` · ${metricSourceLabel(clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source, 'fiveYearImpactFactor')}`
                       : ''}
                   </span>
-                  {metricSourceLabel(clarivateFacts.provenanceMap?.impactFactor?.source) && (
+                  {metricSourceLabel(clarivateFacts.provenanceMap?.impactFactor?.source, 'impactFactor') && (
                     <span className="text-[10px] text-slate-500 block">
-                      {metricSourceLabel(clarivateFacts.provenanceMap?.impactFactor?.source)}
+                      {metricSourceLabel(clarivateFacts.provenanceMap?.impactFactor?.source, 'impactFactor')}
                     </span>
                   )}
                 </div>

@@ -50,8 +50,24 @@ export function metricFieldIsTrusted(facts: MetricCarrier, field: string): boole
   return metricsAreTrusted(facts);
 }
 
+/**
+ * Journal impact factors in ad copy come from the Clarivate API or the user.
+ * A figure read from the journal website stays on the facts panel only.
+ */
+export function impactFactorMayEnterCopy(facts: MetricCarrier, field: 'impactFactor' | 'fiveYearImpactFactor'): boolean {
+  if (!metricFieldIsTrusted(facts, field)) return false;
+  const source = fieldProvenance(facts, field);
+  if (source === 'page_sourced' || source === 'landing_page') return false;
+  if (!source && facts?.verificationStatus === 'page_sourced' && !metricsFromClarivateWos(facts)) return false;
+  return true;
+}
+
 function trustedNumber(facts: MetricCarrier, field: string, value: number | null | undefined): number | null {
-  if (!metricFieldIsTrusted(facts, field)) return null;
+  if (field === 'impactFactor' || field === 'fiveYearImpactFactor') {
+    if (!impactFactorMayEnterCopy(facts, field)) return null;
+  } else if (!metricFieldIsTrusted(facts, field)) {
+    return null;
+  }
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
@@ -93,8 +109,8 @@ export function factsForCopy<T extends MetricCarrier>(facts: T): T {
   if (!facts) return facts;
   return {
     ...facts,
-    impactFactor: metricFieldIsTrusted(facts, 'impactFactor') ? facts.impactFactor ?? null : null,
-    fiveYearImpactFactor: metricFieldIsTrusted(facts, 'fiveYearImpactFactor') ? facts.fiveYearImpactFactor ?? null : null,
+    impactFactor: impactFactorMayEnterCopy(facts, 'impactFactor') ? facts.impactFactor ?? null : null,
+    fiveYearImpactFactor: impactFactorMayEnterCopy(facts, 'fiveYearImpactFactor') ? facts.fiveYearImpactFactor ?? null : null,
     jcrQuartile: metricFieldIsTrusted(facts, 'jcrQuartile') ? facts.jcrQuartile ?? null : null,
     casZone: metricFieldIsTrusted(facts, 'casZone') ? facts.casZone ?? null : null,
     firstDecisionDays: metricFieldIsTrusted(facts, 'firstDecisionDays') ? facts.firstDecisionDays ?? null : null,
@@ -123,6 +139,9 @@ export function metricPromptSection(facts: MetricCarrier): string {
   const fromClarivate = metricsFromClarivateWos(facts);
 
   if (impactFactor != null) lines.push(`- Impact factor: ${impactFactor}`);
+  else if (facts?.impactFactor != null || facts?.fiveYearImpactFactor != null) {
+    lines.push('- Do not state an impact factor or 5-year impact factor. A journal-website figure is reference only.');
+  }
   if (fiveYear != null) lines.push(`- 5-year impact factor: ${fiveYear}`);
   if (quartile) lines.push(`- JCR quartile: ${quartile}`);
   if (casZone) lines.push(`- CAS zone: ${casZone}`);

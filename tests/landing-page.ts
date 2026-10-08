@@ -1,5 +1,6 @@
 import assert from 'assert';
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -15,8 +16,8 @@ import {
   parseAllowedJournalUrl,
   type MergeableJournalFacts,
 } from '../src/utils/landingPage';
-import { generateDeterministicCampaign, lookupClarivateFacts, type JournalLookupOptions } from '../server';
-import { guardMetricClaims } from '../src/utils/metricClaims';
+import { app, generateDeterministicCampaign, lookupClarivateFacts, type JournalLookupOptions } from '../server';
+import { factsForCopy, guardMetricClaims, metricPromptSection } from '../src/utils/metricClaims';
 
 const fixtureDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'landing-pages');
 
@@ -61,6 +62,16 @@ export async function runLandingPageTests() {
     assert.equal(isPrivateOrReservedIp('2002::'), true);
     assert.equal(isPrivateOrReservedIp('2002:7f00:1::'), true);
     assert.equal(isPrivateOrReservedIp('2002:c000:201::'), true);
+    assert.equal(isPrivateOrReservedIp('::192.168.0.1'), true);
+    assert.equal(isPrivateOrReservedIp('::8.8.8.8'), true);
+    assert.equal(isPrivateOrReservedIp('::7f00:1'), true);
+    assert.equal(isPrivateOrReservedIp('64:ff9b:1::1'), true);
+    assert.equal(isPrivateOrReservedIp('64:ff9b:1:1::8'), true);
+    assert.equal(isPrivateOrReservedIp('2001:0:1234::1'), true);
+    assert.equal(isPrivateOrReservedIp('fec0::1'), true);
+    assert.equal(isPrivateOrReservedIp('100::'), true);
+    assert.equal(isPrivateOrReservedIp('100::1'), true);
+    assert.equal(isPrivateOrReservedIp('100:1::'), false);
     assert.equal(isPrivateOrReservedIp('151.101.1.1'), false);
     assert.equal(isPrivateOrReservedIp('2001:4860:4860::8888'), false);
 
@@ -310,6 +321,23 @@ export async function runLandingPageTests() {
     );
     assert.equal(decoyApc.articleProcessingChargeUsd.value, 7350);
 
+    const oddEntity = extractLandingPageFacts(
+      '<html><head><title>Safe &#x110000; &#9999999999; &#xd800; journal</title></head><body></body></html>',
+      'https://www.nature.com/ncomms'
+    );
+    assert.match(oddEntity.journalTitle.value || '', /Safe/);
+    assert.doesNotMatch(oddEntity.journalTitle.value || '', /9999999999/);
+
+    const preferredArticles = extractLandingPageFacts(
+      `<html><head><title>Nature Communications</title></head><body>
+        <a href="/ncomms/news-and-comment">News &amp; Comment</a>
+        <a href="/ncomms/reviews-and-analysis">Reviews</a>
+        <a href="/ncomms/research-articles">Research articles</a>
+      </body></html>`,
+      'https://www.nature.com/ncomms'
+    );
+    assert.equal(preferredArticles.articlesUrl.value, 'https://www.nature.com/ncomms/research-articles');
+
     assert.equal(journalCacheKey({ issn: '0028-0836', eIssn: '1476-4687' }), 'issn:0028-0836');
     assert.equal(journalCacheKey({ eIssn: '2041-1723' }), 'issn:2041-1723');
     assert.notEqual(
@@ -346,6 +374,15 @@ export async function runLandingPageTests() {
       },
     });
     assert.equal(natureFetches, 1);
+    await lookupClarivateFacts('https://www.nature.com/', false, {
+      ...quiet,
+      cache: natureCache,
+      fetchPage: async () => {
+        natureFetches += 1;
+        return { html: natureHtml, finalUrl: 'https://www.nature.com/' };
+      },
+    });
+    assert.equal(natureFetches, 1, 'The Nature homepage catalog and page facts stay cached for 24 hours');
     assert.equal(homepage.journalName, 'Nature');
     assert.equal(homepage.verificationStatus, 'catalog_snapshot');
     assert.equal(homepage.isVerifiedClarivate, false);
@@ -413,9 +450,9 @@ export async function runLandingPageTests() {
     assert.equal(ncommsCache.has('issn:2041-1723'), true);
 
     const keptClaim = guardMetricClaims('IF 18.1 and a 9-day first decision', ncomms);
-    assert.match(keptClaim.text, /18\.1/);
+    assert.doesNotMatch(keptClaim.text, /18\.1/);
     assert.match(keptClaim.text, /9/);
-    assert.equal(keptClaim.flags.length, 0);
+    assert.ok(keptClaim.flags.length > 0);
     const strippedClaim = guardMetricClaims('Clarivate IF 14.7 and APC $6790', ncomms);
     assert.doesNotMatch(strippedClaim.text, /14\.7/);
     assert.doesNotMatch(strippedClaim.text, /6790/);
@@ -441,9 +478,10 @@ export async function runLandingPageTests() {
     });
     assert.equal(aliasFetches, 2, 'The first request for a new URL still reads the page to learn the ISSN');
     assert.equal(aliased.isFromCache, true);
+    assert.equal(aliased.url, 'https://www.nature.com/ncomms/about');
     assert.equal(aliased.impactFactor, 18.1);
     assert.equal(aliasCache.has('host:nature.com/ncomms/about'), true);
-    await lookupClarivateFacts('https://www.nature.com/ncomms/about', false, {
+    const aliasAgain = await lookupClarivateFacts('https://www.nature.com/ncomms/about', false, {
       ...quiet,
       cache: aliasCache,
       fetchPage: async () => {
@@ -452,6 +490,7 @@ export async function runLandingPageTests() {
       },
     });
     assert.equal(aliasFetches, 2, 'The saved URL alias is reused and the page is not fetched again');
+    assert.equal(aliasAgain.url, 'https://www.nature.com/ncomms/about');
 
     const ncommsCopy = generateDeterministicCampaign(ncomms, 'CON', 'EN');
     const ncommsText = [
@@ -460,7 +499,16 @@ export async function runLandingPageTests() {
       ...ncommsCopy.searchAds.callouts,
       ncommsCopy.displayAds.longHeadline,
     ].join('\n');
-    assert.match(ncommsText, /IF 18\.1/);
+    assert.equal(ncomms.impactFactor, 18.1);
+    assert.equal(factsForCopy(ncomms).impactFactor, null);
+    assert.equal(factsForCopy(ncomms).fiveYearImpactFactor, null);
+    assert.equal(factsForCopy(ncomms).firstDecisionDays, 9);
+    const ncommsPrompt = metricPromptSection(ncomms);
+    assert.doesNotMatch(ncommsPrompt, /18\.1/);
+    assert.match(ncommsPrompt, /reference only/);
+    assert.match(ncommsPrompt, /First decision days: 9/);
+    assert.doesNotMatch(ncommsText, /18\.1/);
+    assert.match(ncommsText, /9 Days/);
     assert.doesNotMatch(ncommsText, /Clarivate/);
     assert.doesNotMatch(ncommsText, /14\.7/);
     assert.doesNotMatch(ncommsText, /6790/);
@@ -471,14 +519,14 @@ export async function runLandingPageTests() {
     const checklistLink = guidelinesCampaign.searchAds.sitelinks.find((link) => link.title === 'Submission Checklist');
     assert.equal(guidelinesLink?.urlPath, 'https://www.nature.com/ncomms/submit');
     assert.equal(portalLink?.urlPath, 'https://mts-ncomms.nature.com');
-    assert.equal(checklistLink?.urlPath, 'https://www.nature.com/ncomms');
+    assert.equal(checklistLink, undefined);
     assert.equal(guidelinesCampaign.recommendedDestination.url, 'https://www.nature.com/ncomms/submit');
 
     const awareness = generateDeterministicCampaign(ncomms, 'AWA');
     const articlesLink = awareness.searchAds.sitelinks.find((link) => link.title === 'Browse Latest Articles');
     const aboutLink = awareness.searchAds.sitelinks.find((link) => link.title === 'Journal Overview & Scope');
     assert.equal(articlesLink?.urlPath, 'https://www.nature.com/ncomms/research-articles');
-    assert.equal(aboutLink?.urlPath, 'https://www.nature.com/ncomms');
+    assert.equal(aboutLink, undefined);
     assert.equal(awareness.recommendedDestination.url, 'https://www.nature.com/ncomms');
 
     const consideration = generateDeterministicCampaign(ncomms, 'CON');
@@ -498,12 +546,49 @@ export async function runLandingPageTests() {
       { ...ncomms, authorGuidelinesUrl: null, submissionPortalUrl: null, extractedFacts: undefined },
       'DEC'
     );
-    const fallbackLink = guidelinesFallback.searchAds.sitelinks.find((link) => link.title === 'Author Guidelines');
-    assert.equal(fallbackLink?.urlPath, 'https://www.nature.com/ncomms');
+    assert.deepEqual(guidelinesFallback.searchAds.sitelinks, []);
     assert.equal(guidelinesFallback.recommendedDestination.url, 'https://www.nature.com/ncomms');
-    for (const link of guidelinesFallback.searchAds.sitelinks) {
-      assert.equal(link.urlPath, 'https://www.nature.com/ncomms');
-    }
+
+    const catalogRankings = mergeLandingPageFacts(
+      {
+        journalName: 'Example Journal',
+        publisher: 'Nature Portfolio',
+        impactFactor: null,
+        fiveYearImpactFactor: null,
+        firstDecisionDays: null,
+        apcUsd: null,
+        jcrQuartile: 'Q1',
+        casZone: '中科院1区 Top',
+        indexing: ['SCIE'],
+        verificationStatus: 'catalog_snapshot',
+        provenanceSource: 'catalog_snapshot',
+        isVerifiedClarivate: false,
+        sourceAttribution: 'Catalog snapshot (data year 2024). Not retrieved from the Clarivate API.',
+      } as MergeableJournalFacts,
+      extractLandingPageFacts(
+        '<html><head><title>Example Journal</title></head><body><p>9 days to first decision</p></body></html>',
+        'https://www.nature.com/example'
+      )
+    );
+    assert.equal(catalogRankings.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+    assert.equal(catalogRankings.provenanceMap?.casZone?.source, 'catalog_snapshot');
+    assert.equal(catalogRankings.provenanceMap?.indexing?.source, 'catalog_snapshot');
+    assert.equal(catalogRankings.firstDecisionDays, 9);
+    assert.equal(catalogRankings.casZone, '中科院1区 Top');
+    const rankingCopy = factsForCopy(catalogRankings);
+    assert.equal(rankingCopy.jcrQuartile, null);
+    assert.equal(rankingCopy.casZone, null);
+    assert.deepEqual(rankingCopy.indexing, []);
+    assert.equal(rankingCopy.firstDecisionDays, 9);
+    assert.equal(rankingCopy.impactFactor, null);
+    const rankingText = guardMetricClaims('Q1 中科院1区 Top. 9 days to first decision.', catalogRankings);
+    assert.doesNotMatch(rankingText.text, /Q1/);
+    assert.doesNotMatch(rankingText.text, /1区/);
+    assert.match(rankingText.text, /9/);
+    const rankingCampaign = JSON.stringify(generateDeterministicCampaign(catalogRankings, 'CON', 'EN').searchAds);
+    assert.doesNotMatch(rankingCampaign, /SCIE/);
+    assert.doesNotMatch(rankingCampaign, /Q1/);
+    assert.doesNotMatch(rankingCampaign, /1区/);
 
     const catalogWithGaps = mergeLandingPageFacts(
       {
@@ -653,6 +738,25 @@ export async function runLandingPageTests() {
       () => lookupClarivateFacts('https://evil.example/paper', false, { ...quiet, cache: new Map() }),
       (err: unknown) => err instanceof LandingPageError && err.code === 'ssrf'
     );
+
+    const httpServer = http.createServer(app);
+    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+    const address = httpServer.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    try {
+      for (const route of ['/api/generate-campaign', '/api/compare-stages']) {
+        const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ landingPageUrl: 'https://evil.example/paper' }),
+        });
+        assert.equal(response.status, 400, route);
+        const body = await response.json();
+        assert.match(body.error || '', /Springer Nature/);
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) => httpServer.close((err) => (err ? reject(err) : resolve())));
+    }
 
     console.log('✓ Test Suite 8 Passed: ISSN or canonical URL is the cache key, and page facts beat guesses.');
   }

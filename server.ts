@@ -7,7 +7,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { loadMetricsCacheFromDisk } from './src/utils/metricsCache';
 import { JOURNAL_CATALOG } from './src/data/journalCatalog';
-import { normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
+import { NATURE_HOMEPAGE_URL, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
 import { lookupMetricsByIssn, pageFacts } from './src/utils/metricSources';
 import { factsForCopy, guardAdCopy, metricPromptSection, metricsFromClarivateWos } from './src/utils/metricClaims';
 import type { ExtractedPageFacts } from './src/types';
@@ -20,6 +20,7 @@ import {
   journalCacheKey,
   mergeLandingPageFacts,
   parseAllowedJournalUrl,
+  campaignLandingUrl,
   resolveCampaignUrl,
   stageDestinationUrl,
   type FetchLandingPageDeps,
@@ -30,7 +31,7 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
+export const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '15mb' }));
@@ -358,15 +359,23 @@ function catalogForUrl(canonical: string): JCRJournalEntry | undefined {
   return CLARIVATE_JCR_CATALOG.find((entry) => journalUrlsMatch(norm, normalizeJournalUrl(entry.url)));
 }
 
-function freshCachedFacts(cached: CachedJournal | undefined): JCRJournalEntry | null {
-  const status = cached?.fullFacts?.verificationStatus;
-  const usable = !!cached
-    && !!status
-    && status !== 'catalog_snapshot'
-    && CURRENT_METRIC_STATUSES.has(status)
-    && !isCachedJournalExpired(cached)
-    && !!cached.fullFacts;
-  return usable && cached?.fullFacts ? cached.fullFacts : null;
+const NATURE_HOME_CACHE_MS = 24 * 60 * 60 * 1000;
+
+function isNatureHomepage(canonical: string): boolean {
+  return journalUrlsMatch(normalizeJournalUrl(canonical), normalizeJournalUrl(NATURE_HOMEPAGE_URL));
+}
+
+function freshCachedFacts(cached: CachedJournal | undefined, requestUrl: string): JCRJournalEntry | null {
+  if (!cached?.fullFacts) return null;
+  const status = cached.fullFacts.verificationStatus;
+  if (!status || status === 'missing' || !CURRENT_METRIC_STATUSES.has(status)) return null;
+  if (isNatureHomepage(requestUrl)) {
+    const fetchedAt = Date.parse(cached.lastAccess || '');
+    if (!Number.isFinite(fetchedAt) || Date.now() - fetchedAt > NATURE_HOME_CACHE_MS) return null;
+    return cached.fullFacts;
+  }
+  if (status === 'catalog_snapshot' || isCachedJournalExpired(cached)) return null;
+  return cached.fullFacts;
 }
 
 export async function lookupClarivateFacts(
@@ -397,12 +406,12 @@ export async function lookupClarivateFacts(
   }
 
   const urlKey = journalCacheKey({ requestUrl: norm.canonical });
-  const cachedUrl = forceRefresh ? null : freshCachedFacts(cache.get(urlKey));
+  const cachedUrl = forceRefresh ? null : freshCachedFacts(cache.get(urlKey), norm.canonical);
   if (cachedUrl) {
     console.log(`[Cache HIT] Retrieved ${urlKey} (${cachedUrl.journalName})`);
     return {
       ...cachedUrl,
-      url: normalizeJournalUrl(cachedUrl.url).canonical || norm.canonical,
+      url: norm.canonical,
       isFromCache: true,
       cachedAt: cache.get(urlKey)?.lastAccess,
       cacheExpiresAt: cache.get(urlKey)?.metrics['impactFactor']?.expireAt,
@@ -449,13 +458,13 @@ export async function lookupClarivateFacts(
     requestUrl: norm.canonical,
   });
   if (!forceRefresh && issnKey !== urlKey) {
-    const cachedIssn = freshCachedFacts(cache.get(issnKey));
+    const cachedIssn = freshCachedFacts(cache.get(issnKey), norm.canonical);
     if (cachedIssn) {
       console.log(`[Cache ALIAS] ${urlKey} matches ${issnKey}`);
-      rememberJournal(urlKey, cachedIssn, cache, persist);
+      const aliased = { ...cachedIssn, url: norm.canonical };
+      rememberJournal(urlKey, aliased, cache, persist);
       return {
-        ...cachedIssn,
-        url: norm.canonical,
+        ...aliased,
         isFromCache: true,
         cachedAt: cache.get(issnKey)?.lastAccess,
         cacheExpiresAt: cache.get(issnKey)?.metrics['impactFactor']?.expireAt,
@@ -1015,6 +1024,21 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
   };
 }
 
+function uniqueSitelinks(
+  links: { title: string; desc: string; urlPath: string }[],
+  landingUrl: string
+) {
+  const seen = new Set<string>();
+  const landingKey = normalizeJournalUrl(landingUrl).canonical;
+  if (landingKey) seen.add(landingKey);
+  return links.filter((link) => {
+    const key = normalizeJournalUrl(link.urlPath).canonical;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function generateDeterministicCampaign(
   facts: any,
   stage: StageCode,
@@ -1038,7 +1062,7 @@ export function generateDeterministicCampaign(
     urlPath: resolveCampaignUrl(facts, role),
   });
 
-  const sitelinks =
+  const sitelinks = uniqueSitelinks(
     stage === 'AWA'
       ? [
           sitelink('Journal Overview & Scope', 'Explore research fields and mission', 'about'),
@@ -1058,7 +1082,9 @@ export function generateDeterministicCampaign(
           sitelink('Submission Checklist', 'Required documentation before submitting', 'checklist'),
           sitelink('APC & Waiver Criteria', 'Fee policy and funding guidelines', 'fees'),
           sitelink('Online Submission Portal', 'Submit paper for peer review', 'submission'),
-        ];
+        ],
+    campaignLandingUrl(facts)
+  );
 
   const callouts =
     stage === 'AWA'
@@ -1287,6 +1313,10 @@ GOOGLE ADS REQUIREMENTS:
 
     res.json({ success: true, campaign });
   } catch (error: any) {
+    if (error instanceof LandingPageError) {
+      const status = error.code === 'ssrf' ? 400 : 502;
+      return res.status(status).json({ error: error.message });
+    }
     console.error('Campaign generation failed:', error);
     res.status(500).json({ error: error.message || 'Server error' });
   }
@@ -1312,6 +1342,10 @@ app.post('/api/compare-stages', async (req, res) => {
       },
     });
   } catch (err: any) {
+    if (err instanceof LandingPageError) {
+      const status = err.code === 'ssrf' ? 400 : 502;
+      return res.status(status).json({ error: err.message });
+    }
     console.error('Compare stages failed:', err);
     res.status(500).json({ error: err.message || 'Failed to compare stages' });
   }

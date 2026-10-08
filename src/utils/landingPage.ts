@@ -69,6 +69,9 @@ export interface MergeableJournalFacts {
   publisher: string;
   impactFactor: number | null;
   fiveYearImpactFactor?: number | null;
+  jcrQuartile?: string | null;
+  casZone?: string | null;
+  indexing?: string[];
   firstDecisionDays?: number | null;
   openAccessType?: string | null;
   apcUsd?: number | null;
@@ -156,9 +159,16 @@ export function isPrivateOrReservedIp(address: string): boolean {
     if (hextets.slice(0, 5).every((part) => part === 0) && hextets[5] === 0xffff) {
       return isPrivateIpv4(hextets[6] >> 8, hextets[6] & 0xff, hextets[7] >> 8);
     }
-    // NAT64 well-known prefix 64:ff9b::/96 and 6to4 2002::/16.
+    // IPv4-compatible ::/96, including the dotted form ::a.b.c.d.
+    if (hextets.slice(0, 6).every((part) => part === 0)) return true;
+    // NAT64 64:ff9b::/96, local-use NAT64 64:ff9b:1::/48, and 6to4 2002::/16.
     if (hextets[0] === 0x64 && hextets[1] === 0xff9b && hextets.slice(2, 6).every((part) => part === 0)) return true;
+    if (hextets[0] === 0x64 && hextets[1] === 0xff9b && hextets[2] === 1) return true;
     if (hextets[0] === 0x2002) return true;
+    // Teredo 2001::/32, site-local fec0::/10, and the discard prefix 100::/64.
+    if (hextets[0] === 0x2001 && hextets[1] === 0) return true;
+    if (hextets[0] >= 0xfec0 && hextets[0] <= 0xfeff) return true;
+    if (hextets[0] === 0x100 && hextets[1] === 0 && hextets[2] === 0 && hextets[3] === 0) return true;
     return false;
   }
 
@@ -580,12 +590,18 @@ const NAMED_ENTITIES: Record<string, string> = {
   hellip: '…',
 };
 
+function decodeCodePoint(value: number): string {
+  if (!Number.isInteger(value) || value < 0 || value > 0x10ffff) return '';
+  if (value >= 0xd800 && value <= 0xdfff) return '';
+  return String.fromCodePoint(value);
+}
+
 function decodeHtml(value: string): string {
   let out = value.replace(/<[^>]+>/g, ' ');
   for (let pass = 0; pass < 2; pass += 1) {
     out = out
-      .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
-      .replace(/&#(\d+);/g, (_, num: string) => String.fromCodePoint(Number(num)))
+      .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => decodeCodePoint(parseInt(hex, 16)))
+      .replace(/&#(\d+);/g, (_, num: string) => decodeCodePoint(Number(num)))
       .replace(/&([a-z]+);/gi, (entity, name: string) => NAMED_ENTITIES[name.toLowerCase()] ?? entity);
   }
   return out.replace(/\s+/g, ' ').trim();
@@ -777,6 +793,27 @@ function anchorPath(href: string, pageUrl: string): string {
 function linkedUrl(pageAnchors: Anchor[], pageUrl: string, test: (path: string, text: string) => boolean): string | null {
   const found = pageAnchors.find((anchor) => test(anchorPath(anchor.href, pageUrl), anchor.text.toLowerCase()));
   return found ? absoluteUrl(found.href, pageUrl) : null;
+}
+
+/** research-articles wins over reviews and news-and-comment when the page links to more than one. */
+function preferredArticlesUrl(pageAnchors: Anchor[], pageUrl: string): string | null {
+  const rank = (slug: string) => {
+    if (slug === 'research-articles') return 0;
+    if (slug === 'articles' || slug === 'letters') return 1;
+    if (slug === 'reviews-and-analysis' || slug === 'reviews' || slug === 'news-and-comment') return 3;
+    return 2;
+  };
+  const matches = pageAnchors
+    .map((anchor) => {
+      const path = anchorPath(anchor.href, pageUrl);
+      if (path.startsWith('/subjects/')) return null;
+      const slug = path.split('/').filter(Boolean).pop() || '';
+      if (!ARTICLE_TYPE_SLUGS.has(slug) && slug !== 'articles') return null;
+      return { href: absoluteUrl(anchor.href, pageUrl), order: rank(slug) };
+    })
+    .filter((item): item is { href: string; order: number } => Boolean(item?.href));
+  matches.sort((left, right) => left.order - right.order);
+  return matches[0]?.href || null;
 }
 
 const ARTICLE_TYPE_SLUGS = new Set([
@@ -1024,10 +1061,7 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
       : 'unknown';
 
   const types = articleTypes(pageAnchors, html);
-  const articlesUrl = linkedUrl(pageAnchors, pageUrl, (path) => {
-    const slug = path.split('/').filter(Boolean).pop() || '';
-    return ARTICLE_TYPE_SLUGS.has(slug) || slug === 'articles';
-  });
+  const articlesUrl = preferredArticlesUrl(pageAnchors, pageUrl);
   const aboutUrl = linkedUrl(pageAnchors, pageUrl, (path) => path.endsWith('/about'));
   const editorsUrl = linkedUrl(pageAnchors, pageUrl, (path) => path.endsWith('/editors') || path.endsWith('/editorial-board'));
   const collectionsUrl = linkedUrl(pageAnchors, pageUrl, (path) => path.endsWith('/collections'));
@@ -1151,6 +1185,15 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
     }
     if (!provenance.journalName || provenance.journalName.source === 'Clarivate' || provenance.journalName.source === 'Clarivate JCR') {
       provenance.journalName = { source: 'catalog_snapshot', confidence: 0.5, note: CATALOG_SNAPSHOT_NOTE };
+    }
+    if (base.jcrQuartile) {
+      provenance.jcrQuartile = { source: 'catalog_snapshot', confidence: 0.5, note: CATALOG_SNAPSHOT_NOTE };
+    }
+    if (base.casZone) {
+      provenance.casZone = { source: 'catalog_snapshot', confidence: 0.5, note: CATALOG_SNAPSHOT_NOTE };
+    }
+    if (base.indexing && base.indexing.length > 0) {
+      provenance.indexing = { source: 'catalog_snapshot', confidence: 0.5, note: CATALOG_SNAPSHOT_NOTE };
     }
   }
 

@@ -305,7 +305,6 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   const { JOURNAL_CATALOG, CATALOG_DATA_YEAR } = await import('../src/data/journalCatalog.ts');
   const {
     NATURE_HOMEPAGE_URL,
-    joinJournalUrl,
     journalUrlsMatch,
     normalizeJournalUrl,
   } = await import('../src/utils/journalUrl.ts');
@@ -340,9 +339,6 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
     normalizeJournalUrl('https://example.com/host:nature.com').cacheKey,
     'host:example.com/host:nature.com'
   );
-  assert.strictEqual(joinJournalUrl('https://www.nature.com/', '/about'), 'https://www.nature.com/about');
-  assert.strictEqual(joinJournalUrl('https://www.nature.com/nature', '/about'), 'https://www.nature.com/nature/about');
-
   const nature = JOURNAL_CATALOG.find((entry) => entry.journalName === 'Nature');
   assert(nature, 'Catalog should include Nature');
   assert.strictEqual(nature.url, 'https://www.nature.com');
@@ -425,15 +421,11 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
     snapshotCampaign.recommendedDestination.url,
   ].join('\n');
   assert.strictEqual(snapshotCampaign.recommendedDestination.url, 'https://www.nature.com');
-  for (const link of snapshotCampaign.searchAds?.sitelinks || []) {
-    assert.strictEqual(link.urlPath, 'https://www.nature.com', link.title);
-  }
+  assert.deepStrictEqual(snapshotCampaign.searchAds?.sitelinks || [], []);
   for (const stage of ['AWA', 'DEC'] as const) {
     const campaign = generateDeterministicCampaign(nature, stage, 'EN');
     assert.strictEqual(campaign.recommendedDestination.url, 'https://www.nature.com');
-    for (const link of campaign.searchAds?.sitelinks || []) {
-      assert.strictEqual(link.urlPath, 'https://www.nature.com', `${stage} ${link.title}`);
-    }
+    assert.deepStrictEqual(campaign.searchAds?.sitelinks || [], [], stage);
   }
   assert(!snapshotLines.includes('/nature/'));
   assert(!snapshotLines.includes('50.5'));
@@ -485,7 +477,12 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert(!/clarivate/i.test(guardedText), guardedText);
   assert((guardedAi.metricClaimFlags || []).length > 0);
 
-  const homeFacts = await lookupClarivateFacts('https://www.nature.com/', true);
+  const homeHtml = fs.readFileSync(new URL('./fixtures/landing-pages/nature-portfolio-nature.html', import.meta.url), 'utf8');
+  const homeFacts = await lookupClarivateFacts('https://www.nature.com/', true, {
+    persist: false,
+    cache: new Map(),
+    fetchPage: async () => homeHtml,
+  });
   assert.strictEqual(homeFacts.journalName, 'Nature');
   assert.strictEqual(homeFacts.url, 'https://www.nature.com');
   assert.strictEqual(homeFacts.isVerifiedClarivate, false);
@@ -498,7 +495,11 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   }
   assert.strictEqual(normalizeJournalUrl(homeFacts.url).cacheKey, 'host:nature.com');
 
-  const slugFacts = await lookupClarivateFacts('https://www.nature.com/nature', true);
+  const slugFacts = await lookupClarivateFacts('https://www.nature.com/nature', true, {
+    persist: false,
+    cache: new Map(),
+    fetchPage: async () => '<html><head><title>Unrelated page</title></head><body>No journal metrics.</body></html>',
+  });
   assert.strictEqual(slugFacts.url, 'https://www.nature.com/nature');
   assert.notStrictEqual(slugFacts.verificationStatus, 'catalog_snapshot');
   assert.strictEqual(slugFacts.isVerifiedClarivate, false);
