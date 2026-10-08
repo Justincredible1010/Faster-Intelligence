@@ -36,6 +36,7 @@ import { JOURNAL_CATALOG } from '../data/journalCatalog';
 import { pickEditableJournalFacts } from '../utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from '../utils/journalUrl';
 import { metricFieldIsTrusted } from '../utils/metricClaims';
+import { formatUsageCount } from '../utils/usageCounts';
 
 function metricSourceLabel(source: string | undefined, field?: string): string {
   if (
@@ -474,7 +475,28 @@ export const InputStudio: React.FC<Props> = ({
                   </span>
                 </div>
               </div>
-            ) : (
+            ) : null}
+            {!isEditingMetrics && (clarivateFacts.articleDownloads || clarivateFacts.fullTextViews) ? (
+              <div className="mt-2.5 bg-white p-2.5 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-400 font-semibold uppercase block">Usage</span>
+                <span className="text-sm font-bold text-slate-900">
+                  {clarivateFacts.articleDownloads
+                    ? `${formatUsageCount(clarivateFacts.articleDownloads)} downloads`
+                    : ''}
+                  {clarivateFacts.articleDownloads && clarivateFacts.fullTextViews ? ' · ' : ''}
+                  {clarivateFacts.fullTextViews
+                    ? `${formatUsageCount(clarivateFacts.fullTextViews)} full-text views`
+                    : ''}
+                </span>
+                <span className="text-[10px] text-slate-500 block">
+                  {metricSourceLabel(
+                    clarivateFacts.provenanceMap?.articleDownloads?.source ||
+                      clarivateFacts.provenanceMap?.fullTextViews?.source
+                  ) || 'Page-sourced'}
+                </span>
+              </div>
+            ) : null}
+            {isEditingMetrics ? (
               /* Inline Editable Form */
               <div className="space-y-3 bg-white p-3 rounded-lg border border-blue-200">
                 <span className="font-bold text-xs text-slate-800 block">Override or Verify Journal Metrics:</span>
@@ -570,7 +592,7 @@ export const InputStudio: React.FC<Props> = ({
                   </button>
                 </div>
               </div>
-            )}
+            ) : null}
 
             {/* Cache indicator */}
             <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-200/60">

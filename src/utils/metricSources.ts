@@ -116,6 +116,9 @@ function latestJcrYear(profile: WosJournalProfile): number | null {
  * Turn one ISSN into metrics using the Journals API client.
  * Returns null when the client is unwired or the payload has no JIF.
  * Does not fill in a hardcoded impact factor.
+ * The year report has impact and rank fields only. It does not state a
+ * journal download or full-text view count, so those stay unset.
+ * retrievedAt is the time this response was retrieved.
  */
 export async function lookupMetricsByIssn(
   issn: string,

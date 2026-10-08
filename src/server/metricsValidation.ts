@@ -62,6 +62,8 @@ const READ_ONLY_SERVER_FIELDS = new Set([
   'provenanceMap',
   'submissionPortalUrl',
   'authorGuidelinesUrl',
+  'articleDownloads',
+  'fullTextViews',
 ]);
 
 /** Public label for user-entered metrics. Never include an email address here. */

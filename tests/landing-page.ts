@@ -18,6 +18,7 @@ import {
 } from '../src/utils/landingPage';
 import { app, generateDeterministicCampaign, lookupClarivateFacts, type JournalLookupOptions } from '../server';
 import { factsForCopy, guardMetricClaims, metricPromptSection } from '../src/utils/metricClaims';
+import { parseUsageCount } from '../src/utils/usageCounts';
 
 const fixtureDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'landing-pages');
 
@@ -278,7 +279,12 @@ export async function runLandingPageTests() {
     assert.equal(impact?.provenance, 'page-sourced');
     assert.notEqual(impact?.numericValue, 14.7, 'The labelled body metric wins over the meta description');
     assert.equal(ncomms.firstDecisionDays.value, 9);
-    assert.equal(ncomms.pageMetrics.find((metric) => metric.kind === 'downloads')?.value, '349,945,839 (2025)');
+    const ncommsDownloads = ncomms.pageMetrics.find((metric) => metric.kind === 'downloads');
+    assert.equal(ncommsDownloads?.value, '349,945,839');
+    assert.equal(ncommsDownloads?.numericValue, 349_945_839);
+    assert.equal(ncommsDownloads?.year, null);
+    assert.equal(ncommsDownloads?.provenance, 'page-sourced');
+    assert.notEqual(ncommsDownloads?.numericValue, 114_000_000, 'The body count wins over the meta description');
     assert.deepEqual(ncomms.acceptedArticleTypes.value, ['Research articles', 'Reviews & Analysis', 'News & Comment']);
     assert.equal(ncomms.submissionPortalUrl.value, 'https://mts-ncomms.nature.com/');
     assert.equal(ncomms.articleProcessingChargeUsd.value, null);
@@ -292,6 +298,10 @@ export async function runLandingPageTests() {
     assert.equal(jbe.issnPrint.value, '0167-4544');
     assert.equal(jbe.issnElectronic.value, '1573-0697');
     assert.match(jbe.aimsAndScopeSummary.value || '', /ethical issues related to business/);
+    const jbeDownloads = jbe.pageMetrics.find((metric) => metric.kind === 'downloads');
+    assert.equal(jbeDownloads?.value, '6M');
+    assert.equal(jbeDownloads?.numericValue, 6_000_000);
+    assert.equal(jbeDownloads?.year, null);
     assert.equal(jbe.pageMetrics.find((metric) => metric.kind === 'impact_factor')?.numericValue, 6.3);
     assert.equal(jbe.pageMetrics.find((metric) => metric.kind === 'five_year_impact_factor')?.numericValue, 9.7);
     assert.equal(jbe.firstDecisionDays.value, 19);
@@ -397,6 +407,8 @@ export async function runLandingPageTests() {
     assert.equal(natureCache.has('nature'), false);
     assert.equal(natureCache.has('paper'), false);
     assert.equal(natureCache.has('issn:0028-0836'), true);
+    assert.equal(homepage.articleDownloads ?? null, null);
+    assert.equal(homepage.fullTextViews ?? null, null);
 
     const inventedPath = await lookupClarivateFacts('https://www.nature.com/nature', false, {
       ...quiet,
@@ -442,6 +454,10 @@ export async function runLandingPageTests() {
     assert.equal(ncomms.provenanceMap?.fiveYearImpactFactor?.source, 'catalog_snapshot');
     assert.equal(ncomms.apcUsd, 6790);
     assert.equal(ncomms.provenanceMap?.apcUsd?.source, 'catalog_snapshot');
+    assert.equal(ncomms.articleDownloads, 349_945_839);
+    assert.equal(ncomms.provenanceMap?.articleDownloads?.source, 'page_sourced');
+    assert.equal(ncomms.provenanceMap?.articleDownloads?.year, undefined);
+    assert.equal(ncomms.fullTextViews ?? null, null);
     assert.match(ncomms.aimsAndScopeSummary || '', /biological, health/);
     assert.notEqual(ncomms.verificationStatus, 'source_verified');
     assert.equal(ncomms.isVerifiedClarivate, false);
@@ -503,12 +519,23 @@ export async function runLandingPageTests() {
     assert.equal(factsForCopy(ncomms).impactFactor, null);
     assert.equal(factsForCopy(ncomms).fiveYearImpactFactor, null);
     assert.equal(factsForCopy(ncomms).firstDecisionDays, 9);
+    assert.equal(factsForCopy(ncomms).articleDownloads, 349_945_839);
     const ncommsPrompt = metricPromptSection(ncomms);
     assert.doesNotMatch(ncommsPrompt, /18\.1/);
     assert.match(ncommsPrompt, /reference only/);
     assert.match(ncommsPrompt, /First decision days: 9/);
+    assert.match(ncommsPrompt, /Article downloads: 349,945,839/);
+    assert.match(ncommsPrompt, /counts/);
     assert.doesNotMatch(ncommsText, /18\.1/);
     assert.match(ncommsText, /9 Days/);
+    assert.match(ncommsText, /349,945,839/);
+    assert.doesNotMatch(ncommsText, /2025/);
+    assert.doesNotMatch(ncommsText, /114M/);
+    const usageClaim = guardMetricClaims('114M annual downloads and 349,945,839 article downloads', ncomms);
+    assert.doesNotMatch(usageClaim.text, /114M/);
+    assert.match(usageClaim.text, /349,945,839/);
+    assert.equal(parseUsageCount('6M (2025)'), 6_000_000);
+    assert.equal(parseUsageCount('349,945,839 (2025)'), 349_945_839);
     assert.doesNotMatch(ncommsText, /Clarivate/);
     assert.doesNotMatch(ncommsText, /14\.7/);
     assert.doesNotMatch(ncommsText, /6790/);

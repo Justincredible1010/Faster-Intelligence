@@ -1,5 +1,6 @@
 import { ClarivateJournalMetrics, FactVerificationStatus } from '../types';
 import { CLARIVATE_WOS_JOURNALS_SOURCE } from './metricSources';
+import { formatUsageCount, parseUsageCount } from './usageCounts';
 
 /** Numbers in ads may come only from these. A catalog snapshot is not one of them. */
 export const TRUSTED_METRIC_STATUSES: readonly FactVerificationStatus[] = [
@@ -93,6 +94,14 @@ export function trustedApcUsd(facts: MetricCarrier): number | null {
   return trustedNumber(facts, 'apcUsd', facts?.apcUsd);
 }
 
+export function trustedArticleDownloads(facts: MetricCarrier): number | null {
+  return trustedNumber(facts, 'articleDownloads', facts?.articleDownloads);
+}
+
+export function trustedFullTextViews(facts: MetricCarrier): number | null {
+  return trustedNumber(facts, 'fullTextViews', facts?.fullTextViews);
+}
+
 export function trustedQuartile(facts: MetricCarrier): string | null {
   return trustedText(facts, 'jcrQuartile', facts?.jcrQuartile);
 }
@@ -115,6 +124,8 @@ export function factsForCopy<T extends MetricCarrier>(facts: T): T {
     casZone: metricFieldIsTrusted(facts, 'casZone') ? facts.casZone ?? null : null,
     firstDecisionDays: metricFieldIsTrusted(facts, 'firstDecisionDays') ? facts.firstDecisionDays ?? null : null,
     apcUsd: metricFieldIsTrusted(facts, 'apcUsd') ? facts.apcUsd ?? null : null,
+    articleDownloads: trustedArticleDownloads(facts),
+    fullTextViews: trustedFullTextViews(facts),
     indexing: metricFieldIsTrusted(facts, 'indexing') ? facts.indexing || [] : [],
   };
 }
@@ -124,7 +135,7 @@ export function metricPromptSection(facts: MetricCarrier): string {
   if (!metricsAreTrusted(facts)) {
     return [
       'METRICS: No trusted metric values are on this record.',
-      'Do not state an impact factor, 5-year impact factor, JCR quartile, CAS zone, review-time days, APC, indexing service, or any other number or ranking.',
+      'Do not state an impact factor, 5-year impact factor, JCR quartile, CAS zone, review-time days, APC, indexing service, article downloads, full-text views, or any other number or ranking.',
       'Do not mention Clarivate.',
     ].join('\n');
   }
@@ -136,6 +147,8 @@ export function metricPromptSection(facts: MetricCarrier): string {
   const casZone = trustedCasZone(facts);
   const days = trustedFirstDecisionDays(facts);
   const apc = trustedApcUsd(facts);
+  const downloads = trustedArticleDownloads(facts);
+  const views = trustedFullTextViews(facts);
   const fromClarivate = metricsFromClarivateWos(facts);
 
   if (impactFactor != null) lines.push(`- Impact factor: ${impactFactor}`);
@@ -147,6 +160,11 @@ export function metricPromptSection(facts: MetricCarrier): string {
   if (casZone) lines.push(`- CAS zone: ${casZone}`);
   if (days != null) lines.push(`- First decision days: ${days}`);
   if (apc != null) lines.push(`- APC USD: ${apc}`);
+  if (downloads != null) lines.push(`- Article downloads: ${formatUsageCount(downloads)}`);
+  if (views != null) lines.push(`- Full-text views: ${formatUsageCount(views)}`);
+  if (downloads != null || views != null) {
+    lines.push('- Article downloads and full-text views are counts. Do not turn them into a date.');
+  }
   if (lines.length === 1) lines.push('- None of the metric fields are filled in.');
   lines.push(
     fromClarivate
@@ -184,6 +202,8 @@ export function guardMetricClaims(text: string, facts: MetricCarrier): MetricCla
   const fiveYear = trustedFiveYearImpactFactor(facts);
   const days = trustedFirstDecisionDays(facts);
   const apc = trustedApcUsd(facts);
+  const downloads = trustedArticleDownloads(facts);
+  const views = trustedFullTextViews(facts);
   const quartile = trustedQuartile(facts);
   const casZone = trustedCasZone(facts);
   const clarivateOk = metricsFromClarivateWos(facts);
@@ -246,6 +266,17 @@ export function guardMetricClaims(text: string, facts: MetricCarrier): MetricCla
     flags.push(`Stripped untrusted figure "${full}"`);
     return '';
   });
+
+  const keepUsage = (token: string) => {
+    const count = parseUsageCount(token);
+    if (count != null && (count === downloads || count === views || count === apc)) return token;
+    flags.push(`Stripped untrusted usage count "${token.trim()}"`);
+    return '';
+  };
+  out = out.replace(
+    /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?(?:\s*(?:million|billion|thousand|[kmb]))?\b|\b\d+(?:\.\d+)?\s*(?:million|billion|thousand|[kmb])\b/gi,
+    (token) => keepUsage(token)
+  );
 
   out = out.replace(
     /中科院[\u4e00-\u9fffA-Za-z0-9/ ]{0,20}?[1-4]区(?:\s*Top)?|[1-4]区(?:\s*Top)?/g,

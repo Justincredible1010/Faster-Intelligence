@@ -29,6 +29,7 @@ export const PRESET_SKILLS = {
 - Maintain prestigious, scholarly, and authoritative tone suitable for Nature Portfolio and Springer Nature.
 - Strict prohibition of predatory publishing terms (never use "guaranteed acceptance", "instant publish", or "easy SCI").
 - State an impact factor, quartile, CAS zone, review time, fee, or indexing service only when that value is in the metrics section supplied with the request. Omit the claim when it is not.
+- State an article-download or full-text-view count only when that count is in the metrics section. It is a count, not a date. Do not invent a download date.
 
 ## 2. Google Responsive Search Ads (RSA) Best Practices
 - Generate EXACTLY 15 diverse headlines (Google Best Practice for maximum Ad Strength):

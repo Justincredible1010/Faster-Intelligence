@@ -35,7 +35,7 @@ export interface PageSourcedMetric {
   value: string;
   numericValue?: number | null;
   year?: number | null;
-  kind: 'impact_factor' | 'five_year_impact_factor' | 'first_decision_days' | 'downloads' | 'apc' | 'other';
+  kind: 'impact_factor' | 'five_year_impact_factor' | 'first_decision_days' | 'downloads' | 'full_text_views' | 'apc' | 'other';
   provenance: 'page-sourced';
 }
 
@@ -92,6 +92,10 @@ export interface ClarivateJournalMetrics {
   indexing?: string[]; // e.g. ["SCIE", "PubMed Central", "Scopus", "DOAJ"]
   openAccessType?: 'Gold Open Access' | 'Hybrid Open Access' | string | null;
   apcUsd?: number | null;
+  /** Article downloads stated by the journal page. Not a date, and not Clarivate retrievedAt. */
+  articleDownloads?: number | null;
+  /** Full-text views or a similar usage count stated by the journal page. */
+  fullTextViews?: number | null;
   chinaWaiverAvailable?: boolean;
   aimsAndScopeSummary?: string;
   primaryDiscipline?: string;

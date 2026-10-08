@@ -4,6 +4,7 @@ import net from 'node:net';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import type { ExtractedFactField, ExtractedPageFacts, FactVerificationStatus, MetricProvenanceSource, PageSourcedMetric } from '../types';
 import { normalizeJournalUrl } from './journalUrl';
+import { formatUsageCount, parseUsageCount } from './usageCounts';
 
 /**
  * Journal landing pages are fetched only from Springer Nature hosts.
@@ -75,6 +76,8 @@ export interface MergeableJournalFacts {
   firstDecisionDays?: number | null;
   openAccessType?: string | null;
   apcUsd?: number | null;
+  articleDownloads?: number | null;
+  fullTextViews?: number | null;
   aimsAndScopeSummary?: string;
   verificationStatus: FactVerificationStatus;
   provenanceSource?: MetricProvenanceSource;
@@ -696,6 +699,15 @@ function dataTestValue(html: string, testId: string): string | null {
   return match ? decodeHtml(match[1]) : null;
 }
 
+function visibleProse(html: string): string {
+  return decodeHtml(
+    html
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<meta\b[^>]*>/gi, ' ')
+  );
+}
+
 function parseMetricNumber(text: string | null): { value: number; year: number | null } | null {
   if (!text) return null;
   const match = text.match(/(\d+(?:\.\d+)?)(?:\s*\((\d{4})\))?/);
@@ -1017,29 +1029,36 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
     }
   }
 
-  const downloadsText = dataTestValue(html, 'metrics-downloads-value');
-  if (downloadsText) {
+  const prose = visibleProse(html);
+  const pushUsage = (
+    kind: 'downloads' | 'full_text_views',
+    label: string,
+    raw: string | null
+  ) => {
+    const numericValue = parseUsageCount(raw);
+    if (!raw || numericValue == null) return;
     pushMetric(metrics, {
-      label: 'Downloads',
-      value: downloadsText,
-      numericValue: null,
-      year: downloadsText.match(/\((\d{4})\)/) ? Number(downloadsText.match(/\((\d{4})\)/)?.[1]) : null,
-      kind: 'downloads',
+      label,
+      value: formatUsageCount(numericValue),
+      numericValue,
+      year: null,
+      kind,
       provenance: 'page-sourced',
     });
-  } else {
-    const prose = html.match(/article downloads of\s+([\d,]+)\s*\((\d{4})\)/i);
-    if (prose) {
-      pushMetric(metrics, {
-        label: 'Article downloads',
-        value: `${prose[1]} (${prose[2]})`,
-        numericValue: Number(prose[1].replace(/,/g, '')),
-        year: Number(prose[2]),
-        kind: 'downloads',
-        provenance: 'page-sourced',
-      });
-    }
-  }
+  };
+  const downloadRaw =
+    dataTestValue(html, 'metrics-downloads-value') ||
+    prose.match(/article downloads of\s+([\d,.]+\s*(?:million|billion|thousand|[kmb])?)/i)?.[1] ||
+    prose.match(/([\d,.]+\s*(?:million|billion|thousand|[kmb])?)\s+(?:annual\s+)?(?:article\s+)?downloads\b/i)?.[1] ||
+    null;
+  pushUsage('downloads', 'Article downloads', downloadRaw);
+  const viewsRaw =
+    dataTestValue(html, 'metrics-full-text-views-value') ||
+    dataTestValue(html, 'metrics-views-value') ||
+    prose.match(/full[- ]text views of\s+([\d,.]+\s*(?:million|billion|thousand|[kmb])?)/i)?.[1] ||
+    prose.match(/([\d,.]+\s*(?:million|billion|thousand|[kmb])?)\s+full[- ]text views\b/i)?.[1] ||
+    null;
+  pushUsage('full_text_views', 'Full-text views', viewsRaw);
 
   const apc = apcUsd(html);
   if (apc !== null) {
@@ -1123,7 +1142,7 @@ function metric(page: ExtractedPageFacts, kind: PageSourcedMetric['kind']): Page
 
 export const CATALOG_SNAPSHOT_NOTE = 'Hardcoded catalog snapshot. Not a Clarivate lookup and not verified.';
 
-type NumberFactKey = 'impactFactor' | 'fiveYearImpactFactor' | 'firstDecisionDays' | 'apcUsd';
+type NumberFactKey = 'impactFactor' | 'fiveYearImpactFactor' | 'firstDecisionDays' | 'apcUsd' | 'articleDownloads' | 'fullTextViews';
 
 function isHardcodedCatalogRecord(base: MergeableJournalFacts): boolean {
   if (base.verificationStatus === 'user_provided' || base.verificationStatus === 'clarivate_api') return false;
@@ -1146,6 +1165,8 @@ function writeNumber(result: MergeableJournalFacts, factKey: NumberFactKey, valu
   if (factKey === 'fiveYearImpactFactor') result.fiveYearImpactFactor = value;
   if (factKey === 'firstDecisionDays') result.firstDecisionDays = value;
   if (factKey === 'apcUsd') result.apcUsd = value;
+  if (factKey === 'articleDownloads') result.articleDownloads = value;
+  if (factKey === 'fullTextViews') result.fullTextViews = value;
 }
 
 /**
@@ -1276,10 +1297,14 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
   applyNumber('fiveYearImpactFactor', fiveYear?.numericValue, fiveYear?.year, 'page-sourced');
   applyNumber('firstDecisionDays', decision?.numericValue, decision?.year, 'page-sourced');
   applyNumber('apcUsd', apc?.numericValue, apc?.year, 'page-sourced');
+  const downloads = metric(page, 'downloads');
+  const views = metric(page, 'full_text_views');
+  applyNumber('articleDownloads', downloads?.numericValue, null, 'page-sourced');
+  applyNumber('fullTextViews', views?.numericValue, null, 'page-sourced');
 
   if (!userProvided && !verifiedLive) {
     result.isVerifiedClarivate = false;
-    const pageSuppliedNumber = (['impactFactor', 'fiveYearImpactFactor', 'firstDecisionDays', 'apcUsd'] as const).some(
+    const pageSuppliedNumber = (['impactFactor', 'fiveYearImpactFactor', 'firstDecisionDays', 'apcUsd', 'articleDownloads', 'fullTextViews'] as const).some(
       (key) => provenance[key]?.source === 'page_sourced'
     );
     if (pageSuppliedNumber) {

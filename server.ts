@@ -15,6 +15,7 @@ import { JOURNAL_CATALOG } from './src/data/journalCatalog';
 import { NATURE_HOMEPAGE_URL, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
 import { lookupMetricsByIssn, pageFacts } from './src/utils/metricSources';
 import { factsForCopy, guardAdCopy, metricPromptSection, metricsFromClarivateWos } from './src/utils/metricClaims';
+import { formatUsageCount } from './src/utils/usageCounts';
 import type { ExtractedPageFacts } from './src/types';
 import {
   LandingPageError,
@@ -92,6 +93,10 @@ export interface JCRJournalEntry {
   indexing?: string[];
   openAccessType?: 'Gold Open Access' | 'Hybrid Open Access' | string | null;
   apcUsd?: number | null;
+  /** Page-stated article download count. Not a date, and not Clarivate retrievedAt. */
+  articleDownloads?: number | null;
+  /** Page-stated full-text view count. */
+  fullTextViews?: number | null;
   chinaWaiverAvailable?: boolean;
   aimsAndScopeSummary?: string;
   primaryDiscipline?: string;
@@ -668,30 +673,92 @@ function cacheKeysForFacts(facts: { url?: string | null; issn?: string | null; e
   return [...new Set(keys.filter((key) => key && key !== 'host:unknown'))];
 }
 
-/** The cached page record for this URL or ISSN, preferring one that still has extracted links. */
+/** The cached page record for this URL or ISSN, preferring one that still has provenance or extracted links. */
 function cachedFactsFor(facts: { url?: string | null; issn?: string | null; eIssn?: string | null }): JCRJournalEntry | null {
   const matches = cacheKeysForFacts(facts)
     .map((key) => metricsCache.get(key)?.fullFacts)
     .filter((entry): entry is JCRJournalEntry => Boolean(entry));
+  const hasLinks = (entry: JCRJournalEntry) => Boolean(entry.extractedFacts || entry.submissionPortalUrl || entry.authorGuidelinesUrl);
   return (
-    matches.find((entry) => entry.extractedFacts || entry.submissionPortalUrl || entry.authorGuidelinesUrl) ||
+    matches.find((entry) => entry.provenanceMap && hasLinks(entry)) ||
+    matches.find((entry) => entry.provenanceMap) ||
+    matches.find(hasLinks) ||
     matches[0] ||
     null
   );
 }
 
+const PROVENANCE_FIELDS = [
+  'journalName',
+  'publisher',
+  'impactFactor',
+  'fiveYearImpactFactor',
+  'firstDecisionDays',
+  'apcUsd',
+  'articleDownloads',
+  'fullTextViews',
+  'jcrQuartile',
+  'casZone',
+  'indexing',
+  'aimsAndScopeSummary',
+  'openAccessType',
+] as const;
+
+function sameFactValue(left: unknown, right: unknown): boolean {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return JSON.stringify(left ?? []) === JSON.stringify(right ?? []);
+  }
+  if (left == null && right == null) return true;
+  if (typeof left === 'number' || typeof right === 'number') return left === right;
+  return String(left).trim() === String(right).trim();
+}
+
 /**
- * Browser edits drop extractedFacts, provenance links, and the portal fields.
- * Put back the page facts and links already cached for that URL or ISSN.
+ * Keep the cached label on every field the edit did not change.
+ * A field the user actually changed becomes user_provided.
  */
+function restoredProvenance(
+  facts: JCRJournalEntry,
+  cached: JCRJournalEntry
+): NonNullable<JCRJournalEntry['provenanceMap']> {
+  const map: NonNullable<JCRJournalEntry['provenanceMap']> = { ...(cached.provenanceMap || {}) };
+  const submitted = facts as unknown as Record<string, unknown>;
+  const prior = cached as unknown as Record<string, unknown>;
+  for (const field of PROVENANCE_FIELDS) {
+    if (sameFactValue(submitted[field], prior[field])) continue;
+    map[field] = { source: 'user_provided', confidence: 0.85, note: 'Edited by the user.' };
+  }
+  return map;
+}
+
+/**
+ * Browser edits drop extractedFacts, provenanceMap, and the portal fields.
+ * Put back the page facts, provenance, and links already cached for that URL or ISSN.
+ */
+/** A browser edit omits usage counts. Put the cached count back before labels are compared. */
+function withCachedUsageCounts<T extends JCRJournalEntry>(facts: T, cached: JCRJournalEntry): T {
+  const articleDownloads =
+    facts.articleDownloads == null && typeof cached.articleDownloads === 'number'
+      ? cached.articleDownloads
+      : facts.articleDownloads;
+  const fullTextViews =
+    facts.fullTextViews == null && typeof cached.fullTextViews === 'number'
+      ? cached.fullTextViews
+      : facts.fullTextViews;
+  if (articleDownloads === facts.articleDownloads && fullTextViews === facts.fullTextViews) return facts;
+  return { ...facts, articleDownloads, fullTextViews };
+}
+
 function attachCachedPageFacts<T extends JCRJournalEntry>(facts: T): T {
   const cached = cachedFactsFor(facts);
   if (!cached) return facts;
+  const withUsage = withCachedUsageCounts(facts, cached);
   return {
-    ...facts,
-    extractedFacts: facts.extractedFacts ?? cached.extractedFacts,
-    submissionPortalUrl: facts.submissionPortalUrl ?? cached.submissionPortalUrl,
-    authorGuidelinesUrl: facts.authorGuidelinesUrl ?? cached.authorGuidelinesUrl,
+    ...withUsage,
+    extractedFacts: withUsage.extractedFacts ?? cached.extractedFacts,
+    submissionPortalUrl: withUsage.submissionPortalUrl ?? cached.submissionPortalUrl,
+    authorGuidelinesUrl: withUsage.authorGuidelinesUrl ?? cached.authorGuidelinesUrl,
+    provenanceMap: restoredProvenance(withUsage, cached),
   };
 }
 
@@ -901,6 +968,8 @@ export function generateStageHeadlines(
       // Conditional metrics (NO nulls)
       ...(facts.impactFactor ? [{ text: smartClamp(`${ifLabel} ${facts.impactFactor}${facts.jcrQuartile ? ` ${facts.jcrQuartile}` : ''}`, 30), sourceFact: `IF ${facts.impactFactor}`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       ...(facts.indexing?.length ? [{ text: smartClamp(`Indexed in ${facts.indexing.slice(0, 2).join(' & ')}`, 30), sourceFact: 'Indexing', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(facts.articleDownloads ? [{ text: smartClamp(`${formatUsageCount(facts.articleDownloads)} Article Downloads`, 30), sourceFact: 'Article downloads', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(facts.fullTextViews ? [{ text: smartClamp(`${formatUsageCount(facts.fullTextViews)} Full-Text Views`, 30), sourceFact: 'Full-text views', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       { text: smartClamp(`Rigorous Peer Review Standards`, 30), sourceFact: 'Editorial Standards', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' },
       ...(facts.firstDecisionDays ? [{ text: smartClamp(`Avg ${facts.firstDecisionDays} Days to 1st Decision`, 30), sourceFact: `${facts.firstDecisionDays} Days Decision`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' }] : []),
       { text: smartClamp(`Compare Publishing Options`, 30), sourceFact: 'Comparison Evaluation', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' },
@@ -917,6 +986,8 @@ export function generateStageHeadlines(
       ...(facts.casZone ? [{ text: smartClamp(`${facts.casZone.slice(0, 11)}评议标准`, 30), sourceFact: facts.casZone, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 1' }] : []),
       { text: smartClamp(`查阅期刊范围与收稿类型`, 30), sourceFact: 'Scope Check', language: 'ZH', category: 'Scope & Community', positionRecommendation: 'Position 1' },
       ...(facts.firstDecisionDays ? [{ text: smartClamp(`平均初审周期约${facts.firstDecisionDays}天`, 30), sourceFact: `${facts.firstDecisionDays}天初审`, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(facts.articleDownloads ? [{ text: smartClamp(`文章下载量${formatUsageCount(facts.articleDownloads)}`, 30), sourceFact: 'Article downloads', language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(facts.fullTextViews ? [{ text: smartClamp(`全文浏览量${formatUsageCount(facts.fullTextViews)}`, 30), sourceFact: 'Full-text views', language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       { text: smartClamp(`评估稿件学术契合度`, 30), sourceFact: 'Fit CTA', language: 'ZH', category: 'Call to Action', positionRecommendation: 'Position 2' },
       { text: smartClamp(`对比同类学术期刊指标`, 30), sourceFact: 'Comparison Evaluation', language: 'ZH', category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' },
       { text: smartClamp(`核对分区与审稿流程`, 30), sourceFact: 'Evaluation & Metrics', language: 'ZH', category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' },
@@ -1005,9 +1076,15 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
     const daysText = facts.firstDecisionDays ? `First decision in ${facts.firstDecisionDays} days.` : 'Editorial criteria are listed on the journal site.';
     const feeText = facts.apcUsd ? `APC ($${facts.apcUsd})` : 'publishing options';
     const casText = facts.casZone ? `（${facts.casZone.slice(0, 10)}）` : '';
+    const downloadsText = facts.articleDownloads
+      ? `${formatUsageCount(facts.articleDownloads)} article downloads.`
+      : facts.fullTextViews
+        ? `${formatUsageCount(facts.fullTextViews)} full-text views.`
+        : '';
 
     const en = [
       { text: smartClamp(`Evaluate ${facts.journalName} for your paper. ${ifText}${facts.indexing?.length ? `indexed in ${facts.indexing.slice(0, 2).join(' & ')}.` : 'Review the aims and scope.'}`, 90), sourceFact: 'Evaluation', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
+      ...(downloadsText ? [{ text: smartClamp(downloadsText, 90), sourceFact: facts.articleDownloads ? 'Article downloads' : 'Full-text views', language: 'EN' as const, theme: 'Readership' }] : []),
       { text: smartClamp(`Transparent publishing options and editorial criteria. ${daysText}`, 90), sourceFact: 'Turnaround', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
       { text: smartClamp(`Review accepted article types, transparent ${feeText}, and peer review workflow.`, 90), sourceFact: 'Publishing Options', language: 'EN' as const, theme: 'Publishing Options' },
       { text: smartClamp(`Compare scope, turnaround metrics, and open access models to make an informed choice.`, 90), sourceFact: 'Comparison Evaluation', language: 'EN' as const, theme: 'Comparison & Fit' },
@@ -1020,7 +1097,8 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
     ];
     if (outputLanguage === 'EN') return en.map(d => ({ ...d, charCount: d.text.length }));
     if (outputLanguage === 'ZH') return zh.map(d => ({ ...d, charCount: d.text.length }));
-    return [en[0], zh[0], en[2], zh[1]].map(d => ({ ...d, charCount: d.text.length }));
+    const usageLine = en.find((item) => item.theme === 'Readership');
+    return [en[0], zh[0], usageLine || en[2], zh[1]].map(d => ({ ...d, charCount: d.text.length }));
   }
 
   // DEC
