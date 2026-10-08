@@ -245,23 +245,92 @@ export function normalizeIssn(value: string | null | undefined): string | null {
  * The last path segment is intentionally not used.
  */
 export function journalCacheKey(input: {
-  issnPrint?: string | null;
-  issnElectronic?: string | null;
+  issn?: string | null;
+  eIssn?: string | null;
   canonicalUrl?: string | null;
   requestUrl?: string | null;
 }): string {
-  const print = normalizeIssn(input.issnPrint);
-  const electronic = normalizeIssn(input.issnElectronic);
+  const print = normalizeIssn(input.issn);
+  const electronic = normalizeIssn(input.eIssn);
   if (print) return `issn:${print}`;
   if (electronic) return `issn:${electronic}`;
 
   const norm = normalizeJournalUrl(input.canonicalUrl || input.requestUrl);
-  if (!norm.canonical) return 'url:unknown';
-  return `url:${norm.hostKey}${norm.pathname}`;
+  if (!norm.canonical) return 'host:unknown';
+  return norm.cacheKey;
 }
 
 export function normalizedRequestUrl(raw: string): string {
   return normalizeJournalUrl(raw).canonical;
+}
+
+export type CampaignLinkRole =
+  | 'landing'
+  | 'about'
+  | 'articles'
+  | 'editors'
+  | 'collections'
+  | 'aims'
+  | 'fees'
+  | 'guidelines'
+  | 'checklist'
+  | 'submission';
+
+type LinkableFacts = {
+  url?: string | null;
+  authorGuidelinesUrl?: string | null;
+  submissionPortalUrl?: string | null;
+  extractedFacts?: ExtractedPageFacts | null;
+};
+
+function httpUrl(value: string | null | undefined): string {
+  const norm = normalizeJournalUrl(value);
+  return norm.canonical;
+}
+
+/** The journal page itself. Never a path this app invented. */
+export function campaignLandingUrl(facts: LinkableFacts): string {
+  return httpUrl(facts.extractedFacts?.canonicalUrl?.value) || httpUrl(facts.url);
+}
+
+/**
+ * A destination or sitelink. Uses a URL the page actually contained.
+ * Otherwise returns the landing URL, not a guessed /about or /for-authors path.
+ */
+export function resolveCampaignUrl(facts: LinkableFacts, role: CampaignLinkRole): string {
+  const landing = campaignLandingUrl(facts);
+  const page = facts.extractedFacts;
+  const extracted =
+    role === 'about' ? page?.aboutUrl?.value
+    : role === 'articles' ? page?.articlesUrl?.value
+    : role === 'editors' ? page?.editorsUrl?.value
+    : role === 'collections' ? page?.collectionsUrl?.value
+    : role === 'aims' ? page?.aimsUrl?.value
+    : role === 'fees' ? page?.apcInfoUrl?.value
+    : role === 'guidelines' ? facts.authorGuidelinesUrl || page?.authorGuidelinesUrl?.value
+    : role === 'checklist' ? page?.checklistUrl?.value
+    : role === 'submission' ? facts.submissionPortalUrl || page?.submissionPortalUrl?.value
+    : null;
+  return httpUrl(extracted) || landing;
+}
+
+export function stageDestinationUrl(facts: LinkableFacts, stage: 'AWA' | 'CON' | 'DEC'): string {
+  const landing = campaignLandingUrl(facts);
+  if (stage === 'DEC') {
+    const guidelines = resolveCampaignUrl(facts, 'guidelines');
+    if (guidelines && guidelines !== landing) return guidelines;
+    const submission = resolveCampaignUrl(facts, 'submission');
+    if (submission && submission !== landing) return submission;
+  }
+  if (stage === 'CON') {
+    const aims = resolveCampaignUrl(facts, 'aims');
+    if (aims && aims !== landing) return aims;
+  }
+  if (stage === 'AWA') {
+    const about = resolveCampaignUrl(facts, 'about');
+    if (about && about !== landing) return about;
+  }
+  return landing;
 }
 
 async function defaultResolveHost(hostname: string, signal?: AbortSignal): Promise<string[]> {
@@ -696,6 +765,20 @@ function authorGuidelines(pageAnchors: Anchor[], pageUrl: string): string | null
   return labelled ? absoluteUrl(labelled.href, pageUrl) : null;
 }
 
+function anchorPath(href: string, pageUrl: string): string {
+  try {
+    return new URL(href, pageUrl).pathname.replace(/\/+$/, '').toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+/** A link that is actually on the page. This never invents a path. */
+function linkedUrl(pageAnchors: Anchor[], pageUrl: string, test: (path: string, text: string) => boolean): string | null {
+  const found = pageAnchors.find((anchor) => test(anchorPath(anchor.href, pageUrl), anchor.text.toLowerCase()));
+  return found ? absoluteUrl(found.href, pageUrl) : null;
+}
+
 const ARTICLE_TYPE_SLUGS = new Set([
   'research-articles',
   'reviews-and-analysis',
@@ -941,6 +1024,17 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
       : 'unknown';
 
   const types = articleTypes(pageAnchors, html);
+  const articlesUrl = linkedUrl(pageAnchors, pageUrl, (path) => {
+    const slug = path.split('/').filter(Boolean).pop() || '';
+    return ARTICLE_TYPE_SLUGS.has(slug) || slug === 'articles';
+  });
+  const aboutUrl = linkedUrl(pageAnchors, pageUrl, (path) => path.endsWith('/about'));
+  const editorsUrl = linkedUrl(pageAnchors, pageUrl, (path) => path.endsWith('/editors') || path.endsWith('/editorial-board'));
+  const collectionsUrl = linkedUrl(pageAnchors, pageUrl, (path) => path.endsWith('/collections'));
+  const aimsUrl = linkedUrl(pageAnchors, pageUrl, (path) => path.endsWith('/aims-and-scope') || path.endsWith('/aims'));
+  const metricsUrl = linkedUrl(pageAnchors, pageUrl, (path) => path.endsWith('/metrics') || path.endsWith('/journal-metrics'));
+  const checklistUrl = linkedUrl(pageAnchors, pageUrl, (path) => path.endsWith('/checklist'));
+  const feesUrl = apcInfoUrl(pageAnchors, pageUrl);
   const specialIssue = /calls for papers|data-test=["']submission-status["'][^>]*>\s*Open for submissions/i.test(html);
   const aims = chooseAims(html, jsonLd);
   const decision = metrics.find((metric) => metric.kind === 'first_decision_days');
@@ -953,9 +1047,16 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
     publisherName: field(jsonLd?.publisher || null, jsonLd?.publisher ? 0.8 : 0),
     submissionPortalUrl: field(submissionPortal(pageAnchors, pageUrl), 0.9),
     authorGuidelinesUrl: field(authorGuidelines(pageAnchors, pageUrl), 0.75),
+    aboutUrl: field(aboutUrl, aboutUrl ? 0.75 : 0),
+    articlesUrl: field(articlesUrl, articlesUrl ? 0.75 : 0),
+    editorsUrl: field(editorsUrl, editorsUrl ? 0.75 : 0),
+    collectionsUrl: field(collectionsUrl, collectionsUrl ? 0.75 : 0),
+    aimsUrl: field(aimsUrl, aimsUrl ? 0.75 : 0),
+    metricsUrl: field(metricsUrl, metricsUrl ? 0.75 : 0),
+    checklistUrl: field(checklistUrl, checklistUrl ? 0.75 : 0),
     aimsAndScopeSummary: field(aims, aims ? 0.8 : 0),
     articleProcessingChargeUsd: field(apc, apc !== null ? 0.9 : 0),
-    apcInfoUrl: field(apc === null ? apcInfoUrl(pageAnchors, pageUrl) : null, 0.6),
+    apcInfoUrl: field(feesUrl, feesUrl ? 0.6 : 0),
     firstDecisionDays: field(decision?.numericValue ?? null, decision ? 0.8 : 0),
     acceptedArticleTypes: field(types, types.length ? 0.7 : 0),
     editorInChief: field(editors(html), 0.85),
@@ -1039,10 +1140,12 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
     for (const factKey of ['impactFactor', 'fiveYearImpactFactor', 'firstDecisionDays', 'apcUsd'] as const) {
       const existing = base[factKey];
       if (existing === null || existing === undefined) continue;
+      const prior = base.provenanceMap?.[factKey];
+      const labelledClarivate = prior?.source === 'Clarivate' || prior?.source === 'Clarivate JCR';
       provenance[factKey] = {
         source: 'catalog_snapshot',
         confidence: 0.5,
-        year: base.provenanceMap?.[factKey]?.year,
+        year: labelledClarivate ? undefined : prior?.year,
         note: CATALOG_SNAPSHOT_NOTE,
       };
     }
@@ -1054,8 +1157,11 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
   if (notes?.fetchError) {
     provenance.landingPage = { source: 'page_sourced', confidence: 0, note: notes.fetchError };
   }
-  result.provenanceMap = provenance;
-  if (!page) return result;
+  if (!page) {
+    dropClarivateSnapshotLabels(provenance);
+    result.provenanceMap = provenance;
+    return result;
+  }
 
   result.extractedFacts = page;
   const textLocked = userProvided;
@@ -1110,7 +1216,7 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
       provenance[`${factKey}CatalogSnapshot`] = {
         source: 'catalog_snapshot',
         confidence: 0.5,
-        year: prior?.year,
+        year: prior?.source === 'Clarivate' || prior?.source === 'Clarivate JCR' ? undefined : prior?.year,
         note: `Catalog snapshot value ${existing} is not the displayed figure.`,
       };
     }
@@ -1162,8 +1268,17 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
     }
   }
 
+  dropClarivateSnapshotLabels(provenance);
   result.provenanceMap = provenance;
   return result;
+}
+
+function dropClarivateSnapshotLabels(provenance: Record<string, Provenance>) {
+  for (const [key, item] of Object.entries(provenance)) {
+    if (item?.source === 'Clarivate' || item?.source === 'Clarivate JCR') {
+      provenance[key] = { source: 'catalog_snapshot', confidence: 0.5, note: CATALOG_SNAPSHOT_NOTE };
+    }
+  }
 }
 
 export function formatLandingPagePromptSection(facts: MergeableJournalFacts): string {

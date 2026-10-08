@@ -310,15 +310,17 @@ export async function runLandingPageTests() {
     );
     assert.equal(decoyApc.articleProcessingChargeUsd.value, 7350);
 
-    assert.equal(journalCacheKey({ issnPrint: '0028-0836', issnElectronic: '1476-4687' }), 'issn:0028-0836');
-    assert.equal(journalCacheKey({ issnElectronic: '2041-1723' }), 'issn:2041-1723');
+    assert.equal(journalCacheKey({ issn: '0028-0836', eIssn: '1476-4687' }), 'issn:0028-0836');
+    assert.equal(journalCacheKey({ eIssn: '2041-1723' }), 'issn:2041-1723');
     assert.notEqual(
-      journalCacheKey({ canonicalUrl: 'https://www.nature.com/journal/paper' }),
-      journalCacheKey({ canonicalUrl: 'https://link.springer.com/journal/paper' })
+      journalCacheKey({ canonicalUrl: 'https://www.nature.com/aps/about' }),
+      journalCacheKey({ canonicalUrl: 'https://www.nature.com/cr/about' })
     );
+    assert.equal(journalCacheKey({ canonicalUrl: 'https://www.nature.com/aps/about' }), 'host:nature.com/aps/about');
+    assert.equal(journalCacheKey({ canonicalUrl: 'https://www.nature.com/cr/about' }), 'host:nature.com/cr/about');
     assert.equal(
-      journalCacheKey({ issnPrint: '0028-0836', canonicalUrl: 'https://www.nature.com/' }),
-      journalCacheKey({ issnPrint: '0028-0836', canonicalUrl: 'https://www.nature.com/nature' })
+      journalCacheKey({ issn: '0028-0836', canonicalUrl: 'https://www.nature.com/' }),
+      journalCacheKey({ issn: '0028-0836', canonicalUrl: 'https://www.nature.com/nature' })
     );
 
     console.log('✓ Test Suite 7 Passed: Fixtures expose the fields each layout actually states.');
@@ -440,7 +442,7 @@ export async function runLandingPageTests() {
     assert.equal(aliasFetches, 2, 'The first request for a new URL still reads the page to learn the ISSN');
     assert.equal(aliased.isFromCache, true);
     assert.equal(aliased.impactFactor, 18.1);
-    assert.equal(aliasCache.has('url:nature.com/ncomms/about'), true);
+    assert.equal(aliasCache.has('host:nature.com/ncomms/about'), true);
     await lookupClarivateFacts('https://www.nature.com/ncomms/about', false, {
       ...quiet,
       cache: aliasCache,
@@ -465,13 +467,43 @@ export async function runLandingPageTests() {
 
     const guidelinesCampaign = generateDeterministicCampaign(ncomms, 'DEC');
     const guidelinesLink = guidelinesCampaign.searchAds.sitelinks.find((link) => link.title === 'Author Guidelines');
+    const portalLink = guidelinesCampaign.searchAds.sitelinks.find((link) => link.title === 'Online Submission Portal');
+    const checklistLink = guidelinesCampaign.searchAds.sitelinks.find((link) => link.title === 'Submission Checklist');
     assert.equal(guidelinesLink?.urlPath, 'https://www.nature.com/ncomms/submit');
+    assert.equal(portalLink?.urlPath, 'https://mts-ncomms.nature.com');
+    assert.equal(checklistLink?.urlPath, 'https://www.nature.com/ncomms');
+    assert.equal(guidelinesCampaign.recommendedDestination.url, 'https://www.nature.com/ncomms/submit');
+
+    const awareness = generateDeterministicCampaign(ncomms, 'AWA');
+    const articlesLink = awareness.searchAds.sitelinks.find((link) => link.title === 'Browse Latest Articles');
+    const aboutLink = awareness.searchAds.sitelinks.find((link) => link.title === 'Journal Overview & Scope');
+    assert.equal(articlesLink?.urlPath, 'https://www.nature.com/ncomms/research-articles');
+    assert.equal(aboutLink?.urlPath, 'https://www.nature.com/ncomms');
+    assert.equal(awareness.recommendedDestination.url, 'https://www.nature.com/ncomms');
+
+    const consideration = generateDeterministicCampaign(ncomms, 'CON');
+    const feesLink = consideration.searchAds.sitelinks.find((link) => link.title === 'Publishing Options & Fees');
+    assert.equal(feesLink?.urlPath, 'https://www.nature.com/ncomms/open-access');
+    assert.equal(consideration.recommendedDestination.url, 'https://www.nature.com/ncomms');
+
+    const guessedPath = /\/(about|articles|editors|collections|aims-and-scope|article-types|metrics|for-authors|checklist|apc-waivers|submission-guidelines)\/?$/;
+    for (const campaign of [awareness, consideration, guidelinesCampaign]) {
+      assert.doesNotMatch(campaign.recommendedDestination.url, guessedPath);
+      for (const link of campaign.searchAds.sitelinks) {
+        assert.doesNotMatch(link.urlPath || '', guessedPath, link.title);
+      }
+    }
+
     const guidelinesFallback = generateDeterministicCampaign(
-      { ...ncomms, authorGuidelinesUrl: null, extractedFacts: undefined },
+      { ...ncomms, authorGuidelinesUrl: null, submissionPortalUrl: null, extractedFacts: undefined },
       'DEC'
     );
     const fallbackLink = guidelinesFallback.searchAds.sitelinks.find((link) => link.title === 'Author Guidelines');
-    assert.equal(fallbackLink?.urlPath, 'https://www.nature.com/ncomms/for-authors');
+    assert.equal(fallbackLink?.urlPath, 'https://www.nature.com/ncomms');
+    assert.equal(guidelinesFallback.recommendedDestination.url, 'https://www.nature.com/ncomms');
+    for (const link of guidelinesFallback.searchAds.sitelinks) {
+      assert.equal(link.urlPath, 'https://www.nature.com/ncomms');
+    }
 
     const catalogWithGaps = mergeLandingPageFacts(
       {
@@ -497,6 +529,9 @@ export async function runLandingPageTests() {
     assert.equal(catalogWithGaps.provenanceMap?.firstDecisionDays?.source, 'page_sourced');
     assert.equal(catalogWithGaps.impactFactor, 18.1);
     assert.equal(catalogWithGaps.provenanceMap?.impactFactorCatalogSnapshot?.source, 'catalog_snapshot');
+    assert.equal(catalogWithGaps.provenanceMap?.impactFactorCatalogSnapshot?.confidence, 0.5);
+    assert.equal(catalogWithGaps.provenanceMap?.impactFactorCatalogSnapshot?.year, undefined);
+    assert.equal(JSON.stringify(catalogWithGaps.provenanceMap).includes('"Clarivate"'), false);
     assert.equal(catalogWithGaps.isVerifiedClarivate, false);
     assert.notEqual(catalogWithGaps.verificationStatus, 'source_verified');
 

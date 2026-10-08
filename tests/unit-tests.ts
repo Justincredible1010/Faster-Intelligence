@@ -327,12 +327,18 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert.strictEqual(homepage.cacheKey, 'host:nature.com');
   assert.strictEqual(apex.cacheKey, homepage.cacheKey);
   assert.strictEqual(journalUrlsMatch(homepage, apex), true);
-  assert.strictEqual(staleSlug.cacheKey, 'nature');
+  assert.strictEqual(staleSlug.cacheKey, 'host:nature.com/nature');
   assert.notStrictEqual(staleSlug.cacheKey, homepage.cacheKey);
   assert.strictEqual(journalUrlsMatch(homepage, staleSlug), false);
+  assert.notStrictEqual(
+    normalizeJournalUrl('https://www.nature.com/aps/about').cacheKey,
+    normalizeJournalUrl('https://www.nature.com/cr/about').cacheKey
+  );
+  assert.strictEqual(normalizeJournalUrl('https://www.nature.com/aps/about').cacheKey, 'host:nature.com/aps/about');
+  assert.strictEqual(normalizeJournalUrl('https://www.nature.com/cr/about').cacheKey, 'host:nature.com/cr/about');
   assert.strictEqual(
     normalizeJournalUrl('https://example.com/host:nature.com').cacheKey,
-    'path:host:nature.com'
+    'host:example.com/host:nature.com'
   );
   assert.strictEqual(joinJournalUrl('https://www.nature.com/', '/about'), 'https://www.nature.com/about');
   assert.strictEqual(joinJournalUrl('https://www.nature.com/nature', '/about'), 'https://www.nature.com/nature/about');
@@ -340,10 +346,13 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   const nature = JOURNAL_CATALOG.find((entry) => entry.journalName === 'Nature');
   assert(nature, 'Catalog should include Nature');
   assert.strictEqual(nature.url, 'https://www.nature.com');
+  assert.strictEqual(nature.issn, '0028-0836');
+  assert.strictEqual(nature.eIssn, '1476-4687');
   assert.strictEqual(journalUrlsMatch(normalizeJournalUrl(nature.url), staleSlug), false);
   const cacheKeys = JOURNAL_CATALOG.map((entry) => normalizeJournalUrl(entry.url).cacheKey);
   assert.strictEqual(new Set(cacheKeys).size, cacheKeys.length, 'Catalog cache keys must not collide');
   for (const entry of JOURNAL_CATALOG) {
+    assert(entry.issn || entry.eIssn, `${entry.journalName} needs issn or eIssn`);
     assert.strictEqual(entry.verificationStatus, 'catalog_snapshot');
     assert.strictEqual(entry.isVerifiedClarivate, false);
     assert.strictEqual(entry.catalogDataYear, CATALOG_DATA_YEAR);
@@ -415,7 +424,17 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
     snapshotCampaign.displayAds?.bannerSubtextZh,
     snapshotCampaign.recommendedDestination.url,
   ].join('\n');
-  assert.strictEqual(snapshotCampaign.recommendedDestination.url, 'https://www.nature.com/aims-and-scope');
+  assert.strictEqual(snapshotCampaign.recommendedDestination.url, 'https://www.nature.com');
+  for (const link of snapshotCampaign.searchAds?.sitelinks || []) {
+    assert.strictEqual(link.urlPath, 'https://www.nature.com', link.title);
+  }
+  for (const stage of ['AWA', 'DEC'] as const) {
+    const campaign = generateDeterministicCampaign(nature, stage, 'EN');
+    assert.strictEqual(campaign.recommendedDestination.url, 'https://www.nature.com');
+    for (const link of campaign.searchAds?.sitelinks || []) {
+      assert.strictEqual(link.urlPath, 'https://www.nature.com', `${stage} ${link.title}`);
+    }
+  }
   assert(!snapshotLines.includes('/nature/'));
   assert(!snapshotLines.includes('50.5'));
   assert(!snapshotLines.includes('32'));

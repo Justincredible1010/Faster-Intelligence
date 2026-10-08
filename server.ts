@@ -7,7 +7,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { loadMetricsCacheFromDisk } from './src/utils/metricsCache';
 import { JOURNAL_CATALOG } from './src/data/journalCatalog';
-import { joinJournalUrl, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
+import { normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
 import { lookupMetricsByIssn, pageFacts } from './src/utils/metricSources';
 import { factsForCopy, guardAdCopy, metricPromptSection, metricsFromClarivateWos } from './src/utils/metricClaims';
 import type { ExtractedPageFacts } from './src/types';
@@ -20,6 +20,8 @@ import {
   journalCacheKey,
   mergeLandingPageFacts,
   parseAllowedJournalUrl,
+  resolveCampaignUrl,
+  stageDestinationUrl,
   type FetchLandingPageDeps,
 } from './src/utils/landingPage';
 
@@ -222,7 +224,6 @@ export const STAGE_CONFIGS: Record<StageCode, any> = {
     primaryCta: 'Explore the journal',
     recommendedDestination: {
       label: 'Journal Overview & Latest Research',
-      urlPath: '/about',
       description: 'Scope overview, editorial mission, and recently published highlights.',
     },
   },
@@ -235,7 +236,6 @@ export const STAGE_CONFIGS: Record<StageCode, any> = {
     primaryCta: 'Check journal fit',
     recommendedDestination: {
       label: 'Aims & Scope and Publishing Options',
-      urlPath: '/aims-and-scope',
       description: 'Accepted article formats, editorial standards, and transparent fee policies.',
     },
   },
@@ -248,7 +248,6 @@ export const STAGE_CONFIGS: Record<StageCode, any> = {
     primaryCta: 'View submission checklist',
     recommendedDestination: {
       label: 'Author Guidelines & Submission Portal',
-      urlPath: '/submission-guidelines',
       description: 'Manuscript preparation instructions, checklist, and direct submission link.',
     },
   },
@@ -424,8 +423,8 @@ export async function lookupClarivateFacts(
       sourceAttribution: fromClient.sourceAttribution || 'Read from the journal page',
     };
     const key = journalCacheKey({
-      issnPrint: facts.issn,
-      issnElectronic: facts.eIssn,
+      issn: facts.issn,
+      eIssn: facts.eIssn,
       requestUrl: norm.canonical,
     });
     rememberJournal(key, facts, cache, persist);
@@ -444,8 +443,8 @@ export async function lookupClarivateFacts(
   }
 
   const issnKey = journalCacheKey({
-    issnPrint: page?.issnPrint.value || issnArg,
-    issnElectronic: page?.issnElectronic.value,
+    issn: page?.issnPrint.value || issnArg,
+    eIssn: page?.issnElectronic.value,
     canonicalUrl: page?.canonicalUrl.value,
     requestUrl: norm.canonical,
   });
@@ -493,8 +492,8 @@ export async function lookupClarivateFacts(
   merged.eIssn = merged.eIssn || page?.issnElectronic.value || base.eIssn;
 
   const storeKey = journalCacheKey({
-    issnPrint: merged.issn,
-    issnElectronic: merged.eIssn,
+    issn: merged.issn,
+    eIssn: merged.eIssn,
     requestUrl: norm.canonical,
   });
   if (merged.issn || merged.eIssn || merged.verificationStatus !== 'missing') {
@@ -612,8 +611,8 @@ app.post('/api/update-journal-metrics', (req, res) => {
       return res.status(400).json({ error: 'A journal URL is required. Metrics are stored against that URL, not an invented path.' });
     }
     const journalId = journalCacheKey({
-      issnPrint: facts.issn,
-      issnElectronic: facts.eIssn,
+      issn: facts.issn,
+      eIssn: facts.eIssn,
       requestUrl: norm.canonical,
     });
     const nowStr = new Date().toISOString();
@@ -1032,37 +1031,33 @@ export function generateDeterministicCampaign(
   displayAd.descriptionCharCount = displayAd.description.length;
 
   const copyFacts = factsForCopy(facts);
-  const baseUrl = normalizeJournalUrl(facts.url || '').canonical;
-  const destinationUrl = joinJournalUrl(baseUrl, stageConfig.recommendedDestination.urlPath);
-  const authorGuidelinesUrl =
-    facts.authorGuidelinesUrl ||
-    facts.extractedFacts?.authorGuidelinesUrl?.value ||
-    joinJournalUrl(baseUrl, '/for-authors');
-  const submissionUrl =
-    facts.submissionPortalUrl ||
-    facts.extractedFacts?.submissionPortalUrl?.value ||
-    joinJournalUrl(baseUrl, '/submit');
+  const destinationUrl = stageDestinationUrl(facts, stage);
+  const sitelink = (title: string, desc: string, role: Parameters<typeof resolveCampaignUrl>[1]) => ({
+    title,
+    desc,
+    urlPath: resolveCampaignUrl(facts, role),
+  });
 
   const sitelinks =
     stage === 'AWA'
       ? [
-          { title: 'Journal Overview & Scope', desc: 'Explore research fields and mission', urlPath: joinJournalUrl(baseUrl, '/about') },
-          { title: 'Browse Latest Articles', desc: 'Read recent peer-reviewed discoveries', urlPath: joinJournalUrl(baseUrl, '/articles') },
-          { title: 'Editorial Leadership', desc: 'Meet the international editorial board', urlPath: joinJournalUrl(baseUrl, '/editors') },
-          { title: 'Research Collections', desc: 'Curated thematic paper collections', urlPath: joinJournalUrl(baseUrl, '/collections') },
+          sitelink('Journal Overview & Scope', 'Explore research fields and mission', 'about'),
+          sitelink('Browse Latest Articles', 'Read recent peer-reviewed discoveries', 'articles'),
+          sitelink('Editorial Leadership', 'Meet the international editorial board', 'editors'),
+          sitelink('Research Collections', 'Curated thematic paper collections', 'collections'),
         ]
       : stage === 'CON'
       ? [
-          { title: 'Aims & Scope Evaluation', desc: 'Check topical alignment and criteria', urlPath: joinJournalUrl(baseUrl, '/aims-and-scope') },
-          { title: 'Article Types & Formats', desc: 'Accepted original research & reviews', urlPath: joinJournalUrl(baseUrl, '/article-types') },
-          { title: 'Journal Metrics & Indexing', desc: 'Indexing and journal metrics', urlPath: joinJournalUrl(baseUrl, '/metrics') },
-          { title: 'Publishing Options & Fees', desc: `Transparent APC & OA publishing`, urlPath: joinJournalUrl(baseUrl, '/open-access') },
+          sitelink('Aims & Scope Evaluation', 'Check topical alignment and criteria', 'aims'),
+          sitelink('Article Types & Formats', 'Accepted original research and reviews', 'articles'),
+          sitelink('Journal Metrics & Indexing', 'Indexing and journal metrics', 'landing'),
+          sitelink('Publishing Options & Fees', 'Transparent APC and OA publishing', 'fees'),
         ]
       : [
-          { title: 'Author Guidelines', desc: 'Manuscript preparation and style guide', urlPath: authorGuidelinesUrl },
-          { title: 'Submission Checklist', desc: 'Required documentation before submitting', urlPath: joinJournalUrl(baseUrl, '/checklist') },
-          { title: 'APC & Waiver Criteria', desc: 'Fee policy and funding guidelines', urlPath: joinJournalUrl(baseUrl, '/apc-waivers') },
-          { title: 'Online Submission Portal', desc: 'Submit paper for peer review', urlPath: submissionUrl },
+          sitelink('Author Guidelines', 'Manuscript preparation and style guide', 'guidelines'),
+          sitelink('Submission Checklist', 'Required documentation before submitting', 'checklist'),
+          sitelink('APC & Waiver Criteria', 'Fee policy and funding guidelines', 'fees'),
+          sitelink('Online Submission Portal', 'Submit paper for peer review', 'submission'),
         ];
 
   const callouts =
@@ -1250,7 +1245,7 @@ GOOGLE ADS REQUIREMENTS:
       });
 
       campaignOutput.searchAds.callouts = campaignOutput.searchAds.callouts || fallback.searchAds.callouts;
-      campaignOutput.searchAds.sitelinks = campaignOutput.searchAds.sitelinks || fallback.searchAds.sitelinks;
+      campaignOutput.searchAds.sitelinks = fallback.searchAds.sitelinks;
     }
 
     if (campaignOutput.displayAds) {
@@ -1271,7 +1266,7 @@ GOOGLE ADS REQUIREMENTS:
       campaignOutput.displayAds.targetPlacements = campaignOutput.displayAds.targetPlacements || fallback.displayAds.targetPlacements;
     }
 
-    const destinationUrl = joinJournalUrl(facts.url, stageConfig.recommendedDestination.urlPath);
+    const destinationUrl = stageDestinationUrl(facts, normalizedStage);
 
     const campaign = guardAdCopy({
       funnelStage: normalizedStage,

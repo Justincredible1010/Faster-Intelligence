@@ -12,9 +12,9 @@ export interface NormalizedJournalUrl {
   pathname: string;
   segments: string[];
   /**
-   * Cache key. A path URL keeps its last segment.
-   * A URL with no path uses host:<hostKey>, which cannot equal a path slug
-   * such as "nature". A later change will replace this with ISSN.
+   * URL identity used only when no ISSN is known.
+   * The full host and path, so /aps/about and /cr/about do not share a key.
+   * Callers that know an ISSN must use journalCacheKey instead.
    */
   cacheKey: string;
 }
@@ -52,9 +52,7 @@ export function normalizeJournalUrl(raw: string | null | undefined): NormalizedJ
     .map((segment) => segment.trim().toLowerCase())
     .filter(Boolean);
   const pathname = segments.length > 0 ? `/${segments.join('/')}` : '';
-  const last = segments[segments.length - 1] || '';
-  const cacheKey =
-    segments.length === 0 ? `host:${hostKey}` : last.startsWith('host:') ? `path:${last}` : last;
+  const cacheKey = `host:${hostKey}${pathname}`;
 
   return {
     canonical: `https://${host}${pathname}`,

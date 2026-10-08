@@ -47,6 +47,14 @@ export interface ExtractedPageFacts {
   publisherName: ExtractedFactField<string | null>;
   submissionPortalUrl: ExtractedFactField<string | null>;
   authorGuidelinesUrl: ExtractedFactField<string | null>;
+  /** Real links found on the page. Empty when the page does not contain that link. */
+  aboutUrl: ExtractedFactField<string | null>;
+  articlesUrl: ExtractedFactField<string | null>;
+  editorsUrl: ExtractedFactField<string | null>;
+  collectionsUrl: ExtractedFactField<string | null>;
+  aimsUrl: ExtractedFactField<string | null>;
+  metricsUrl: ExtractedFactField<string | null>;
+  checklistUrl: ExtractedFactField<string | null>;
   aimsAndScopeSummary: ExtractedFactField<string | null>;
   articleProcessingChargeUsd: ExtractedFactField<number | null>;
   /** Link to an APC explainer when the page mentions fees but does not state an amount. */
@@ -321,8 +329,8 @@ export const STAGE_CONFIGS: Record<StageCode, StageStrategyDefinition> = {
     exampleCtas: ['Explore the journal', 'Browse articles', 'Discover the scope', 'Explore latest research'],
     recommendedDestination: {
       label: 'Journal Overview & Latest Articles',
-      pathSuffix: '/about',
-      purpose: 'Overview, research scope, and article highlights for first-time visitors.',
+      pathSuffix: '',
+      purpose: 'The journal landing page, or an about/articles link extracted from that page.',
     },
   },
   CON: {
@@ -350,8 +358,8 @@ export const STAGE_CONFIGS: Record<StageCode, StageStrategyDefinition> = {
     exampleCtas: ['Check journal fit', 'Review aims and scope', 'Compare publishing options', 'View indexing & metrics'],
     recommendedDestination: {
       label: 'Aims, Scope & Publishing Criteria',
-      pathSuffix: '/aims-and-scope',
-      purpose: 'Detailed scope, accepted formats, fees, and editorial standards.',
+      pathSuffix: '',
+      purpose: 'The journal landing page, or an aims link extracted from that page.',
     },
   },
   DEC: {
@@ -378,8 +386,8 @@ export const STAGE_CONFIGS: Record<StageCode, StageStrategyDefinition> = {
     exampleCtas: ['View submission checklist', 'Read author guidelines', 'Start submission', 'Prepare your manuscript'],
     recommendedDestination: {
       label: 'Author Guidelines & Submission Portal',
-      pathSuffix: '/submission-guidelines',
-      purpose: 'Manuscript preparation instructions, checklist, and direct submission link.',
+      pathSuffix: '',
+      purpose: 'An extracted author-guidelines or submission link, otherwise the journal landing page.',
     },
   },
 };
