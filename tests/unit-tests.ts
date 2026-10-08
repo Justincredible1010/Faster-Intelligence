@@ -1,10 +1,14 @@
 import assert from 'assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import {
   countCharacterWidth,
   validateLanguagePurity,
   smartClampWithWidth,
   cleanStrayCharacters,
 } from '../src/utils/textUtils';
+import { loadMetricsCacheFromDisk } from '../src/utils/metricsCache';
 import { runComplianceAudit, autoFixComplianceIssues } from '../src/utils/complianceValidator';
 import { generateGoogleAdsEditorCsv, deriveDisplayUrl } from '../src/utils/csvExporter';
 import { GeneratedAdCampaign, ClarivateJournalMetrics } from '../src/types';
@@ -204,6 +208,92 @@ console.log('\n[Test Suite 4] Google Ads Editor CSV Schema...');
   console.log('✓ Test Suite 4 Passed: Google Ads Editor CSV format matches exact specifications.');
 }
 
+// TEST SUITE 5: Metrics cache loading
+console.log('\n[Test Suite 5] Metrics cache loading...');
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'metrics-cache-'));
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  const logs: string[] = [];
+  const warns: string[] = [];
+
+  const capture = (run: () => void) => {
+    logs.length = 0;
+    warns.length = 0;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(' '));
+    };
+    console.warn = (...args: unknown[]) => {
+      warns.push(args.map((arg) => String(arg)).join(' '));
+    };
+    try {
+      run();
+    } finally {
+      console.log = originalLog;
+      console.warn = originalWarn;
+    }
+  };
+
+  try {
+    const missingPath = path.join(dir, 'does-not-exist.json');
+    capture(() => {
+      const loaded = loadMetricsCacheFromDisk(missingPath);
+      assert.strictEqual(loaded.size, 0, 'A missing cache file should load as an empty map');
+    });
+    assert(logs.some((line) => line.includes('No metrics-cache.json found')), 'Missing file should be logged');
+    assert.strictEqual(warns.length, 0, 'A missing file is not a warning');
+
+    const invalidPath = path.join(dir, 'invalid.json');
+    fs.writeFileSync(invalidPath, '{not json');
+    capture(() => {
+      const loaded = loadMetricsCacheFromDisk(invalidPath);
+      assert.strictEqual(loaded.size, 0, 'Invalid JSON should load as an empty map');
+    });
+    assert(warns.some((line) => line.includes('Failed to load cache file')), 'Invalid JSON should be warned and ignored');
+
+    const nonObjects: Array<{ name: string; body: string }> = [
+      { name: 'array', body: '[]' },
+      { name: 'null', body: 'null' },
+      { name: 'string', body: '"paper"' },
+      { name: 'number', body: '42' },
+    ];
+    for (const sample of nonObjects) {
+      const samplePath = path.join(dir, `${sample.name}.json`);
+      fs.writeFileSync(samplePath, sample.body);
+      capture(() => {
+        const loaded = loadMetricsCacheFromDisk(samplePath);
+        assert.strictEqual(loaded.size, 0, `${sample.name} top level should load as an empty map`);
+      });
+      assert(
+        warns.some((line) => line.includes('not a journal map')),
+        `${sample.name} top level should be rejected as a non-object journal map`
+      );
+    }
+
+    const validPath = path.join(dir, 'valid.json');
+    fs.writeFileSync(
+      validPath,
+      JSON.stringify({
+        nature: { journalName: 'Nature' },
+        paper: { journalName: 'Example Journal' },
+      })
+    );
+    capture(() => {
+      const loaded = loadMetricsCacheFromDisk<{ journalName: string }>(validPath);
+      assert.strictEqual(loaded.size, 2, 'A journal map should load every entry');
+      assert.strictEqual(loaded.get('nature')?.journalName, 'Nature');
+      assert.strictEqual(loaded.get('paper')?.journalName, 'Example Journal');
+    });
+    assert(logs.some((line) => line.includes('Loaded 2 cached journals')), 'A valid cache file should report how many journals loaded');
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  console.log('✓ Test Suite 5 Passed: Cache loader handles missing, invalid, and non-object files.');
+}
+
 console.log('\n=======================================');
-console.log('ALL 4 TEST SUITES PASSED WITHOUT ERRORS');
+console.log('ALL 5 TEST SUITES PASSED WITHOUT ERRORS');
 console.log('=======================================\n');

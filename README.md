@@ -300,7 +300,7 @@ npm ci
 ```bash
 npm test
 ```
-Runs `tests/unit-tests.ts` with `tsx` (character width, language purity, compliance audit, and the 15-column CSV export).
+Runs `tests/unit-tests.ts` with `tsx` (character width, language purity, compliance audit, the 15-column CSV export, and metrics-cache loading).
 
 ### Type Checking
 ```bash
