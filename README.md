@@ -93,7 +93,8 @@ Scientific advertising demands rigorous data verification. Metric numbers in ads
 │ clarivate_wos_journals_api │ Web of Science Journals API               │
 │                            │ (api.clarivate.com/.../wos-journals/v1).  │
 │                            │ Records the JCR year and retrieved-at.    │
-│                            │ The HTTP client is unwired in this build. │
+│                            │ Stored by ISSN and JCR year. The key      │
+│                            │ stays on the server (CLARIVATE_API_KEY).  │
 ├────────────────────────────┼───────────────────────────────────────────┤
 │ page_sourced               │ Read from the journal page. The page      │
 │                            │ client is unwired in this build.          │
@@ -135,7 +136,7 @@ Journal metrics change according to academic calendar cycles. The engine impleme
 
 Each metric stores its own `expireAt`. A cached journal is treated as stale only when the impact-factor entry or the first-decision entry is past `expireAt`. CAS zone and APC expirations are recorded on those entries and do not, by themselves, force a refresh of the whole journal.
 
-`metrics-cache.json` is a runtime file. It is gitignored and is not required to start the server. If the file is missing, unreadable, or not a JSON object of journal entries, the server logs that and continues with an empty in-memory cache. The first successful catalog, user, or lookup write creates the file.
+`metrics-cache.json` is a runtime file for catalog snapshots and user-supplied facts. It is gitignored and is not required to start the server. If the file is missing, unreadable, or not a JSON object of journal entries, the server logs that and continues with an empty in-memory cache. Clarivate API results are not written there. They go to the metrics store selected by `METRICS_STORE` (memory, file, or Firestore). A Clarivate record already sitting in `metrics-cache.json` is ignored on startup.
 
 ---
 
@@ -162,12 +163,14 @@ Each metric stores its own `expireAt`. A cached journal is treated as stale only
                            ▼
   SERVER (Express + Node.js via tsx server.ts)
   ├── /api/fetch-clarivate-facts (Cached lookup with Clarivate JCR fallback)
-  ├── /api/update-journal-metrics (Saves user-verified data to cache)
+  ├── /api/update-journal-metrics (Saves user-supplied data to cache)
   ├── /api/generate-campaign (Gemini 3.8 Flash + deterministic strategy engine)
   ├── /api/compare-stages (Generates AWA, CON, DEC simultaneously)
   ├── /api/cache/* (List, inspect, refresh, and clear cache entries)
+  ├── /api/admin/clarivate-metrics/refresh (forces a Journals API re-check)
   ├── Gemini 3.8 Flash SDK (@google/genai)
-  └── Persistent File System Storage (metrics-cache.json)
+  ├── URL cache for catalog and user facts (metrics-cache.json)
+  └── Clarivate metrics store (memory, file, or Firestore)
 ```
 
 ### Core Technologies
@@ -265,7 +268,7 @@ The same Export menu also downloads a **Markdown campaign brief** (`handleExport
 
 | Endpoint | Method | Payload | Description |
 | :--- | :--- | :--- | :--- |
-| `/api/fetch-clarivate-facts` | `POST` | `{ "url": string, "forceRefresh"?: boolean, "issn"?: string }` | Resolves the URL through cache, then `lookupMetricsByIssn` when an ISSN is present, then the page-facts client, then the catalog snapshot. Gemini is not asked for metrics. Returns `verificationStatus: 'missing'` if unknown. |
+| `/api/fetch-clarivate-facts` | `POST` | `{ "url": string, "forceRefresh"?: boolean, "issn"?: string }` | Resolves the URL through the URL cache, then the Clarivate metrics store when an ISSN is present, then the page-facts client, then the catalog snapshot. A public refresh does not bypass the once-per-day JCR check. Gemini is not asked for metrics. Returns `verificationStatus: 'missing'` if unknown. |
 | `/api/update-journal-metrics` | `POST` | `{ "facts": ClarivateJournalMetrics }` | Saves user-supplied or audited journal metrics into persistent cache (`metrics-cache.json`). |
 | `/api/generate-campaign` | `POST` | `{ "landingPageUrl": string, "funnelStage": "AWA"\|"CON"\|"DEC", "channels": string[], "outputLanguage": "all"\|"EN"\|"ZH", "customPlaybook"?: string, "userProvidedFacts"?: object }` | Generates search, display, and keyword copy. Rejects with `400` only when `verificationStatus` is `missing`. Untrusted numbers are omitted and stripped by the claim guard. |
 | `/api/compare-stages` | `POST` | `{ "landingPageUrl": string, "outputLanguage"?: string }` | Builds AWA, CON, and DEC campaigns with the deterministic template engine. This route does not call Gemini. |
@@ -273,6 +276,7 @@ The same Export menu also downloads a **Markdown campaign brief** (`handleExport
 | `/api/cache/journal/:id` | `GET` | — | Inspects cached metric details and TTL expiration timestamps for a specific journal. |
 | `/api/cache/refresh/:id` | `POST` | `{ "url"?: string }` | Forces a fresh lookup of the given URL, or the URL already stored on that cache entry. Returns `400` when neither exists. Does not build a URL from the cache id. |
 | `/api/cache/clear` | `POST` | — | Flushes in-memory cache and deletes `metrics-cache.json` on disk. |
+| `/api/admin/clarivate-metrics/refresh` | `POST` | `{ "issn": string }` | Forces a Journals API lookup for that ISSN and writes the metrics store. This is the admin refresh. PR #4 should gate it with `requireAdmin` from `src/server/auth/guard.ts`, the same middleware used on `/api/cache/refresh` and `/api/cache/clear`. |
 
 ---
 
@@ -288,8 +292,49 @@ Copy `.env.example` to `.env`.
 | Variable | Required | What the code does with it |
 | :--- | :--- | :--- |
 | `GEMINI_API_KEY` | Only for live Gemini calls | Read by `server.ts`. Without it, the process still starts. Journal lookup uses the built-in catalog, and campaign generation uses the deterministic template engine. |
+| `CLARIVATE_API_KEY` | Only for live JCR lookups | Read on the server and sent as `X-ApiKey`. If it is missing, the server logs one warning and journal lookups return null. The key is never sent to the browser. |
+| `METRICS_STORE` | No | `memory` (default), `file`, or `firestore`. Clarivate metrics use this store. `metrics-cache.json` is not the production store for those records. |
+| `FIRESTORE_PROJECT_ID` | When `METRICS_STORE=firestore` and `GOOGLE_CLOUD_PROJECT` is unset | Passed to the Firestore client. Cloud Run's Application Default Credentials supply the identity. |
+| `GOOGLE_CLOUD_PROJECT` | Alternative to `FIRESTORE_PROJECT_ID` | Used when `FIRESTORE_PROJECT_ID` is empty. Set automatically on many GCP runtimes. |
+| `METRICS_STORE_PATH` | No | File used when `METRICS_STORE=file`. Default `.data/clarivate-metrics.json`. |
 | `NODE_ENV` | No | `production` serves the prebuilt `dist/` assets. Any other value, including unset, mounts the Vite dev middleware. |
 | `DISABLE_HMR` | No | When `true`, `vite.config.ts` turns off hot module replacement and file watching. |
+
+### Clarivate Journals API, quota, and refresh
+
+The client calls `https://api.clarivate.com/apis/wos-journals/v1`:
+
+1. `GET /journals?q=<ISSN>` resolves a print or electronic ISSN to `hits[].id`.
+2. `GET /journals/{id}` reads the ISSN pair, publisher, categories, and `journalCitationReports[]`.
+3. `GET /journals/{id}/reports/year/{year}` reads `metrics.impactMetrics` and `ranks.jif[]`.
+
+JIF values arrive as strings and are parsed defensively. Missing fields stay null.
+
+The key is shared with another application (about 5 requests/second, plus a quota). This client starts at most 2 requests/second. HTTP 429 and 5xx responses retry with exponential backoff and jitter, and a `Retry-After` header replaces that wait. Concurrent lookups for the same ISSN share one request. An ISSN that returns no hit is remembered for 10 minutes.
+
+Stored metrics are served without calling the API. A newer JCR year is checked only when the stored year is older than the expected latest release, and at most once per ISSN per UTC day. New JCR data is treated as available on and after 30 June UTC: on 8 October 2026 the expected year is 2025; on 15 January 2026 it is 2024. `POST /api/admin/clarivate-metrics/refresh` with `{ "issn": "0028-0836" }` forces a check. Until PR #4 lands, that route is not authenticated; the handler is marked for `requireAdmin`.
+
+Ad copy and exports cite a Clarivate value as `JIF 56.1 (Clarivate JCR 2025)`. The word Clarivate is allowed only when `provenanceSource` is `clarivate_wos_journals_api`. A hand-edited fact is forced to `user_provided` with `isVerifiedClarivate` false.
+
+Live check, after `CLARIVATE_API_KEY` is set in the environment (the script prints parsed metrics and does not print the key):
+
+```bash
+npm run verify:clarivate -- 0028-0836
+```
+
+### Firestore on Cloud Run
+
+1. Enable the Cloud Firestore API on the GCP project.
+2. Grant the Cloud Run service account `roles/datastore.user`.
+3. Set `METRICS_STORE=firestore`. Set `FIRESTORE_PROJECT_ID` if `GOOGLE_CLOUD_PROJECT` is not already present. The client uses Application Default Credentials; do not ship a key file in the image.
+4. Put `CLARIVATE_API_KEY` in Secret Manager (or the Cloud Run environment) and do not prefix it with `VITE_`.
+
+Documents:
+
+- `wosJournalMetrics/{issn}_{jcrYear}` — metrics plus `source`, `jcrYear`, and `retrievedAt`
+- `wosIssnMappings/{issn}` — Clarivate journal id, latest JCR year, and the last year-check time
+
+Print and electronic ISSNs are both indexed. Tests use the in-memory store. A Firestore emulator run is optional and only executes when `FIRESTORE_EMULATOR_HOST` is set. CI does not need the API key or Google credentials.
 
 The server always listens on **port 3000** (`http://0.0.0.0:3000`). `PORT` is not read. `.env.example` still lists `APP_URL` for hosts that inject it; this application does not read `APP_URL`.
 
@@ -303,7 +348,7 @@ npm ci
 ```bash
 npm test
 ```
-Runs `tests/unit-tests.ts` with `tsx` (character width, language purity, compliance audit, the 15-column CSV export, and metrics-cache loading).
+Runs `tests/unit-tests.ts` and `tests/clarivate.test.ts` with `tsx` (character width, language purity, compliance audit, the CSV export, metrics-cache loading, the Clarivate client, and the in-memory metrics store). CI does not call Clarivate or Firestore.
 
 ### Type Checking
 ```bash

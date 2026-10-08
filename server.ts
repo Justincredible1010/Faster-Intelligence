@@ -8,10 +8,13 @@ import { fileURLToPath } from 'url';
 import { loadMetricsCacheFromDisk } from './src/utils/metricsCache';
 import { JOURNAL_CATALOG } from './src/data/journalCatalog';
 import { joinJournalUrl, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
-import { lookupMetricsByIssn, pageFacts } from './src/utils/metricSources';
-import { factsForCopy, guardAdCopy, metricPromptSection, metricsFromClarivateWos } from './src/utils/metricClaims';
+import { installClarivateClient, pageFacts } from './src/utils/metricSources';
+import { clarivateWosJournals as clarivateHttpClient } from './src/utils/clarivateHttp';
+import { factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection, sanitizeUserProvidedFacts } from './src/utils/metricClaims';
+import { loadJournalMetrics } from './src/utils/metricsRefresh';
 
 dotenv.config();
+installClarivateClient(clarivateHttpClient);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -96,6 +99,8 @@ const metricsCache = new Map<string, CachedJournal>();
 function loadCacheFromDisk() {
   const loaded = loadMetricsCacheFromDisk<CachedJournal>(CACHE_FILE_PATH);
   loaded.forEach((val, key) => {
+    // Clarivate editions live in the metrics store, not metrics-cache.json.
+    if (val.fullFacts?.provenanceSource === 'clarivate_wos_journals_api') return;
     metricsCache.set(key, val);
   });
 }
@@ -290,7 +295,9 @@ function rememberJournal(journalId: string, facts: JCRJournalEntry) {
     fullFacts: facts,
   };
   metricsCache.set(journalId, cachedEntry);
-  saveCacheToDisk();
+  if (facts.provenanceSource !== 'clarivate_wos_journals_api') {
+    saveCacheToDisk();
+  }
   return cachedEntry;
 }
 
@@ -356,7 +363,7 @@ export async function lookupClarivateFacts(url: string, forceRefresh = false, is
   }
 
   if (issnToUse) {
-    const fromApi = await lookupMetricsByIssn(issnToUse);
+    const fromApi = await loadJournalMetrics(issnToUse);
     if (fromApi) {
       const facts: JCRJournalEntry = {
         ...missingJournalFacts(norm.canonical),
@@ -472,6 +479,29 @@ app.get('/api/cache/list', (_req, res) => {
   });
 });
 
+/**
+ * Admin-only Clarivate refresh. This bypasses the once-per-day JCR check.
+ * PR #4 gates /api/cache/refresh and /api/cache/clear with requireAdmin from
+ * src/server/auth/guard.ts. Apply that same middleware to this route when
+ * auth lands. Do not leave it public after that merge.
+ */
+app.post('/api/admin/clarivate-metrics/refresh', async (req, res) => {
+  try {
+    const issn = typeof req.body?.issn === 'string' ? req.body.issn : '';
+    if (!issn.trim()) {
+      return res.status(400).json({ error: 'issn is required' });
+    }
+    const metrics = await loadJournalMetrics(issn, { force: true });
+    if (!metrics) {
+      return res.status(404).json({ error: 'No Clarivate metrics for that ISSN' });
+    }
+    res.json({ success: true, metrics });
+  } catch (err: any) {
+    console.error('Clarivate refresh failed:', err instanceof Error ? err.message : err);
+    res.status(500).json({ error: 'Failed to refresh Clarivate metrics' });
+  }
+});
+
 app.post('/api/cache/clear', (_req, res) => {
   metricsCache.clear();
   try {
@@ -584,7 +614,7 @@ export function generateStageHeadlines(
   outputLanguage: 'all' | 'EN' | 'ZH' = 'all'
 ) {
   facts = factsForCopy(facts);
-  const ifLabel = metricsFromClarivateWos(facts) ? 'Clarivate IF' : 'IF';
+  const jifClaim = formatJifClaim(facts);
   const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
   const disciplineShort = (facts.primaryDiscipline || 'Scientific').split('(')[0].trim().slice(0, 14);
 
@@ -638,7 +668,7 @@ export function generateStageHeadlines(
       { text: smartClamp(`${shortName} Aims & Scope`, 30), sourceFact: 'Scope Criteria', language: 'EN', category: 'Scope & Community', positionRecommendation: 'Position 1' },
       { text: smartClamp(`Evaluate ${shortName}`, 30), sourceFact: facts.journalName, language: 'EN', category: 'Journal Identity', positionRecommendation: 'Position 1' },
       // Conditional metrics (NO nulls)
-      ...(facts.impactFactor ? [{ text: smartClamp(`${ifLabel} ${facts.impactFactor}${facts.jcrQuartile ? ` ${facts.jcrQuartile}` : ''}`, 30), sourceFact: `IF ${facts.impactFactor}`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(jifClaim ? [{ text: smartClamp(jifClaim, 30), sourceFact: jifClaim, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       ...(facts.indexing?.length ? [{ text: smartClamp(`Indexed in ${facts.indexing.slice(0, 2).join(' & ')}`, 30), sourceFact: 'Indexing', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       { text: smartClamp(`Rigorous Peer Review Standards`, 30), sourceFact: 'Editorial Standards', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' },
       ...(facts.firstDecisionDays ? [{ text: smartClamp(`Avg ${facts.firstDecisionDays} Days to 1st Decision`, 30), sourceFact: `${facts.firstDecisionDays} Days Decision`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' }] : []),
@@ -720,7 +750,7 @@ export function generateStageHeadlines(
 // Stage Descriptions with language purity
 export function generateStageDescriptions(facts: any, stage: StageCode, outputLanguage: 'all' | 'EN' | 'ZH' = 'all') {
   facts = factsForCopy(facts);
-  const ifLabel = metricsFromClarivateWos(facts) ? 'Clarivate IF' : 'IF';
+  const jifClaim = formatJifClaim(facts);
   if (stage === 'AWA') {
     const en = [
       { text: smartClamp(`Explore research published in ${facts.journalName}. Serving the global scientific community.`, 90), sourceFact: 'Journal Overview', language: 'EN' as const, theme: 'Scope & Relevance' },
@@ -740,7 +770,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
   }
 
   if (stage === 'CON') {
-    const ifText = facts.impactFactor ? `${ifLabel} ${facts.impactFactor}, ` : '';
+    const ifText = jifClaim ? `${jifClaim}, ` : '';
     const daysText = facts.firstDecisionDays ? `First decision in ${facts.firstDecisionDays} days.` : 'Editorial criteria are listed on the journal site.';
     const feeText = facts.apcUsd ? `APC ($${facts.apcUsd})` : 'publishing options';
     const casText = facts.casZone ? `（${facts.casZone.slice(0, 10)}）` : '';
@@ -840,7 +870,7 @@ export function generateStageKeywords(facts: any, stage: StageCode) {
 
 export function generateStageDisplayAd(facts: any, stage: StageCode) {
   facts = factsForCopy(facts);
-  const ifLabel = metricsFromClarivateWos(facts) ? 'Clarivate IF' : 'IF';
+  const jifClaim = formatJifClaim(facts);
   const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
 
   if (stage === 'AWA') {
@@ -862,7 +892,7 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
   }
 
   if (stage === 'CON') {
-    const metricStr = facts.impactFactor ? `${ifLabel} ${facts.impactFactor}` : 'Peer-Reviewed Research';
+    const metricStr = jifClaim || 'Peer-Reviewed Research';
     return {
       shortHeadline: smartClamp(`Check ${shortName} Fit`, 30),
       shortHeadlineCharCount: 0,
@@ -943,7 +973,7 @@ export function generateDeterministicCampaign(
     stage === 'AWA'
       ? [`Published by ${facts.publisher}`, (facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), 'Global Readership', 'Peer-Reviewed Science']
       : stage === 'CON'
-      ? [copyFacts.impactFactor ? `${metricsFromClarivateWos(copyFacts) ? 'Clarivate IF' : 'IF'} ${copyFacts.impactFactor}` : 'Peer-reviewed journal', copyFacts.casZone ? copyFacts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', copyFacts.firstDecisionDays ? `1st Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
+      ? [formatJifClaim(copyFacts) || 'Peer-reviewed journal', copyFacts.casZone ? copyFacts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', copyFacts.firstDecisionDays ? `1st Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
       : ['Author Guidelines Ready', 'Standard Preparation Checklist', copyFacts.firstDecisionDays ? `First Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Official Submission Portal'];
 
   return guardAdCopy({
@@ -995,7 +1025,7 @@ app.post('/api/generate-campaign', async (req, res) => {
     // Priority 1: Check facts. If userProvidedFacts is sent, use them directly!
     let facts: JCRJournalEntry;
     if (userProvidedFacts && userProvidedFacts.verificationStatus === 'user_provided') {
-      facts = userProvidedFacts;
+      facts = sanitizeUserProvidedFacts(userProvidedFacts);
     } else {
       facts = await lookupClarivateFacts(landingPageUrl);
     }

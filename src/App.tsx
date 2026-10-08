@@ -21,7 +21,7 @@ import { runComplianceAudit, autoFixComplianceIssues } from './utils/complianceV
 import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
 import { AlertCircle, AlertTriangle, Sparkles } from 'lucide-react';
 import { NATURE_HOMEPAGE_URL } from './utils/journalUrl';
-import { trustedApcUsd, trustedCasZone, trustedImpactFactor, trustedQuartile } from './utils/metricClaims';
+import { formatJifClaim, trustedApcUsd, trustedCasZone, trustedQuartile } from './utils/metricClaims';
 
 const DEFAULT_LANDING_URL = NATURE_HOMEPAGE_URL;
 
@@ -281,7 +281,7 @@ export default function App() {
 **Author Stage:** ${cfg.name}
 **Author Mindset:** ${cfg.authorMindset}
 **Campaign Objective:** ${cfg.campaignObjective}
-**Impact factor:** ${trustedImpactFactor(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
+**Impact factor:** ${formatJifClaim(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **Quartile:** ${trustedQuartile(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **CAS zone:** ${trustedCasZone(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **APC (USD):** ${trustedApcUsd(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}

@@ -478,7 +478,10 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
 
   assert.strictEqual(nature.impactFactor, null);
   assert.strictEqual(nature.fiveYearImpactFactor, null);
+  const previousClarivateKey = process.env.CLARIVATE_API_KEY;
+  delete process.env.CLARIVATE_API_KEY;
   assert.strictEqual(await lookupMetricsByIssn('0028-0836'), null);
+  if (previousClarivateKey) process.env.CLARIVATE_API_KEY = previousClarivateKey;
   assert.strictEqual(await pageFacts.extractFromPage('https://www.nature.com'), null);
 
   const retrievedAt = new Date('2026-10-08T00:00:00.000Z');

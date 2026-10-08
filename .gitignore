@@ -9,3 +9,6 @@ coverage/
 
 # Runtime journal-metrics cache. Created on first lookup; the server starts without it.
 metrics-cache.json
+
+# Local Clarivate metrics store (METRICS_STORE=file). Not used in production.
+.data/

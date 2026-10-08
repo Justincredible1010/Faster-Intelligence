@@ -34,6 +34,7 @@ import {
 } from '../types';
 import { JOURNAL_CATALOG } from '../data/journalCatalog';
 import { journalUrlsMatch, normalizeJournalUrl } from '../utils/journalUrl';
+import { sanitizeUserProvidedFacts } from '../utils/metricClaims';
 
 interface Props {
   landingPageUrl: string;
@@ -119,13 +120,11 @@ export const InputStudio: React.FC<Props> = ({
 
   const handleSaveMetrics = () => {
     if (editedFacts && onUpdateClarivateFacts) {
-      onUpdateClarivateFacts({
+      onUpdateClarivateFacts(sanitizeUserProvidedFacts({
         ...editedFacts,
-        verificationStatus: 'user_provided',
-        isVerifiedClarivate: false,
-        sourceAttribution: 'Manually verified and supplied by user (User Verified)',
+        sourceAttribution: 'Manually supplied by user (User Verified)',
         missingFields: [],
-      });
+      }));
       setIsEditingMetrics(false);
     }
   };
@@ -487,9 +486,17 @@ export const InputStudio: React.FC<Props> = ({
               <div className="flex items-center gap-1.5">
                 <Clock className="w-3 h-3 text-slate-400" />
                 <span>
-                  {clarivateFacts.isFromCache
-                    ? 'Cached record (refreshed automatically)'
-                    : 'Real-time verified source'}
+                  {clarivateFacts.provenanceSource === 'clarivate_wos_journals_api'
+                    ? 'Web of Science Journals API'
+                    : clarivateFacts.verificationStatus === 'user_provided'
+                    ? 'User-provided record'
+                    : clarivateFacts.verificationStatus === 'page_sourced'
+                    ? 'Read from the journal page'
+                    : clarivateFacts.verificationStatus === 'catalog_snapshot'
+                    ? 'Catalog snapshot'
+                    : clarivateFacts.isFromCache
+                    ? 'Cached record'
+                    : 'Record loaded'}
                 </span>
                 {clarivateFacts.reportingYear && (
                   <span>· {clarivateFacts.reportingYear}</span>
@@ -518,7 +525,7 @@ export const InputStudio: React.FC<Props> = ({
                     Discipline: <strong>{clarivateFacts.primaryDiscipline}</strong>
                   </span>
                   <span>
-                    Reporting Period: <strong>{clarivateFacts.reportingYear || 'JCR 2024'}</strong>
+                    Reporting Period: <strong>{clarivateFacts.reportingYear || 'Not stated'}</strong>
                   </span>
                 </div>
               </div>
