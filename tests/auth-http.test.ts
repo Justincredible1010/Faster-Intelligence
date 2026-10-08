@@ -415,6 +415,75 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(list.status, 200);
   });
 
+  it('lets an admin save stage URL rules and keeps them for the next lookup', async () => {
+    const anon = await api('/api/stage-url-rules');
+    assert.equal(anon.status, 401);
+
+    const jar: Jar = new Map();
+    const user = await devLogin(jar);
+    const defaults = await api('/api/stage-url-rules', { jar });
+    assert.equal(defaults.status, 200);
+    const defaultsBody = await defaults.json();
+    assert.equal(defaultsBody.saved, false);
+    assert.deepEqual(defaultsBody.rules.AWA, ['journal-home']);
+    assert.equal(defaultsBody.rules.DEC[0], 'author-guidelines');
+
+    const denied = await api('/api/admin/stage-url-rules', {
+      jar,
+      csrf: user.csrfToken,
+      method: 'PUT',
+      body: {
+        rules: {
+          AWA: ['article-types'],
+          CON: ['aims-and-scope'],
+          DEC: ['submission-portal'],
+        },
+      },
+    });
+    assert.equal(denied.status, 403);
+
+    applyEnv({ NODE_ENV: 'development', AUTH_DEV_BYPASS: 'true', AUTH_ADMIN_EMAILS: 'dev.user@springernature.com' });
+    const invented = await api('/api/admin/stage-url-rules', {
+      jar,
+      csrf: user.csrfToken,
+      method: 'PUT',
+      body: { rules: { AWA: ['https://www.nature.com/ncomms/invented'], CON: [], DEC: [] } },
+    });
+    assert.equal(invented.status, 400);
+
+    const saved = await api('/api/admin/stage-url-rules', {
+      jar,
+      csrf: user.csrfToken,
+      method: 'PUT',
+      body: {
+        rules: {
+          AWA: ['article-types', 'journal-home'],
+          CON: ['aims-and-scope'],
+          DEC: ['submission-portal', 'author-guidelines'],
+        },
+      },
+    });
+    assert.equal(saved.status, 200);
+    const again = await api('/api/stage-url-rules', { jar });
+    const againBody = await again.json();
+    assert.equal(againBody.saved, true);
+    assert.deepEqual(againBody.rules.DEC, ['submission-portal', 'author-guidelines']);
+    assert.deepEqual(againBody.rules.AWA, ['article-types', 'journal-home']);
+
+    const reset = await api('/api/admin/stage-url-rules', {
+      jar,
+      csrf: user.csrfToken,
+      method: 'PUT',
+      body: { reset: true },
+    });
+    assert.equal(reset.status, 200);
+    const afterReset = await api('/api/stage-url-rules', { jar });
+    const afterBody = await afterReset.json();
+    assert.equal(afterBody.saved, false);
+    assert.deepEqual(afterBody.rules.AWA, ['journal-home']);
+    assert.equal(afterBody.rules.DEC[0], 'author-guidelines');
+  });
+
   it('restricts cache clear and refresh to the admin allowlist', async () => {
     const jar: Jar = new Map();
     const user = await devLogin(jar);
@@ -656,6 +725,197 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal('isFromCache' in pageBody.campaign.clarivateFacts, false);
   });
 
+  it('keeps unchanged catalog rankings out of copy after one metric is edited', async () => {
+    const jar: Jar = new Map();
+    const user = await devLogin(jar);
+    const fetched = await api('/api/fetch-clarivate-facts', {
+      jar,
+      csrf: user.csrfToken,
+      body: { url: 'https://www.nature.com/ncomms' },
+    });
+    assert.equal(fetched.status, 200);
+    const catalog = (await fetched.json()).facts;
+    assert.equal(catalog.verificationStatus, 'catalog_snapshot');
+    assert.equal(catalog.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+    assert.equal(catalog.provenanceMap?.casZone?.source, 'catalog_snapshot');
+    assert.equal(catalog.provenanceMap?.indexing?.source, 'catalog_snapshot');
+
+    const edited = {
+      url: catalog.url,
+      journalName: catalog.journalName,
+      publisher: catalog.publisher,
+      impactFactor: 15.1,
+      fiveYearImpactFactor: catalog.fiveYearImpactFactor,
+      jcrQuartile: catalog.jcrQuartile,
+      casZone: catalog.casZone,
+      firstDecisionDays: catalog.firstDecisionDays,
+      indexing: catalog.indexing,
+      openAccessType: catalog.openAccessType,
+      apcUsd: catalog.apcUsd,
+      chinaWaiverAvailable: catalog.chinaWaiverAvailable,
+      aimsAndScopeSummary: catalog.aimsAndScopeSummary,
+      primaryDiscipline: catalog.primaryDiscipline,
+      issn: catalog.issn,
+      eIssn: catalog.eIssn,
+      jcrYear: 2024,
+      verificationStatus: 'user_provided',
+    };
+
+    const generated = await api('/api/generate-campaign', {
+      jar,
+      csrf: user.csrfToken,
+      body: {
+        landingPageUrl: catalog.url,
+        funnelStage: 'CON',
+        channels: ['search'],
+        outputLanguage: 'EN',
+        userProvidedFacts: edited,
+      },
+    });
+    const generatedBody = await generated.json();
+    assert.equal(generated.status, 200, generatedBody.error || 'edited catalog journal should generate');
+    const facts = generatedBody.campaign.clarivateFacts;
+    assert.equal(facts.impactFactor, 15.1);
+    assert.equal(facts.provenanceMap?.impactFactor?.source, 'user_provided');
+    assert.equal(facts.jcrQuartile, 'Q1');
+    assert.equal(facts.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+    assert.equal(facts.provenanceMap?.casZone?.source, 'catalog_snapshot');
+    assert.equal(facts.provenanceMap?.indexing?.source, 'catalog_snapshot');
+    const copy = campaignText(generatedBody.campaign);
+    assert.doesNotMatch(copy, /15\.1/);
+    assert.doesNotMatch(copy, /Q1/);
+    assert.doesNotMatch(copy, /1区/);
+    assert.doesNotMatch(copy, /SCIE/);
+    assert.doesNotMatch(copy, /14\.7/);
+
+    const saved = await api('/api/update-journal-metrics', {
+      jar,
+      csrf: user.csrfToken,
+      body: { facts: edited },
+    });
+    const savedBody = await saved.json();
+    assert.equal(saved.status, 200, savedBody.error || 'edited catalog journal should save');
+    assert.equal(savedBody.facts.provenanceMap?.impactFactor?.source, 'user_provided');
+    assert.equal(savedBody.facts.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+    assert.equal(savedBody.facts.provenanceMap?.casZone?.source, 'catalog_snapshot');
+    assert.equal(savedBody.facts.provenanceMap?.indexing?.source, 'catalog_snapshot');
+
+    const afterSave = await api('/api/generate-campaign', {
+      jar,
+      csrf: user.csrfToken,
+      body: {
+        landingPageUrl: catalog.url,
+        funnelStage: 'CON',
+        channels: ['search'],
+        outputLanguage: 'EN',
+        userProvidedFacts: edited,
+      },
+    });
+    const afterSaveBody = await afterSave.json();
+    assert.equal(afterSave.status, 200, afterSaveBody.error || 'generate after save should keep catalog labels');
+    const savedCopy = campaignText(afterSaveBody.campaign);
+    assert.doesNotMatch(savedCopy, /15\.1/);
+    assert.doesNotMatch(savedCopy, /Q1/);
+    assert.doesNotMatch(savedCopy, /1区/);
+    assert.doesNotMatch(savedCopy, /SCIE/);
+    assert.equal(afterSaveBody.campaign.clarivateFacts.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+
+    const changedQuartile = await api('/api/generate-campaign', {
+      jar,
+      csrf: user.csrfToken,
+      body: {
+        landingPageUrl: catalog.url,
+        funnelStage: 'CON',
+        channels: ['search'],
+        outputLanguage: 'EN',
+        userProvidedFacts: { ...edited, jcrQuartile: 'Q2' },
+      },
+    });
+    const changedBody = await changedQuartile.json();
+    assert.equal(changedQuartile.status, 200, changedBody.error || 'an edited quartile should generate');
+    assert.equal(changedBody.campaign.clarivateFacts.provenanceMap?.jcrQuartile?.source, 'user_provided');
+    assert.equal(changedBody.campaign.clarivateFacts.provenanceMap?.casZone?.source, 'catalog_snapshot');
+    assert.equal(changedBody.campaign.clarivateFacts.provenanceMap?.indexing?.source, 'catalog_snapshot');
+    const changedCopy = campaignText(changedBody.campaign);
+    assert.match(changedCopy, /Q2/);
+    assert.doesNotMatch(changedCopy, /1区/);
+    assert.doesNotMatch(changedCopy, /SCIE/);
+  });
+
+  it('keeps a page download count in copy after one metric is edited', async () => {
+    setLandingPageFetchForTests(async () => `<html><head><title>Nature Communications</title>
+      <meta name="description" content="114M annual downloads"/>
+      </head><body><p>article downloads of 349,945,839 (2025)</p></body></html>`);
+    const jar: Jar = new Map();
+    const user = await devLogin(jar);
+    const fetched = await api('/api/fetch-clarivate-facts', {
+      jar,
+      csrf: user.csrfToken,
+      body: { url: 'https://www.nature.com/ncomms', forceRefresh: true },
+    });
+    const fetchedBody = await fetched.json();
+    assert.equal(fetched.status, 200, fetchedBody.error || 'download page should load');
+    const catalog = fetchedBody.facts;
+    assert.equal(catalog.articleDownloads, 349945839);
+    assert.equal(catalog.provenanceMap?.articleDownloads?.source, 'page_sourced');
+    assert.equal(catalog.provenanceMap?.articleDownloads?.year, undefined);
+    assert.equal(catalog.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+    assert.equal('downloadDate' in catalog, false);
+    const usageYear = catalog.pageFeatures?.find((feature: { kind: string }) => feature.kind === 'usage_date');
+    assert.equal(usageYear?.text, '2025');
+    assert.equal(usageYear?.label, 'Article downloads data year');
+    assert.equal(usageYear?.provenance, 'page-sourced');
+
+    const edited = {
+      url: catalog.url,
+      journalName: catalog.journalName,
+      publisher: catalog.publisher,
+      impactFactor: 15.1,
+      fiveYearImpactFactor: catalog.fiveYearImpactFactor,
+      jcrQuartile: catalog.jcrQuartile,
+      casZone: catalog.casZone,
+      firstDecisionDays: catalog.firstDecisionDays,
+      indexing: catalog.indexing,
+      openAccessType: catalog.openAccessType,
+      apcUsd: catalog.apcUsd,
+      chinaWaiverAvailable: catalog.chinaWaiverAvailable,
+      aimsAndScopeSummary: catalog.aimsAndScopeSummary,
+      primaryDiscipline: catalog.primaryDiscipline,
+      issn: catalog.issn,
+      eIssn: catalog.eIssn,
+      jcrYear: 2024,
+      verificationStatus: 'user_provided',
+    };
+    const generated = await api('/api/generate-campaign', {
+      jar,
+      csrf: user.csrfToken,
+      body: {
+        landingPageUrl: catalog.url,
+        funnelStage: 'CON',
+        channels: ['search'],
+        outputLanguage: 'EN',
+        userProvidedFacts: edited,
+      },
+    });
+    const generatedBody = await generated.json();
+    assert.equal(generated.status, 200, generatedBody.error || 'edited journal should keep the download count');
+    const facts = generatedBody.campaign.clarivateFacts;
+    assert.equal(facts.articleDownloads, 349945839);
+    assert.equal(facts.provenanceMap?.articleDownloads?.source, 'page_sourced');
+    assert.equal(facts.impactFactor, 15.1);
+    assert.equal(facts.provenanceMap?.impactFactor?.source, 'user_provided');
+    assert.equal(facts.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+    const copy = campaignText(generatedBody.campaign);
+    assert.match(copy, /349,945,839/);
+    assert.match(copy, /Article downloads data year: 2025 \(journal website\)/);
+    assert.doesNotMatch(copy, /download date/i);
+    assert.doesNotMatch(copy, /15\.1/);
+    assert.doesNotMatch(copy, /114M/);
+    assert.doesNotMatch(copy, /Q1/);
+    assert.doesNotMatch(copy, /1区/);
+    assert.doesNotMatch(copy, /SCIE/);
+  });
+
   it('returns 400 for a non-Springer-Nature URL after sign-in', async () => {
     const jar: Jar = new Map();
     const user = await devLogin(jar);
@@ -844,6 +1104,30 @@ function rawApi(
   });
 }
 
+function campaignText(campaign: {
+  searchAds?: { headlines?: { text?: string }[]; descriptions?: { text?: string }[]; callouts?: string[] };
+  displayAds?: {
+    shortHeadline?: string;
+    longHeadline?: string;
+    description?: string;
+    bannerHeadlineZh?: string;
+    bannerSubtextZh?: string;
+  };
+}): string {
+  const search = campaign.searchAds;
+  const display = campaign.displayAds;
+  return [
+    ...(search?.headlines || []).map((item) => item.text || ''),
+    ...(search?.descriptions || []).map((item) => item.text || ''),
+    ...(search?.callouts || []),
+    display?.shortHeadline,
+    display?.longHeadline,
+    display?.description,
+    display?.bannerHeadlineZh,
+    display?.bannerSubtextZh,
+  ].join('\n');
+}
+
 function pageField<T>(value: T): ExtractedFactField<T> {
   return { value, source: 'LandingPage', confidence: 0.8, provenanceLabel: 'landing_page' };
 }
@@ -875,6 +1159,7 @@ function stubPageLinks(url: string): ExtractedPageFacts {
     openAccessPolicy: empty,
     specialIssuesAvailable: pageField(false),
     pageMetrics: [],
+    pageFeatures: [],
     layout: 'unknown',
     rawConfidenceAverage: 0.5,
     extractedDate: '2026-10-08T00:00:00.000Z',

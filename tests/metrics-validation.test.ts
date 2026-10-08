@@ -109,6 +109,9 @@ describe('journal metrics schema', () => {
         provenanceMap: { impactFactor: { source: 'server', confidence: 1 } },
         submissionPortalUrl: 'https://www.nature.com/submit',
         authorGuidelinesUrl: 'https://www.nature.com/guide',
+        articleDownloads: 349945839,
+        fullTextViews: 1200,
+        retrievedAt: '2024-06-01T00:00:00.000Z',
       }),
     });
     assert.equal(facts.journalName, 'Example Journal');
@@ -118,6 +121,10 @@ describe('journal metrics schema', () => {
     assert.equal('cachedAt' in facts, false);
     assert.equal('cacheExpiresAt' in facts, false);
     assert.equal('extractedFacts' in facts, false);
+    assert.equal('articleDownloads' in facts, false);
+    assert.equal('fullTextViews' in facts, false);
+    assert.equal('retrievedAt' in facts, false);
+    expectReject({ facts: validFacts({ downloadDate: '2025-01-01' }) }, /Unknown journal metric fields: downloadDate/);
     expectReject(
       { facts: validFacts({ slugs: ['nature'], cacheExpiresAt: '2026-01-01', notAField: true }) },
       /Unknown journal metric fields: notAField/

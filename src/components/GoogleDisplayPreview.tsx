@@ -24,7 +24,7 @@ interface Props {
   content: GoogleDisplayAd;
   journalName?: string;
   impactFactor?: number | null;
-  /** Provenance phrase such as "JIF 56.1 (Clarivate JCR 2025)". Falls back to IF n. */
+  /** Provenance phrase such as "JIF 56.1 (Clarivate JCR 2025)". A raw impact factor is not shown. */
   impactLabel?: string | null;
   casZone?: string | null;
   publisher?: string;
@@ -122,7 +122,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
   };
 
   const currentTheme = themeColors[themeStyle];
-  const badgeLabel = impactLabel || (impactFactor == null ? '' : `JIF ${impactFactor}`);
+  const badgeLabel = impactLabel || '';
 
   // Draw Banner to Canvas whenever format, theme, image, or text changes
   useEffect(() => {
@@ -271,7 +271,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
       drawButton(ctx, 70, 485, 250, 64, ctaBtnText, currentTheme.accent, '#001a3d');
 
       // Journal Cover / Scientific Seal on Right
-      drawJournalCoverMock(ctx, width - 290, 120, 210, 290, journalName, impactFactor);
+      drawJournalCoverMock(ctx, width - 290, 120, 210, 290, journalName, badgeLabel);
     } else if (format === 'square') {
       // 1:1 Square (1200 x 1200)
       ctx.fillStyle = '#93c5fd';
@@ -286,7 +286,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
       drawBadge(ctx, 420, 250, casZone || '', '#a5b4fc', '#312e81', 32);
 
       // Journal Cover in Center
-      drawJournalCoverMock(ctx, 420, 360, 360, 460, journalName, impactFactor);
+      drawJournalCoverMock(ctx, 420, 360, 360, 460, journalName, badgeLabel);
 
       // Headline
       ctx.fillStyle = '#f8fafc';
@@ -353,7 +353,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
       drawBadge(ctx, 25, 220, badgeLabel, '#fbbf24', '#78350f', 24);
       drawBadge(ctx, 160, 220, casZone ? casZone.slice(0, 6) : '', '#a5b4fc', '#312e81', 20);
 
-      drawJournalCoverMock(ctx, 45, 300, 230, 310, journalName, impactFactor);
+      drawJournalCoverMock(ctx, 45, 300, 230, 310, journalName, badgeLabel);
 
       ctx.fillStyle = '#f8fafc';
       ctx.font = 'bold 26px sans-serif';
@@ -420,7 +420,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
     w: number,
     h: number,
     name: string,
-    ifValue: number | null
+    ifValue: string
   ) => {
     // Shadow
     ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
@@ -455,7 +455,7 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
     // IF Badge on cover
     ctx.fillStyle = '#f59e0b';
     ctx.font = 'bold 16px sans-serif';
-    if (ifValue != null) ctx.fillText(`IF ${ifValue}`, x + w / 2, y + h * 0.90);
+    if (ifValue) ctx.fillText(ifValue, x + w / 2, y + h * 0.90);
     ctx.textAlign = 'left';
   };
 

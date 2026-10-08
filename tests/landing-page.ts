@@ -12,12 +12,17 @@ import {
   isPrivateOrReservedIp,
   isPublisherHomepage,
   journalCacheKey,
+  formatLandingPagePromptSection,
   mergeLandingPageFacts,
   parseAllowedJournalUrl,
   type MergeableJournalFacts,
 } from '../src/utils/landingPage';
 import { app, generateDeterministicCampaign, lookupClarivateFacts, type JournalLookupOptions } from '../server';
 import { factsForCopy, guardMetricClaims, metricPromptSection } from '../src/utils/metricClaims';
+import { editedStageUrlToApply, suggestStageUrl } from '../src/utils/stageUrlSuggestion';
+import { DEFAULT_STAGE_URL_RULES, parseStageUrlRules } from '../src/utils/stageUrlRules';
+import { parseUsageCount } from '../src/utils/usageCounts';
+import { normalizeJournalUrl } from '../src/utils/journalUrl';
 
 const fixtureDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'landing-pages');
 
@@ -263,6 +268,16 @@ export async function runLandingPageTests() {
     assert.equal(nature.articleProcessingChargeUsd.value, null);
     assert.equal(nature.pageMetrics.length, 0);
     assert.equal(nature.journalTitle.provenanceLabel, 'landing_page');
+    const natureFeatures = nature.pageFeatures;
+    assert.ok(natureFeatures.every((feature) => feature.provenance === 'page-sourced'));
+    assert.equal(natureFeatures.find((feature) => feature.kind === 'aims_and_audience')?.text.includes('1869'), true);
+    assert.equal(natureFeatures.find((feature) => feature.kind === 'submission')?.text.includes('Submit manuscript'), true);
+    assert.equal(natureFeatures.find((feature) => feature.kind === 'submission')?.text.includes('For authors'), true);
+    assert.equal(natureFeatures.some((feature) => feature.kind === 'article_types'), false);
+    assert.equal(natureFeatures.some((feature) => feature.kind === 'publishing_model'), false);
+    assert.equal(natureFeatures.some((feature) => feature.kind === 'speed'), false);
+    assert.equal(natureFeatures.some((feature) => feature.kind === 'usage_date' || feature.kind === 'download_date' || feature.kind === 'retrieval_date'), false);
+    assert.doesNotMatch(JSON.stringify(natureFeatures), /impact factor/i);
 
     const ncomms = extractLandingPageFacts(
       fixture('nature-portfolio-nature-communications.html'),
@@ -278,10 +293,28 @@ export async function runLandingPageTests() {
     assert.equal(impact?.provenance, 'page-sourced');
     assert.notEqual(impact?.numericValue, 14.7, 'The labelled body metric wins over the meta description');
     assert.equal(ncomms.firstDecisionDays.value, 9);
-    assert.equal(ncomms.pageMetrics.find((metric) => metric.kind === 'downloads')?.value, '349,945,839 (2025)');
+    const ncommsDownloads = ncomms.pageMetrics.find((metric) => metric.kind === 'downloads');
+    assert.equal(ncommsDownloads?.value, '349,945,839');
+    assert.equal(ncommsDownloads?.numericValue, 349_945_839);
+    assert.equal(ncommsDownloads?.year, null);
+    assert.equal(ncommsDownloads?.provenance, 'page-sourced');
+    assert.notEqual(ncommsDownloads?.numericValue, 114_000_000, 'The body count wins over the meta description');
     assert.deepEqual(ncomms.acceptedArticleTypes.value, ['Research articles', 'Reviews & Analysis', 'News & Comment']);
     assert.equal(ncomms.submissionPortalUrl.value, 'https://mts-ncomms.nature.com/');
     assert.equal(ncomms.articleProcessingChargeUsd.value, null);
+    const ncommsFeatures = ncomms.pageFeatures;
+    assert.ok(ncommsFeatures.every((feature) => feature.provenance === 'page-sourced'));
+    assert.match(ncommsFeatures.find((feature) => feature.kind === 'aims_and_audience')?.text || '', /biological, health/);
+    assert.match(ncommsFeatures.find((feature) => feature.kind === 'article_types')?.text || '', /Research articles/);
+    assert.match(ncommsFeatures.find((feature) => feature.kind === 'article_types')?.text || '', /Reviews & Analysis/);
+    assert.equal(ncommsFeatures.find((feature) => feature.kind === 'publishing_model')?.text, 'Open Access Fees and Funding');
+    assert.equal(ncommsFeatures.find((feature) => feature.kind === 'speed')?.text, '9 days to first decision');
+    assert.match(ncommsFeatures.find((feature) => feature.kind === 'submission')?.text || '', /Submit manuscript/);
+    assert.equal(ncommsFeatures.find((feature) => feature.kind === 'usage_date')?.text, '2025');
+    assert.equal(ncommsFeatures.find((feature) => feature.kind === 'usage_date')?.label, 'Article downloads data year');
+    assert.equal(ncommsFeatures.find((feature) => feature.kind === 'usage_date')?.provenance, 'page-sourced');
+    assert.equal(ncommsFeatures.some((feature) => feature.kind === 'download_date'), false);
+    assert.doesNotMatch(JSON.stringify(ncommsFeatures), /18\.1|14\.7|114M|8 days|impact factor/i);
 
     const jbe = extractLandingPageFacts(
       fixture('springer-link-journal-of-business-ethics.html'),
@@ -292,15 +325,43 @@ export async function runLandingPageTests() {
     assert.equal(jbe.issnPrint.value, '0167-4544');
     assert.equal(jbe.issnElectronic.value, '1573-0697');
     assert.match(jbe.aimsAndScopeSummary.value || '', /ethical issues related to business/);
+    const jbeDownloads = jbe.pageMetrics.find((metric) => metric.kind === 'downloads');
+    assert.equal(jbeDownloads?.value, '6M');
+    assert.equal(jbeDownloads?.numericValue, 6_000_000);
+    assert.equal(jbeDownloads?.year, null);
     assert.equal(jbe.pageMetrics.find((metric) => metric.kind === 'impact_factor')?.numericValue, 6.3);
     assert.equal(jbe.pageMetrics.find((metric) => metric.kind === 'five_year_impact_factor')?.numericValue, 9.7);
     assert.equal(jbe.firstDecisionDays.value, 19);
     assert.equal(jbe.editorInChief.value, 'Michelle Greenwood PhD, Gazi Islam PhD');
     assert.equal(jbe.openAccessPolicy.value, 'Hybrid');
+    assert.equal(jbe.pageFeatures.find((feature) => feature.kind === 'publishing_model')?.text, 'Hybrid');
+    assert.equal(jbe.pageFeatures.find((feature) => feature.kind === 'publishing_model')?.provenance, 'page-sourced');
+    assert.equal(jbe.pageFeatures.find((feature) => feature.kind === 'usage_date')?.text, '2025');
+    assert.equal(jbe.pageFeatures.find((feature) => feature.kind === 'usage_date')?.label, 'Article downloads data year');
+    assert.doesNotMatch(JSON.stringify(jbe.pageFeatures), /6\.3|9\.7|impact factor/i);
     assert.equal(jbe.publisherName.value, 'Springer');
     assert.equal(jbe.submissionPortalUrl.value, 'https://www.editorialmanager.com/busi');
     assert.match(jbe.authorGuidelinesUrl.value || '', /submission-guidelines$/);
     assert.equal(jbe.articleProcessingChargeUsd.value, null);
+
+    const dated = extractLandingPageFacts(
+      `<html><head><title>Dated Journal</title></head><body>
+        <p>Impact factor of 4.2 (2024).</p>
+        <p>Article downloads of 12,000 (2023).</p>
+        <p>Download date: 2024-03-15</p>
+        <p>Data retrieved: 2 March 2024</p>
+      </body></html>`,
+      'https://www.nature.com/dated'
+    );
+    assert.equal(dated.pageFeatures.find((feature) => feature.kind === 'usage_date')?.text, '2023');
+    assert.equal(dated.pageFeatures.find((feature) => feature.kind === 'download_date')?.text, '2024-03-15');
+    assert.equal(dated.pageFeatures.find((feature) => feature.kind === 'data_retrieved')?.text, '2 March 2024');
+    assert.equal(dated.pageFeatures.every((feature) => feature.provenance === 'page-sourced'), true);
+    const impactYearOnly = extractLandingPageFacts(
+      '<html><head><title>Impact only</title></head><body><p>Impact factor of 18.1 (2025).</p></body></html>',
+      'https://www.nature.com/impact-only'
+    );
+    assert.equal(impactYearOnly.pageFeatures.some((feature) => feature.kind === 'usage_date' || feature.kind === 'download_date'), false);
 
     const fees = extractLandingPageFacts(
       fixture('nature-portfolio-open-access-fees.html'),
@@ -397,6 +458,8 @@ export async function runLandingPageTests() {
     assert.equal(natureCache.has('nature'), false);
     assert.equal(natureCache.has('paper'), false);
     assert.equal(natureCache.has('issn:0028-0836'), true);
+    assert.equal(homepage.articleDownloads ?? null, null);
+    assert.equal(homepage.fullTextViews ?? null, null);
 
     const inventedPath = await lookupClarivateFacts('https://www.nature.com/nature', false, {
       ...quiet,
@@ -422,6 +485,9 @@ export async function runLandingPageTests() {
     ].join('\n');
     assert.doesNotMatch(homepageText, /50\.5/);
     assert.doesNotMatch(homepageText, /Clarivate/);
+    assert.match(homepageText, /1869/);
+    assert.equal(homepage.pageFeatures?.some((feature) => feature.kind === 'aims_and_audience' && feature.provenance === 'page-sourced'), true);
+    assert.doesNotMatch(formatLandingPagePromptSection(homepage), /impact factor \d/i);
 
     const ncommsCache = new Map();
     const ncomms = await lookupClarivateFacts('https://www.nature.com/ncomms', false, {
@@ -442,6 +508,10 @@ export async function runLandingPageTests() {
     assert.equal(ncomms.provenanceMap?.fiveYearImpactFactor?.source, 'catalog_snapshot');
     assert.equal(ncomms.apcUsd, 6790);
     assert.equal(ncomms.provenanceMap?.apcUsd?.source, 'catalog_snapshot');
+    assert.equal(ncomms.articleDownloads, 349_945_839);
+    assert.equal(ncomms.provenanceMap?.articleDownloads?.source, 'page_sourced');
+    assert.equal(ncomms.provenanceMap?.articleDownloads?.year, undefined);
+    assert.equal(ncomms.fullTextViews ?? null, null);
     assert.match(ncomms.aimsAndScopeSummary || '', /biological, health/);
     assert.notEqual(ncomms.verificationStatus, 'source_verified');
     assert.equal(ncomms.isVerifiedClarivate, false);
@@ -503,12 +573,37 @@ export async function runLandingPageTests() {
     assert.equal(factsForCopy(ncomms).impactFactor, null);
     assert.equal(factsForCopy(ncomms).fiveYearImpactFactor, null);
     assert.equal(factsForCopy(ncomms).firstDecisionDays, 9);
+    assert.equal(factsForCopy(ncomms).articleDownloads, 349_945_839);
     const ncommsPrompt = metricPromptSection(ncomms);
     assert.doesNotMatch(ncommsPrompt, /18\.1/);
     assert.match(ncommsPrompt, /reference only/);
     assert.match(ncommsPrompt, /First decision days: 9/);
+    assert.match(ncommsPrompt, /Article downloads: 349,945,839/);
+    assert.match(ncommsPrompt, /counts/);
+    assert.doesNotMatch(ncommsPrompt, /16\.2/);
+    const ncommsPagePrompt = formatLandingPagePromptSection(ncomms);
+    assert.match(ncommsPagePrompt, /Aims and audience/);
+    assert.match(ncommsPagePrompt, /biological, health/);
+    assert.match(ncommsPagePrompt, /Open Access Fees and Funding/);
+    assert.match(ncommsPagePrompt, /9 days to first decision/);
+    assert.match(ncommsPagePrompt, /Article downloads data year: 2025/);
+    assert.doesNotMatch(ncommsPagePrompt, /18\.1|14\.7/);
+    assert.doesNotMatch(ncommsPagePrompt, /download date/i);
     assert.doesNotMatch(ncommsText, /18\.1/);
     assert.match(ncommsText, /9 Days/);
+    assert.match(ncommsText, /349,945,839/);
+    assert.match(ncommsText, /Research articles/);
+    assert.match(ncommsText, /Reviews & Analysis/);
+    assert.match(ncommsText, /Open Access Fees and Funding/);
+    assert.match(ncommsText, /biological, health/);
+    assert.match(ncommsText, /Article downloads data year: 2025 \(journal website\)/);
+    assert.doesNotMatch(ncommsText, /download date/i);
+    assert.doesNotMatch(ncommsText, /114M/);
+    const usageClaim = guardMetricClaims('114M annual downloads and 349,945,839 article downloads', ncomms);
+    assert.doesNotMatch(usageClaim.text, /114M/);
+    assert.match(usageClaim.text, /349,945,839/);
+    assert.equal(parseUsageCount('6M (2025)'), 6_000_000);
+    assert.equal(parseUsageCount('349,945,839 (2025)'), 349_945_839);
     assert.doesNotMatch(ncommsText, /Clarivate/);
     assert.doesNotMatch(ncommsText, /14\.7/);
     assert.doesNotMatch(ncommsText, /6790/);
@@ -548,6 +643,232 @@ export async function runLandingPageTests() {
     );
     assert.deepEqual(guidelinesFallback.searchAds.sitelinks, []);
     assert.equal(guidelinesFallback.recommendedDestination.url, 'https://www.nature.com/ncomms');
+
+    const ncommsPage = extractLandingPageFacts(ncommsHtml, 'https://www.nature.com/ncomms');
+    const ncommsStageFacts = {
+      url: 'https://www.nature.com/ncomms',
+      eIssn: ncommsPage.issnElectronic.value,
+      authorGuidelinesUrl: ncommsPage.authorGuidelinesUrl.value,
+      submissionPortalUrl: ncommsPage.submissionPortalUrl.value,
+      extractedFacts: ncommsPage,
+    };
+    const stageUrls = [
+      ncommsStageFacts.url,
+      ncommsStageFacts.authorGuidelinesUrl,
+      ncommsStageFacts.submissionPortalUrl,
+      ncommsPage.canonicalUrl.value,
+      ncommsPage.aboutUrl.value,
+      ncommsPage.articlesUrl.value,
+      ncommsPage.aimsUrl.value,
+      ncommsPage.apcInfoUrl.value,
+      ncommsPage.metricsUrl.value,
+      ncommsPage.checklistUrl.value,
+      'https://www.nature.com/ncomms',
+    ].map((url) => normalizeJournalUrl(url).canonical).filter(Boolean);
+    const expectRealUrl = (url: string | null | undefined) => {
+      assert.ok(url, 'expected a suggestion');
+      assert.ok(stageUrls.includes(url), url);
+      assert.doesNotMatch(url, guessedPath);
+    };
+
+    const awarenessGuidelines = suggestStageUrl(
+      'https://www.nature.com/ncomms/submission-guidelines',
+      'AWA',
+      ncommsStageFacts
+    );
+    assert.equal(awarenessGuidelines?.url, 'https://www.nature.com/ncomms');
+    assert.match(awarenessGuidelines?.reason || '', /Awareness is for people who do not know the journal/);
+    assert.match(awarenessGuidelines?.reason || '', /journal home/);
+    assert.match(awarenessGuidelines?.reason || '', /submission guidelines/);
+    expectRealUrl(awarenessGuidelines?.url);
+    assert.equal(suggestStageUrl('https://www.nature.com/ncomms', 'AWA', ncommsStageFacts), null);
+    const awarenessArticles = suggestStageUrl(
+      'https://www.nature.com/ncomms/research-articles',
+      'AWA',
+      ncommsStageFacts
+    );
+    assert.equal(awarenessArticles?.url, 'https://www.nature.com/ncomms');
+    assert.match(awarenessArticles?.reason || '', /journal home/);
+    assert.match(awarenessArticles?.reason || '', /article types/);
+
+    const considerationHome = suggestStageUrl('https://www.nature.com/ncomms', 'CON', ncommsStageFacts);
+    assert.equal(considerationHome?.url, 'https://www.nature.com/ncomms/research-articles');
+    assert.match(considerationHome?.reason || '', /Consideration/);
+    assert.match(considerationHome?.reason || '', /article types/);
+    expectRealUrl(considerationHome?.url);
+    assert.equal(ncommsPage.aimsUrl.value, null);
+    assert.doesNotMatch(considerationHome?.url || '', /aims/);
+    assert.equal(
+      suggestStageUrl('https://www.nature.com/ncomms/research-articles', 'CON', ncommsStageFacts),
+      null
+    );
+    const considerationGuidelines = suggestStageUrl(
+      'https://www.nature.com/ncomms/submission-guidelines',
+      'CON',
+      ncommsStageFacts
+    );
+    assert.equal(considerationGuidelines?.url, 'https://www.nature.com/ncomms/research-articles');
+    expectRealUrl(considerationGuidelines?.url);
+
+    const decisionHome = suggestStageUrl('https://www.nature.com/ncomms', 'DEC', ncommsStageFacts);
+    assert.equal(decisionHome?.url, 'https://www.nature.com/ncomms/submit');
+    assert.match(decisionHome?.reason || '', /Decision is for authors preparing a submission/);
+    assert.match(decisionHome?.reason || '', /submission page/);
+    assert.doesNotMatch(decisionHome?.reason || '', /author guidelines/);
+    expectRealUrl(decisionHome?.url);
+    assert.doesNotMatch(decisionHome?.url || '', /submission-guidelines/);
+    assert.equal(suggestStageUrl('https://www.nature.com/ncomms/submit', 'DEC', ncommsStageFacts), null);
+    assert.equal(suggestStageUrl('https://mts-ncomms.nature.com/', 'DEC', ncommsStageFacts), null);
+
+    const naturePage = extractLandingPageFacts(natureHtml, 'https://www.nature.com/nature');
+    const natureStageFacts = {
+      url: 'https://www.nature.com/nature',
+      issn: naturePage.issnPrint.value,
+      eIssn: naturePage.issnElectronic.value,
+      authorGuidelinesUrl: naturePage.authorGuidelinesUrl.value,
+      submissionPortalUrl: naturePage.submissionPortalUrl.value,
+      extractedFacts: naturePage,
+    };
+    const natureAwareness = suggestStageUrl('https://www.nature.com/nature/for-authors', 'AWA', natureStageFacts);
+    assert.equal(natureAwareness?.url, 'https://www.nature.com');
+    assert.match(natureAwareness?.reason || '', /Awareness is for people who do not know the journal/);
+    assert.doesNotMatch(natureAwareness?.url || '', guessedPath);
+    const staleNatureFacts = suggestStageUrl(
+      'https://www.nature.com/ncomms/submission-guidelines',
+      'AWA',
+      natureStageFacts
+    );
+    assert.equal(staleNatureFacts?.url, 'https://www.nature.com/ncomms');
+    assert.notEqual(staleNatureFacts?.url, 'https://www.nature.com');
+    const natureDecision = suggestStageUrl('https://www.nature.com', 'DEC', natureStageFacts);
+    assert.equal(natureDecision?.url, 'https://www.nature.com/nature/for-authors');
+    assert.equal(suggestStageUrl('https://www.nature.com/nature/for-authors', 'DEC', natureStageFacts), null);
+
+    const catalogOnly = suggestStageUrl('https://www.nature.com/ncomms/submission-guidelines', 'AWA', {
+      url: 'https://www.nature.com/ncomms/submission-guidelines',
+    });
+    assert.equal(catalogOnly?.url, 'https://www.nature.com/ncomms');
+    assert.match(catalogOnly?.reason || '', /submission guidelines/);
+    assert.doesNotMatch(catalogOnly?.url || '', guessedPath);
+    const considerationCatalogOnly = suggestStageUrl('https://www.nature.com/ncomms/submission-guidelines', 'CON', {
+      url: 'https://www.nature.com/ncomms/submission-guidelines',
+    });
+    assert.equal(considerationCatalogOnly?.url, null);
+    assert.match(considerationCatalogOnly?.reason || '', /Nothing was guessed/);
+    assert.doesNotMatch(considerationCatalogOnly?.reason || '', /https?:\/\//);
+    assert.doesNotMatch(JSON.stringify(considerationCatalogOnly), /\/aims|\/article-types|\/open-access/);
+    assert.equal(
+      suggestStageUrl('https://www.nature.com/ncomms/submission-guidelines', 'DEC', {
+        url: 'https://www.nature.com/ncomms/submission-guidelines',
+      }),
+      null
+    );
+    assert.equal(
+      suggestStageUrl('https://www.nature.com/not-a-journal/submission-guidelines', 'AWA', {
+        url: 'https://www.nature.com/not-a-journal/submission-guidelines',
+      }),
+      null
+    );
+    assert.equal(
+      suggestStageUrl('https://www.nature.com/ncomms-extra/submission-guidelines', 'AWA', {
+        url: 'https://www.nature.com/ncomms-extra/submission-guidelines',
+      }),
+      null
+    );
+    const withAims = {
+      ...ncommsStageFacts,
+      extractedFacts: {
+        ...ncommsPage,
+        aimsUrl: { ...ncommsPage.aimsUrl, value: 'https://www.nature.com/ncomms/aims' },
+      },
+    };
+    assert.equal(suggestStageUrl('https://www.nature.com/ncomms', 'CON', withAims)?.url, 'https://www.nature.com/ncomms/aims');
+
+    const portalFirst = {
+      ...DEFAULT_STAGE_URL_RULES,
+      DEC: ['submission-portal', 'author-guidelines'],
+    };
+    const decisionPortalFirst = suggestStageUrl('https://www.nature.com/ncomms', 'DEC', ncommsStageFacts, portalFirst);
+    assert.equal(decisionPortalFirst?.url, 'https://mts-ncomms.nature.com');
+    assert.match(decisionPortalFirst?.reason || '', /submission portal/);
+    assert.doesNotMatch(decisionPortalFirst?.reason || '', /author guidelines/);
+    assert.equal(suggestStageUrl('https://www.nature.com/ncomms/submit', 'DEC', ncommsStageFacts, portalFirst), null);
+    const awarenessArticlesFirst = suggestStageUrl(
+      'https://www.nature.com/ncomms/submission-guidelines',
+      'AWA',
+      ncommsStageFacts,
+      { ...DEFAULT_STAGE_URL_RULES, AWA: ['article-types', 'journal-home'] }
+    );
+    assert.equal(awarenessArticlesFirst?.url, 'https://www.nature.com/ncomms/research-articles');
+    assert.doesNotMatch(awarenessArticlesFirst?.url || '', guessedPath);
+    const unmatchedPattern = suggestStageUrl('https://www.nature.com/ncomms', 'AWA', ncommsStageFacts, {
+      ...DEFAULT_STAGE_URL_RULES,
+      AWA: ['not-on-this-page'],
+    });
+    assert.equal(unmatchedPattern?.url, null);
+    assert.match(unmatchedPattern?.reason || '', /Nothing was guessed/);
+    assert.doesNotMatch(JSON.stringify(unmatchedPattern), /not-on-this-page\//);
+    assert.equal(parseStageUrlRules({ AWA: ['https://www.nature.com/ncomms/about'], CON: [], DEC: [] }), null);
+    assert.equal(parseStageUrlRules({ AWA: ['../secret'], CON: [], DEC: [] }), null);
+    assert.deepEqual(
+      parseStageUrlRules({ AWA: ['Journal-home', '/research-articles/'], CON: [], DEC: ['submission-portal'] }),
+      { AWA: ['journal-home', 'research-articles'], CON: [], DEC: ['submission-portal'] }
+    );
+    assert.doesNotMatch(awarenessGuidelines?.reason || '', /impact factor|18\.1|14\.7/i);
+    assert.doesNotMatch(decisionHome?.reason || '', /impact factor|18\.1|14\.7/i);
+
+    const journalPage = 'https://www.nature.com/ncomms/research-articles';
+    const suggestedHome = 'https://www.nature.com/ncomms';
+    const customSlug = 'https://www.nature.com/ncomms/My-Custom-Slug';
+    const appliedSlug = editedStageUrlToApply(customSlug, journalPage, suggestedHome);
+    assert.equal(appliedSlug.url, customSlug);
+    assert.equal(appliedSlug.warning, null);
+    assert.notEqual(appliedSlug.url, suggestedHome);
+    const apexSlug = editedStageUrlToApply('https://nature.com/ncomms/another-page', journalPage, suggestedHome);
+    assert.equal(apexSlug.url, 'https://nature.com/ncomms/another-page');
+    const portalSuggestion = 'https://mts-ncomms.nature.com/';
+    const portalEdit = editedStageUrlToApply('https://mts-ncomms.nature.com/custom-path', journalPage, portalSuggestion);
+    assert.equal(portalEdit.url, 'https://mts-ncomms.nature.com/custom-path');
+    const otherJournalHost = editedStageUrlToApply('https://link.springer.com/journal/1', journalPage, suggestedHome);
+    assert.equal(otherJournalHost.url, null);
+    assert.match(otherJournalHost.warning || '', /different host/);
+    const offAllowlist = editedStageUrlToApply('https://example.com/ncomms/custom', journalPage, suggestedHome);
+    assert.equal(offAllowlist.url, null);
+    assert.match(offAllowlist.warning || '', /Springer Nature journal hosts/);
+    assert.equal(editedStageUrlToApply('https://www.nature.com', 'https://www.nature.com/ncomms/about', suggestedHome).url, 'https://www.nature.com');
+
+    const childCache = new Map();
+    const childFacts = await lookupClarivateFacts('https://www.nature.com/ncomms/submission-guidelines', false, {
+      persist: false,
+      cache: childCache,
+      fetchPage: async () => {
+        throw new LandingPageError('Landing page redirected to itself.', 'http');
+      },
+    });
+    assert.equal(childFacts.journalName, 'Nature Communications');
+    assert.equal(childFacts.url, 'https://www.nature.com/ncomms/submission-guidelines');
+    assert.notEqual(childFacts.verificationStatus, 'missing');
+    assert.equal(factsForCopy(childFacts).impactFactor, null);
+    assert.equal(suggestStageUrl(childFacts.url || '', 'AWA', childFacts)?.url, 'https://www.nature.com/ncomms');
+    assert.equal(childCache.has('issn:2041-1723'), false);
+    assert.equal(childCache.has('host:nature.com/ncomms/submission-guidelines'), true);
+    const notAChild = await lookupClarivateFacts('https://www.nature.com/ncomms-extra/submission-guidelines', false, {
+      persist: false,
+      cache: new Map(),
+      fetchPage: async () => {
+        throw new LandingPageError('Landing page redirected to itself.', 'http');
+      },
+    });
+    assert.equal(notAChild.journalName, 'Unknown journal');
+    assert.equal(notAChild.verificationStatus, 'missing');
+    const flagshipSection = await lookupClarivateFacts('https://www.nature.com/nature/for-authors', false, {
+      persist: false,
+      cache: new Map(),
+      fetchPage: async () => {
+        throw new LandingPageError('Landing page redirected to itself.', 'http');
+      },
+    });
+    assert.equal(flagshipSection.verificationStatus, 'missing');
 
     const catalogRankings = mergeLandingPageFacts(
       {

@@ -25,6 +25,7 @@ interface Props {
   hasCampaign: boolean;
   hasCustomPlaybook?: boolean;
   hasPolicyWarnings?: boolean;
+  onOpenStageUrlRules?: () => void;
 }
 
 export const Navbar: React.FC<Props> = ({
@@ -37,10 +38,11 @@ export const Navbar: React.FC<Props> = ({
   hasCampaign,
   hasCustomPlaybook,
   hasPolicyWarnings,
+  onOpenStageUrlRules,
 }) => {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const { user, logout } = useAuth();
+  const { user, admin, logout } = useAuth();
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -119,6 +121,19 @@ export const Navbar: React.FC<Props> = ({
                 }`}
               />
               <span className="hidden sm:inline">Policy Audit</span>
+            </button>
+          )}
+
+          {admin && onOpenStageUrlRules && (
+            <button
+              type="button"
+              id="open-stage-url-rules"
+              onClick={onOpenStageUrlRules}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 rounded-lg border border-slate-200 transition"
+              title="Edit which page patterns each funnel stage prefers"
+            >
+              <Sliders className="w-3.5 h-3.5 text-blue-600" />
+              <span className="hidden sm:inline">Page patterns</span>
             </button>
           )}
 

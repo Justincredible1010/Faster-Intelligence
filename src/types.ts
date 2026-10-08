@@ -29,13 +29,31 @@ export interface ExtractedFactField<T> {
   provenanceLabel?: string;
 }
 
+/** A concrete feature the journal page or the metrics record states. Not an impact factor or a ranking. */
+export interface PageSourcedFeature {
+  kind:
+    | 'aims_and_audience'
+    | 'article_types'
+    | 'publishing_model'
+    | 'speed'
+    | 'submission'
+    | 'usage_date'
+    | 'download_date'
+    | 'data_retrieved'
+    | 'retrieval_date';
+  label: string;
+  text: string;
+  /** page-sourced when the journal site stated it. clarivate_wos_journals_api when the Journals API stated it. */
+  provenance: 'page-sourced' | 'clarivate_wos_journals_api';
+}
+
 /** A number or labelled figure taken from the journal page itself, not from Clarivate or a model guess. */
 export interface PageSourcedMetric {
   label: string;
   value: string;
   numericValue?: number | null;
   year?: number | null;
-  kind: 'impact_factor' | 'five_year_impact_factor' | 'first_decision_days' | 'downloads' | 'apc' | 'other';
+  kind: 'impact_factor' | 'five_year_impact_factor' | 'first_decision_days' | 'downloads' | 'full_text_views' | 'apc' | 'other';
   provenance: 'page-sourced';
 }
 
@@ -67,6 +85,8 @@ export interface ExtractedPageFacts {
   specialIssuesAvailable: ExtractedFactField<boolean>;
   /** Metrics the page itself states. Each item is labelled page-sourced. */
   pageMetrics: PageSourcedMetric[];
+  /** Features the visible page or its real links state. Each item is page-sourced. */
+  pageFeatures: PageSourcedFeature[];
   layout: 'nature_portfolio' | 'springer_link' | 'unknown';
   rawConfidenceAverage: number;
   extractedDate: string;
@@ -93,6 +113,10 @@ export interface ClarivateJournalMetrics {
   indexing?: string[]; // e.g. ["SCIE", "PubMed Central", "Scopus", "DOAJ"]
   openAccessType?: 'Gold Open Access' | 'Hybrid Open Access' | string | null;
   apcUsd?: number | null;
+  /** Article downloads stated by the journal page. Not a date, and not Clarivate retrievedAt. */
+  articleDownloads?: number | null;
+  /** Full-text views or a similar usage count stated by the journal page. */
+  fullTextViews?: number | null;
   chinaWaiverAvailable?: boolean;
   aimsAndScopeSummary?: string;
   primaryDiscipline?: string;
@@ -132,6 +156,8 @@ export interface ClarivateJournalMetrics {
   cacheExpiresAt?: string;
   submissionPortalUrl?: string | null;
   authorGuidelinesUrl?: string | null;
+  /** Page-sourced features for Google, Weibo, and WeChat copy. Empty when the page did not state them. */
+  pageFeatures?: PageSourcedFeature[];
   extractedFacts?: ExtractedPageFacts;
   provenanceMap?: Record<string, { source: string; confidence: number; year?: number; note?: string }>;
 }

@@ -7,6 +7,10 @@ import {
   WOS_METRICS_COLLECTION,
 } from './metricsStore';
 import { normalizeIssn } from './issn';
+import { parseStageUrlRules, type StageUrlRules } from './stageUrlRules';
+
+export const APP_SETTINGS_COLLECTION = 'appSettings';
+export const STAGE_URL_RULES_DOC = 'stageUrlRules';
 
 function projectIdFromEnv(env: NodeJS.ProcessEnv): string {
   const projectId = env.FIRESTORE_PROJECT_ID || env.GOOGLE_CLOUD_PROJECT || env.GCLOUD_PROJECT || '';
@@ -42,6 +46,10 @@ export class FirestoreMetricsStore implements MetricsStore {
 
   private mappingRef(issn: string) {
     return this.db.collection(WOS_ISSN_COLLECTION).doc(normalizeIssn(issn));
+  }
+
+  private stageUrlRulesRef() {
+    return this.db.collection(APP_SETTINGS_COLLECTION).doc(STAGE_URL_RULES_DOC);
   }
 
   async getByIssnYear(issn: string, jcrYear: number): Promise<JournalMetricsRecord | null> {
@@ -145,5 +153,26 @@ export class FirestoreMetricsStore implements MetricsStore {
       batch.set(this.mappingRef(key), toFirestore(mapping));
     }
     await batch.commit();
+  }
+
+  async getStageUrlRules(): Promise<StageUrlRules | null> {
+    const snap = await this.stageUrlRulesRef().get();
+    if (!snap.exists) return null;
+    return parseStageUrlRules(snap.data()?.rules);
+  }
+
+  async putStageUrlRules(rules: StageUrlRules): Promise<void> {
+    const parsed = parseStageUrlRules(rules);
+    if (!parsed) throw new Error('Invalid stage URL rules');
+    await this.stageUrlRulesRef().set(
+      toFirestore({
+        rules: parsed,
+        updatedAt: new Date().toISOString(),
+      })
+    );
+  }
+
+  async clearStageUrlRules(): Promise<void> {
+    await this.stageUrlRulesRef().delete();
   }
 }

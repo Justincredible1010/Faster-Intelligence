@@ -347,7 +347,7 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   assert.strictEqual(trustedUser.isVerifiedClarivate, false);
   assert.strictEqual(trustedUser.verificationStatus, 'user_provided');
   assert(!/clarivate/i.test(trustedUser.sourceAttribution || ''));
-  assert.strictEqual(formatJifClaim(trustedUser), 'JIF 6.9');
+  assert.strictEqual(formatJifClaim(trustedUser), null);
   assert(!/clarivate/i.test(guardMetricClaims('JIF 6.9 (Clarivate JCR 2025)', trustedUser).text));
 
   const fromApi = {
@@ -660,6 +660,24 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   const reloaded = new FileMetricsStore(path.join(dir, 'clarivate-metrics.json'));
   const fromDisk = await reloaded.getLatestByIssn('0028-0836');
   assert.strictEqual(fromDisk?.jcrYear, 2025);
+  assert.strictEqual(await store.getStageUrlRules(), null);
+  const customRules = {
+    AWA: ['journal-home'],
+    CON: ['article-types', 'aims-and-scope'],
+    DEC: ['submission-portal', 'author-guidelines'],
+  };
+  await store.putStageUrlRules(customRules);
+  assert.deepStrictEqual(await store.getStageUrlRules(), customRules);
+  await store.clearStageUrlRules();
+  assert.strictEqual(await store.getStageUrlRules(), null);
+  await fileStore.putStageUrlRules(customRules);
+  const rulesReloaded = new FileMetricsStore(path.join(dir, 'clarivate-metrics.json'));
+  assert.deepStrictEqual(await rulesReloaded.getStageUrlRules(), customRules);
+  const metricsStillThere = await rulesReloaded.getLatestByIssn('0028-0836');
+  assert.strictEqual(metricsStillThere?.jcrYear, 2025);
+  await rulesReloaded.clearStageUrlRules();
+  const rulesCleared = new FileMetricsStore(path.join(dir, 'clarivate-metrics.json'));
+  assert.strictEqual(await rulesCleared.getStageUrlRules(), null);
   assert(!path.join(dir, 'clarivate-metrics.json').endsWith('metrics-cache.json'));
   fs.rmSync(dir, { recursive: true, force: true });
 
@@ -682,6 +700,15 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
     const loaded = await firestore.getByIssnYear(issn, 2025);
     assert.strictEqual(loaded?.wosJournalId, 'TEST');
     assert.strictEqual((await firestore.getIdMapping(issn))?.latestJcrYear, 2025);
+    assert.strictEqual(await firestore.getStageUrlRules(), null);
+    await firestore.putStageUrlRules({
+      AWA: ['journal-home'],
+      CON: ['aims-and-scope'],
+      DEC: ['submission-portal', 'author-guidelines'],
+    });
+    assert.deepStrictEqual((await firestore.getStageUrlRules())?.DEC, ['submission-portal', 'author-guidelines']);
+    await firestore.clearStageUrlRules();
+    assert.strictEqual(await firestore.getStageUrlRules(), null);
     console.log('✓ Firestore emulator store round-trip passed.');
   } else {
     console.log('• Firestore emulator not configured (FIRESTORE_EMULATOR_HOST unset); skipped.');

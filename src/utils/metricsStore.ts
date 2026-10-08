@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { ClarivateJournalMetrics } from '../types';
 import { normalizeIssn } from './issn';
+import { parseStageUrlRules, type StageUrlRules } from './stageUrlRules';
 
 export const WOS_METRICS_COLLECTION = 'wosJournalMetrics';
 export const WOS_ISSN_COLLECTION = 'wosIssnMappings';
@@ -47,11 +48,16 @@ export interface MetricsStore {
     at: string,
     wosJournalId?: string
   ): Promise<void>;
+  /** Null means no override is saved, so callers use the source defaults. */
+  getStageUrlRules(): Promise<StageUrlRules | null>;
+  putStageUrlRules(rules: StageUrlRules): Promise<void>;
+  clearStageUrlRules(): Promise<void>;
 }
 
 interface StoreSnapshot {
   metrics: JournalMetricsRecord[];
   mappings: IssnIdMapping[];
+  stageUrlRules?: StageUrlRules | null;
 }
 
 function metricsKey(issn: string, jcrYear: number): string {
@@ -66,6 +72,7 @@ function issnKeysFor(record: Pick<JournalMetricsRecord, 'issn' | 'eIssn'>): stri
 export class MemoryMetricsStore implements MetricsStore {
   private metrics = new Map<string, JournalMetricsRecord>();
   private mappings = new Map<string, IssnIdMapping>();
+  private stageUrlRules: StageUrlRules | null = null;
 
   async getByIssnYear(issn: string, jcrYear: number): Promise<JournalMetricsRecord | null> {
     const key = metricsKey(issn, jcrYear);
@@ -164,16 +171,32 @@ export class MemoryMetricsStore implements MetricsStore {
     });
   }
 
+  async getStageUrlRules(): Promise<StageUrlRules | null> {
+    return this.stageUrlRules ? parseStageUrlRules(this.stageUrlRules) : null;
+  }
+
+  async putStageUrlRules(rules: StageUrlRules): Promise<void> {
+    const parsed = parseStageUrlRules(rules);
+    if (!parsed) throw new Error('Invalid stage URL rules');
+    this.stageUrlRules = parsed;
+  }
+
+  async clearStageUrlRules(): Promise<void> {
+    this.stageUrlRules = null;
+  }
+
   exportSnapshot(): StoreSnapshot {
     return {
       metrics: [...this.metrics.values()],
       mappings: [...this.mappings.values()],
+      stageUrlRules: this.stageUrlRules,
     };
   }
 
   importSnapshot(snapshot: StoreSnapshot): void {
     this.metrics.clear();
     this.mappings.clear();
+    this.stageUrlRules = null;
     for (const record of snapshot.metrics || []) {
       const issn = normalizeIssn(record.issn);
       if (!issn) continue;
@@ -184,6 +207,7 @@ export class MemoryMetricsStore implements MetricsStore {
       if (!issn) continue;
       this.mappings.set(issn, { ...mapping, issn });
     }
+    this.stageUrlRules = parseStageUrlRules(snapshot.stageUrlRules);
   }
 }
 
@@ -203,6 +227,7 @@ export class FileMetricsStore implements MetricsStore {
       this.memory.importSnapshot({
         metrics: Array.isArray(parsed.metrics) ? parsed.metrics : [],
         mappings: Array.isArray(parsed.mappings) ? parsed.mappings : [],
+        stageUrlRules: parsed.stageUrlRules ?? null,
       });
     } catch (err) {
       console.warn('[Metrics Store] Could not read the local metrics file. Starting empty.', err instanceof Error ? err.message : err);
@@ -257,6 +282,23 @@ export class FileMetricsStore implements MetricsStore {
   ): Promise<void> {
     await this.ready();
     await this.memory.rememberLookupState(issn, state, at, wosJournalId);
+    this.flush();
+  }
+
+  async getStageUrlRules(): Promise<StageUrlRules | null> {
+    await this.ready();
+    return this.memory.getStageUrlRules();
+  }
+
+  async putStageUrlRules(rules: StageUrlRules): Promise<void> {
+    await this.ready();
+    await this.memory.putStageUrlRules(rules);
+    this.flush();
+  }
+
+  async clearStageUrlRules(): Promise<void> {
+    await this.ready();
+    await this.memory.clearStageUrlRules();
     this.flush();
   }
 }

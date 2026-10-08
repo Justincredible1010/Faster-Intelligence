@@ -1,4 +1,4 @@
-import { ClarivateJournalMetrics, MetricProvenanceSource, WosJifRank } from '../types';
+import { ClarivateJournalMetrics, MetricProvenanceSource, PageSourcedFeature, WosJifRank } from '../types';
 import { normalizeIssn } from './issn';
 
 /**
@@ -61,6 +61,13 @@ export interface WosJournalYearReport {
   ranks?: {
     jif?: WosJifRank[];
   };
+  /**
+   * Copied only when the payload states it. The Journals API year report does
+   * not include this field, and retrievedAt is not a substitute.
+   */
+  downloadDate?: string;
+  /** Copied only when the payload states a data-retrieved date. */
+  dataRetrieved?: string;
 }
 
 export interface ClarivateWosJournalsClient {
@@ -121,6 +128,44 @@ export function parseJif(value: string | number | null | undefined): number | nu
   if (typeof value !== 'string' || !value.trim()) return null;
   const parsed = Number(value.trim());
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function statedApiDate(value: string | undefined): string | null {
+  const text = (value || '').replace(/\s+/g, ' ').trim();
+  return text || null;
+}
+
+/** Dates the payload actually states, plus the retrieval time of this response. */
+function apiDateFeatures(report: WosJournalYearReport, retrievedAt: string): PageSourcedFeature[] {
+  const features: PageSourcedFeature[] = [];
+  const downloadDate = statedApiDate(report.downloadDate);
+  if (downloadDate) {
+    features.push({
+      kind: 'download_date',
+      label: 'Download date',
+      text: downloadDate,
+      provenance: 'clarivate_wos_journals_api',
+    });
+  }
+  const dataRetrieved = statedApiDate(report.dataRetrieved);
+  if (dataRetrieved) {
+    features.push({
+      kind: 'data_retrieved',
+      label: 'Data retrieved',
+      text: dataRetrieved,
+      provenance: 'clarivate_wos_journals_api',
+    });
+  }
+  const retrievalDate = retrievedAt.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(retrievalDate)) {
+    features.push({
+      kind: 'retrieval_date',
+      label: 'Retrieval date',
+      text: retrievalDate,
+      provenance: 'clarivate_wos_journals_api',
+    });
+  }
+  return features;
 }
 
 function latestJcrYear(profile: WosJournalProfile): number | null {
@@ -193,6 +238,11 @@ export function createIssnLookup(
  * Turn one ISSN into metrics using the Journals API client.
  * Returns null when the client is unwired or the payload has no JIF.
  * Does not fill in a hardcoded impact factor.
+ * The year report has impact and rank fields only, unless the payload itself
+ * states a download date or a data-retrieved date. It does not state a
+ * journal download or full-text view count, so those stay unset.
+ * retrievedAt is the time this response was retrieved. It is a retrieval
+ * date, not a download date.
  */
 const defaultIssnLookup = createIssnLookup(clarivateWosJournals);
 
@@ -263,6 +313,7 @@ async function lookupOnce(
       isVerifiedClarivate: true,
       jcrYear,
       retrievedAt: retrieved,
+      pageFeatures: apiDateFeatures(report, retrieved),
       reportingYear: String(jcrYear),
       sourceAttribution: `JIF ${impactFactor} (Clarivate JCR ${jcrYear}), retrieved ${retrieved}`,
     },

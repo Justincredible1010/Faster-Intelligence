@@ -30,12 +30,16 @@ import {
   STAGE_CONFIGS,
   ClarivateJournalMetrics,
   OutputLanguage,
+  PageSourcedFeature,
   normalizeStage,
 } from '../types';
 import { JOURNAL_CATALOG } from '../data/journalCatalog';
 import { pickEditableJournalFacts } from '../utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from '../utils/journalUrl';
 import { metricFieldIsTrusted } from '../utils/metricClaims';
+import { editedStageUrlToApply, suggestStageUrl } from '../utils/stageUrlSuggestion';
+import type { StageUrlRules } from '../utils/stageUrlRules';
+import { formatUsageCount } from '../utils/usageCounts';
 
 function metricSourceLabel(source: string | undefined, field?: string, year?: number): string {
   if (
@@ -72,6 +76,7 @@ interface Props {
   hasCustomPlaybook?: boolean;
   isLoading: boolean;
   isFetchingFacts: boolean;
+  stageUrlRules?: StageUrlRules | null;
 }
 
 const JOURNAL_TAGS: Record<string, string> = {
@@ -123,11 +128,14 @@ export const InputStudio: React.FC<Props> = ({
   hasCustomPlaybook,
   isLoading,
   isFetchingFacts,
+  stageUrlRules,
 }) => {
   const [isEditingMetrics, setIsEditingMetrics] = useState(false);
   const [showAdvancedMetrics, setShowAdvancedMetrics] = useState(false);
   const [editedFacts, setEditedFacts] = useState<ClarivateJournalMetrics | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [stageUrlDraft, setStageUrlDraft] = useState('');
+  const [stageUrlWarning, setStageUrlWarning] = useState<string | null>(null);
 
   useEffect(() => {
     if (clarivateFacts) {
@@ -183,6 +191,25 @@ export const InputStudio: React.FC<Props> = ({
 
   const currentStageNormalized = normalizeStage(funnelStage);
   const stages: StageCode[] = ['AWA', 'CON', 'DEC'];
+  const stageUrlSuggestion = suggestStageUrl(landingPageUrl, currentStageNormalized, clarivateFacts, stageUrlRules);
+  const suggestedStageUrl = stageUrlSuggestion?.url || '';
+
+  useEffect(() => {
+    setStageUrlDraft(suggestedStageUrl);
+    setStageUrlWarning(null);
+  }, [suggestedStageUrl]);
+
+  const applyStageUrl = () => {
+    if (!stageUrlSuggestion?.url) return;
+    const decision = editedStageUrlToApply(stageUrlDraft, landingPageUrl, stageUrlSuggestion.url);
+    if (!decision.url) {
+      setStageUrlWarning(decision.warning);
+      return;
+    }
+    setStageUrlWarning(null);
+    onChangeUrl(decision.url);
+    onFetchFacts(decision.url, true);
+  };
 
   // Check if metrics are missing
   const isMissingMetrics = clarivateFacts?.verificationStatus === 'missing';
@@ -492,7 +519,41 @@ export const InputStudio: React.FC<Props> = ({
                   </span>
                 </div>
               </div>
-            ) : (
+            ) : null}
+            {!isEditingMetrics && (clarivateFacts.articleDownloads || clarivateFacts.fullTextViews) ? (
+              <div className="mt-2.5 bg-white p-2.5 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-400 font-semibold uppercase block">Usage</span>
+                <span className="text-sm font-bold text-slate-900">
+                  {clarivateFacts.articleDownloads
+                    ? `${formatUsageCount(clarivateFacts.articleDownloads)} downloads`
+                    : ''}
+                  {clarivateFacts.articleDownloads && clarivateFacts.fullTextViews ? ' · ' : ''}
+                  {clarivateFacts.fullTextViews
+                    ? `${formatUsageCount(clarivateFacts.fullTextViews)} full-text views`
+                    : ''}
+                </span>
+                <span className="text-[10px] text-slate-500 block">
+                  {metricSourceLabel(
+                    clarivateFacts.provenanceMap?.articleDownloads?.source ||
+                      clarivateFacts.provenanceMap?.fullTextViews?.source
+                  ) || 'Page-sourced'}
+                </span>
+              </div>
+            ) : null}
+            {!isEditingMetrics && (clarivateFacts.pageFeatures?.length || 0) > 0 ? (
+              <ul className="mt-2.5 space-y-1">
+                {(clarivateFacts.pageFeatures || []).map((feature: PageSourcedFeature) => (
+                  <li key={feature.kind} className="bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase">{feature.label}</span>
+                    <span className="text-xs font-semibold text-slate-900 block">{feature.text}</span>
+                    <span className="text-[10px] text-slate-500">
+                      {feature.provenance === 'clarivate_wos_journals_api' ? 'clarivate_wos_journals_api' : 'Page-sourced'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {isEditingMetrics ? (
               /* Inline Editable Form */
               <div className="space-y-3 bg-white p-3 rounded-lg border border-blue-200">
                 <span className="font-bold text-xs text-slate-800 block">Override or Verify Journal Metrics:</span>
@@ -588,7 +649,7 @@ export const InputStudio: React.FC<Props> = ({
                   </button>
                 </div>
               </div>
-            )}
+            ) : null}
 
             {/* Cache indicator */}
             <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-200/60">
@@ -745,6 +806,55 @@ export const InputStudio: React.FC<Props> = ({
             );
           })}
         </div>
+
+        {stageUrlSuggestion && (
+          <div
+            className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-xl"
+            role="status"
+          >
+            <div className="flex-1 space-y-2 min-w-0">
+              <p className="text-xs text-amber-950 leading-relaxed">{stageUrlSuggestion.reason}</p>
+              {stageUrlSuggestion.url && (
+                <>
+                  <label htmlFor="stage-url-draft" className="block text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+                    Suggested URL
+                  </label>
+                  <input
+                    id="stage-url-draft"
+                    type="text"
+                    value={stageUrlDraft}
+                    spellCheck={false}
+                    onChange={(event) => {
+                      setStageUrlDraft(event.target.value);
+                      setStageUrlWarning(null);
+                    }}
+                    className="w-full text-[11px] font-mono text-amber-950 bg-white border border-amber-300 rounded-lg px-2 py-1.5"
+                  />
+                  <p className="text-[11px] text-amber-800">
+                    Change the path or slug if you want a different page. Using it loads the URL you entered.
+                  </p>
+                </>
+              )}
+              {!isMissingMetrics && (
+                <p className="text-[11px] text-amber-800">You can still generate with the current URL.</p>
+              )}
+              {stageUrlWarning && (
+                <p className="text-[11px] text-red-800" role="alert">
+                  {stageUrlWarning}
+                </p>
+              )}
+            </div>
+            {stageUrlSuggestion.url && (
+              <button
+                type="button"
+                onClick={applyStageUrl}
+                className="shrink-0 px-3 py-2 bg-white border border-amber-300 text-amber-950 text-xs font-bold rounded-lg hover:bg-amber-100 transition"
+              >
+                Use this URL
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Ad Channels & Output Language Row */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">

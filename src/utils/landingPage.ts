@@ -2,21 +2,13 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import { lookup as dnsLookup } from 'node:dns/promises';
-import type { ExtractedFactField, ExtractedPageFacts, FactVerificationStatus, MetricProvenanceSource, PageSourcedMetric } from '../types';
+import type { ExtractedFactField, ExtractedPageFacts, FactVerificationStatus, MetricProvenanceSource, PageSourcedFeature, PageSourcedMetric } from '../types';
 import { normalizeIssn as canonicalIssn } from './issn';
+import { ALLOWED_DOMAIN_SUFFIXES, isAllowedSpringerNatureHost, journalUrlFetchBlockReason } from './journalHosts';
 import { normalizeJournalUrl } from './journalUrl';
+import { formatUsageCount, parseUsageCount } from './usageCounts';
 
-/**
- * Journal landing pages are fetched only from Springer Nature hosts.
- * Other hosts, IP literals, and redirects off this list are refused so a
- * marketer-supplied URL cannot be used to reach internal services.
- */
-export const ALLOWED_DOMAIN_SUFFIXES = [
-  'nature.com',
-  'springer.com',
-  'biomedcentral.com',
-  'springernature.com',
-] as const;
+export { ALLOWED_DOMAIN_SUFFIXES, isAllowedSpringerNatureHost };
 
 export const FETCH_TIMEOUT_MS = 8_000;
 export const MAX_HTML_BYTES = 1_500_000;
@@ -76,7 +68,10 @@ export interface MergeableJournalFacts {
   firstDecisionDays?: number | null;
   openAccessType?: string | null;
   apcUsd?: number | null;
+  articleDownloads?: number | null;
+  fullTextViews?: number | null;
   aimsAndScopeSummary?: string;
+  pageFeatures?: PageSourcedFeature[];
   verificationStatus: FactVerificationStatus;
   provenanceSource?: MetricProvenanceSource;
   isVerifiedClarivate?: boolean;
@@ -90,15 +85,6 @@ export interface MergeableJournalFacts {
 }
 
 type Provenance = { source: string; confidence: number; year?: number; note?: string };
-
-export function isAllowedSpringerNatureHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '');
-  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) {
-    return false;
-  }
-  if (net.isIP(host) || !/[a-z]/i.test(host)) return false;
-  return ALLOWED_DOMAIN_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
-}
 
 function isPrivateIpv4(a: number, b: number, c: number): boolean {
   if (a === 0 || a === 10 || a === 127) return true;
@@ -187,33 +173,11 @@ export function preferIpv4(addresses: string[]): string[] {
 }
 
 export function parseAllowedJournalUrl(raw: string): URL {
+  const reason = journalUrlFetchBlockReason(raw);
+  if (reason) throw new LandingPageError(reason, 'ssrf');
   let cleaned = (raw || '').trim();
-  if (!cleaned) throw new LandingPageError('A journal URL is required.', 'ssrf');
   if (!/^[a-z][a-z0-9+.-]*:/i.test(cleaned)) cleaned = `https://${cleaned}`;
-
-  let url: URL;
-  try {
-    url = new URL(cleaned);
-  } catch {
-    throw new LandingPageError('The journal URL is not valid.', 'ssrf');
-  }
-
-  if (url.username || url.password) {
-    throw new LandingPageError('Journal URLs must not include credentials.', 'ssrf');
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new LandingPageError('Only http and https journal URLs can be read.', 'ssrf');
-  }
-  if (url.port && url.port !== '80' && url.port !== '443') {
-    throw new LandingPageError('Only ports 80 and 443 are allowed.', 'ssrf');
-  }
-  if (!isAllowedSpringerNatureHost(url.hostname)) {
-    throw new LandingPageError(
-      'Only Springer Nature journal hosts are allowed (nature.com, springer.com, biomedcentral.com, springernature.com, and their subdomains).',
-      'ssrf'
-    );
-  }
-  return url;
+  return new URL(cleaned);
 }
 
 /** www.nature.com/ is the Nature flagship journal, not a publisher portal. */
@@ -696,6 +660,15 @@ function dataTestValue(html: string, testId: string): string | null {
   return match ? decodeHtml(match[1]) : null;
 }
 
+function visibleProse(html: string): string {
+  return decodeHtml(
+    html
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<meta\b[^>]*>/gi, ' ')
+  );
+}
+
 function parseMetricNumber(text: string | null): { value: number; year: number | null } | null {
   if (!text) return null;
   const match = text.match(/(\d+(?:\.\d+)?)(?:\s*\((\d{4})\))?/);
@@ -905,6 +878,146 @@ function apcInfoUrl(pageAnchors: Anchor[], pageUrl: string): string | null {
   return link ? absoluteUrl(link.href, pageUrl) : null;
 }
 
+function featureTextIsSafe(text: string): boolean {
+  return !/impact factor|影响因子|\bjcr\b|\bQ[1-4]\b|quartile|中科院/i.test(text);
+}
+
+const PUBLISHING_MODEL_CUE = /\b(?:fully open access|gold open access|hybrid(?: open access)?|open access)\b/i;
+
+/** Paragraphs, list items, and headings. Nav bars are not one sentence. */
+function proseBlocks(html: string): string[] {
+  const blocks = html.match(/<(?:p|li|h[1-6])\b[^>]*>[\s\S]*?<\/(?:p|li|h[1-6])>/gi) || [];
+  return blocks.map((block) => decodeHtml(block)).filter(Boolean);
+}
+
+function labelledPublishingModel(html: string): string | null {
+  const model = html.match(/data-test=["']darwin-publishing-model["'][\s\S]{0,500}?<dd\b[^>]*>([\s\S]*?)<\/dd>/i);
+  if (!model) return null;
+  const text = decodeHtml(model[1]);
+  if (!text || !featureTextIsSafe(text)) return null;
+  return text;
+}
+
+function publishingModelText(html: string, pageAnchors: Anchor[]): string | null {
+  const labelled = labelledPublishingModel(html);
+  if (labelled) return labelled;
+
+  for (const block of proseBlocks(html)) {
+    for (const sentence of block.split(/(?<=[.!?])\s+/)) {
+      const text = sentence.replace(/\s+/g, ' ').trim();
+      if (text.length > 180 || !PUBLISHING_MODEL_CUE.test(text) || !featureTextIsSafe(text)) continue;
+      return text;
+    }
+  }
+
+  const link = pageAnchors.find((anchor) => PUBLISHING_MODEL_CUE.test(anchor.text) && featureTextIsSafe(anchor.text));
+  return link?.text.replace(/\s+/g, ' ').trim() || null;
+}
+
+function pushFeature(
+  features: PageSourcedFeature[],
+  kind: PageSourcedFeature['kind'],
+  label: string,
+  text: string | null | undefined
+) {
+  const clean = (text || '').replace(/\s+/g, ' ').trim();
+  if (!clean || !featureTextIsSafe(clean)) return;
+  if (features.some((item) => item.kind === kind)) return;
+  features.push({ kind, label, text: clean, provenance: 'page-sourced' });
+}
+
+function yearInUsageText(raw: string | null): string | null {
+  const match = raw?.match(/\((\d{4})\)/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  return year >= 1990 && year <= 2100 ? match[1] : null;
+}
+
+function statedPageDate(text: string, cue: RegExp): string | null {
+  const match = text.match(new RegExp(
+    cue.source + String.raw`\s*[:：]?\s*(\d{4}-\d{2}-\d{2}|\d{1,2}\s+[A-Za-z]+\s+\d{4}|[A-Za-z]+\s+\d{1,2},?\s+\d{4})`,
+    'i'
+  ));
+  return match?.[1]?.replace(/\s+/g, ' ').trim() || null;
+}
+
+/**
+ * A year printed on a usage count, or an explicit download / data-retrieved
+ * date. Impact-factor years and Clarivate retrievedAt are not used here.
+ */
+function usageDateFeatures(downloadRaw: string | null, viewsRaw: string | null, html: string): PageSourcedFeature[] {
+  const features: PageSourcedFeature[] = [];
+  const downloadYear = yearInUsageText(downloadRaw);
+  const viewsYear = yearInUsageText(viewsRaw);
+  if (downloadYear && viewsYear && downloadYear !== viewsYear) {
+    features.push({ kind: 'usage_date', label: 'Article downloads data year', text: downloadYear, provenance: 'page-sourced' });
+    features.push({ kind: 'usage_date', label: 'Full-text views data year', text: viewsYear, provenance: 'page-sourced' });
+  } else if (downloadYear || viewsYear) {
+    const label = downloadYear && !viewsYear
+      ? 'Article downloads data year'
+      : viewsYear && !downloadYear
+        ? 'Full-text views data year'
+        : 'Usage data year';
+    pushFeature(features, 'usage_date', label, downloadYear || viewsYear);
+  }
+
+  const pageText = visiblePageText(html);
+  const downloadDate = statedPageDate(pageText, /download date/i);
+  const dataRetrieved = statedPageDate(pageText, /data[- ]retrieved(?:\s+on)?/i);
+  if (downloadDate) {
+    features.push({ kind: 'download_date', label: 'Download date', text: downloadDate, provenance: 'page-sourced' });
+  }
+  if (dataRetrieved) {
+    features.push({ kind: 'data_retrieved', label: 'Data retrieved', text: dataRetrieved, provenance: 'page-sourced' });
+  }
+  return features;
+}
+
+function combinePageFeatures(
+  base: PageSourcedFeature[] | undefined,
+  page: PageSourcedFeature[] | undefined
+): PageSourcedFeature[] {
+  const fromPage = page || [];
+  const fromApi = (base || []).filter((item) => item.provenance === 'clarivate_wos_journals_api');
+  const seen = new Set(fromPage.map((item) => `${item.kind}:${item.text}`));
+  return [...fromPage, ...fromApi.filter((item) => !seen.has(`${item.kind}:${item.text}`))];
+}
+
+/** Features stated in visible page text or in the text of a real link. Impact factors and rankings are left out. */
+function collectPageFeatures(
+  html: string,
+  pageAnchors: Anchor[],
+  aims: string | null,
+  articleTypeLabels: string[],
+  firstDecisionDays: number | null
+): PageSourcedFeature[] {
+  const features: PageSourcedFeature[] = [];
+  pushFeature(features, 'aims_and_audience', 'Aims and audience', aims);
+
+  if (articleTypeLabels.length > 0) {
+    pushFeature(features, 'article_types', 'Article types', articleTypeLabels.join(', '));
+  }
+
+  pushFeature(features, 'publishing_model', 'Publishing model', publishingModelText(html, pageAnchors));
+
+  if (firstDecisionDays != null) {
+    pushFeature(features, 'speed', 'Time to first decision', `${firstDecisionDays} days to first decision`);
+  }
+
+  const submissionLabels: string[] = [];
+  for (const anchor of pageAnchors) {
+    const portal = /submit (your )?manuscript/i.test(anchor.text) || /mts-[a-z0-9-]+\.nature\.com|submission\.springernature\.com|editorialmanager\.com/i.test(anchor.href);
+    const guidelines = /for authors|author guidelines|submission guidelines/i.test(anchor.text);
+    if ((portal || guidelines) && anchor.text && !submissionLabels.includes(anchor.text)) {
+      submissionLabels.push(anchor.text);
+    }
+  }
+  if (submissionLabels.length > 0) {
+    pushFeature(features, 'submission', 'Submission', submissionLabels.join('; '));
+  }
+  return features;
+}
+
 function pushMetric(metrics: PageSourcedMetric[], metric: PageSourcedMetric) {
   if (metrics.some((item) => item.kind === metric.kind)) return;
   metrics.push(metric);
@@ -1017,29 +1130,37 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
     }
   }
 
-  const downloadsText = dataTestValue(html, 'metrics-downloads-value');
-  if (downloadsText) {
+  const prose = visibleProse(html);
+  const usageCount = String.raw`[\d,.]+\s*(?:million|billion|thousand|[kmb])?(?:\s*\(\d{4}\))?`;
+  const pushUsage = (
+    kind: 'downloads' | 'full_text_views',
+    label: string,
+    raw: string | null
+  ) => {
+    const numericValue = parseUsageCount(raw);
+    if (!raw || numericValue == null) return;
     pushMetric(metrics, {
-      label: 'Downloads',
-      value: downloadsText,
-      numericValue: null,
-      year: downloadsText.match(/\((\d{4})\)/) ? Number(downloadsText.match(/\((\d{4})\)/)?.[1]) : null,
-      kind: 'downloads',
+      label,
+      value: formatUsageCount(numericValue),
+      numericValue,
+      year: null,
+      kind,
       provenance: 'page-sourced',
     });
-  } else {
-    const prose = html.match(/article downloads of\s+([\d,]+)\s*\((\d{4})\)/i);
-    if (prose) {
-      pushMetric(metrics, {
-        label: 'Article downloads',
-        value: `${prose[1]} (${prose[2]})`,
-        numericValue: Number(prose[1].replace(/,/g, '')),
-        year: Number(prose[2]),
-        kind: 'downloads',
-        provenance: 'page-sourced',
-      });
-    }
-  }
+  };
+  const downloadRaw =
+    dataTestValue(html, 'metrics-downloads-value') ||
+    prose.match(new RegExp(`article downloads of\\s+(${usageCount})`, 'i'))?.[1] ||
+    prose.match(new RegExp(`(${usageCount})\\s+(?:annual\\s+)?(?:article\\s+)?downloads\\b`, 'i'))?.[1] ||
+    null;
+  pushUsage('downloads', 'Article downloads', downloadRaw);
+  const viewsRaw =
+    dataTestValue(html, 'metrics-full-text-views-value') ||
+    dataTestValue(html, 'metrics-views-value') ||
+    prose.match(new RegExp(`full[- ]text views of\\s+(${usageCount})`, 'i'))?.[1] ||
+    prose.match(new RegExp(`(${usageCount})\\s+full[- ]text views\\b`, 'i'))?.[1] ||
+    null;
+  pushUsage('full_text_views', 'Full-text views', viewsRaw);
 
   const apc = apcUsd(html);
   if (apc !== null) {
@@ -1098,6 +1219,10 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
     openAccessPolicy: field(openAccess(html), 0.75),
     specialIssuesAvailable: field(specialIssue, specialIssue ? 0.7 : 0),
     pageMetrics: metrics,
+    pageFeatures: [
+      ...collectPageFeatures(html, pageAnchors, aims, types, decision?.numericValue ?? null),
+      ...usageDateFeatures(downloadRaw, viewsRaw, html),
+    ],
     layout,
     rawConfidenceAverage: 0,
     extractedDate: new Date().toISOString(),
@@ -1123,7 +1248,7 @@ function metric(page: ExtractedPageFacts, kind: PageSourcedMetric['kind']): Page
 
 export const CATALOG_SNAPSHOT_NOTE = 'Hardcoded catalog snapshot. Not a Clarivate lookup and not verified.';
 
-type NumberFactKey = 'impactFactor' | 'fiveYearImpactFactor' | 'firstDecisionDays' | 'apcUsd';
+type NumberFactKey = 'impactFactor' | 'fiveYearImpactFactor' | 'firstDecisionDays' | 'apcUsd' | 'articleDownloads' | 'fullTextViews';
 
 function isHardcodedCatalogRecord(base: MergeableJournalFacts): boolean {
   if (base.verificationStatus === 'user_provided' || base.verificationStatus === 'clarivate_api') return false;
@@ -1146,6 +1271,8 @@ function writeNumber(result: MergeableJournalFacts, factKey: NumberFactKey, valu
   if (factKey === 'fiveYearImpactFactor') result.fiveYearImpactFactor = value;
   if (factKey === 'firstDecisionDays') result.firstDecisionDays = value;
   if (factKey === 'apcUsd') result.apcUsd = value;
+  if (factKey === 'articleDownloads') result.articleDownloads = value;
+  if (factKey === 'fullTextViews') result.fullTextViews = value;
 }
 
 /**
@@ -1207,6 +1334,7 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
   }
 
   result.extractedFacts = page;
+  result.pageFeatures = combinePageFeatures(base.pageFeatures, page.pageFeatures);
   const textLocked = userProvided;
 
   if (page.journalTitle.value && !textLocked && !verifiedLive) {
@@ -1276,10 +1404,14 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
   applyNumber('fiveYearImpactFactor', fiveYear?.numericValue, fiveYear?.year, 'page-sourced');
   applyNumber('firstDecisionDays', decision?.numericValue, decision?.year, 'page-sourced');
   applyNumber('apcUsd', apc?.numericValue, apc?.year, 'page-sourced');
+  const downloads = metric(page, 'downloads');
+  const views = metric(page, 'full_text_views');
+  applyNumber('articleDownloads', downloads?.numericValue, null, 'page-sourced');
+  applyNumber('fullTextViews', views?.numericValue, null, 'page-sourced');
 
   if (!userProvided && !verifiedLive) {
     result.isVerifiedClarivate = false;
-    const pageSuppliedNumber = (['impactFactor', 'fiveYearImpactFactor', 'firstDecisionDays', 'apcUsd'] as const).some(
+    const pageSuppliedNumber = (['impactFactor', 'fiveYearImpactFactor', 'firstDecisionDays', 'apcUsd', 'articleDownloads', 'fullTextViews'] as const).some(
       (key) => provenance[key]?.source === 'page_sourced'
     );
     if (pageSuppliedNumber) {
@@ -1324,6 +1456,10 @@ function dropClarivateSnapshotLabels(provenance: Record<string, Provenance>) {
   }
 }
 
+function featureSourceLabel(feature: PageSourcedFeature): string {
+  return feature.provenance === 'clarivate_wos_journals_api' ? 'clarivate_wos_journals_api' : 'Page-sourced';
+}
+
 export function formatLandingPagePromptSection(facts: MergeableJournalFacts): string {
   const page = facts.extractedFacts;
   if (!page) return 'No landing page facts were extracted.';
@@ -1339,7 +1475,11 @@ export function formatLandingPagePromptSection(facts: MergeableJournalFacts): st
     page.articleProcessingChargeUsd.value !== null ? `- APC stated on page: $${page.articleProcessingChargeUsd.value} USD (page-sourced)` : '',
     page.openAccessPolicy.value ? `- Publishing model on page: ${page.openAccessPolicy.value}` : '',
     page.editorInChief.value ? `- Editor: ${page.editorInChief.value}` : '',
-    ...page.pageMetrics.map((item) => `- Page-sourced ${item.label}: ${item.value}`),
+    ...page.pageMetrics
+      .filter((item) => item.kind !== 'impact_factor' && item.kind !== 'five_year_impact_factor')
+      .map((item) => `- Page-sourced ${item.label}: ${item.value}`),
+    ...(page.pageFeatures || []).map((feature) => `- ${featureSourceLabel(feature)} ${feature.label}: ${feature.text}`),
+    'Do not state an impact factor, 5-year impact factor, or ranking from the journal page.',
   ];
   return lines.filter(Boolean).join('\n');
 }

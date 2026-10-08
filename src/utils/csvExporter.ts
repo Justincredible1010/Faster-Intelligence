@@ -49,10 +49,8 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
   const fromWos = metricsFromClarivateWos(facts);
   const jifClaim = formatJifClaim(facts);
   const ifProv = jifClaim == null
-    ? 'No trusted impact factor'
-    : fromWos
-    ? `${jifClaim} (retrieved ${facts.retrievedAt || 'undated'})`
-    : `${jifClaim} (${facts.verificationStatus})`;
+    ? 'Impact factor omitted'
+    : `${jifClaim} (retrieved ${facts.retrievedAt || 'undated'})`;
   const portalProv = facts.submissionPortalUrl
     ? `Extracted Portal URL (${facts.submissionPortalUrl})`
     : 'Submission portal not provided';
@@ -206,7 +204,7 @@ export function downloadGoogleAdsEditorPackage(campaign: GeneratedAdCampaign) {
   // 2. Generate and download README instructions with Provenance details
   const usedFactsSummary = `
 - Journal Title: ${facts.journalName} (${facts.publisher})
-- Impact factor: ${formatJifClaim(facts) ?? 'omitted (no trusted value)'} (Provenance: ${facts.sourceAttribution})
+- Impact factor: ${formatJifClaim(facts) ?? 'omitted'}
 - CAS zone: ${trustedCasZone(facts) ?? 'omitted (no trusted value)'}
 - First decision days: ${trustedFirstDecisionDays(facts) ?? 'omitted (no trusted value)'}
 - APC (USD): ${trustedApcUsd(facts) ?? 'omitted (no trusted value)'}

@@ -1,5 +1,6 @@
-import { ClarivateJournalMetrics, FactVerificationStatus } from '../types';
+import { ClarivateJournalMetrics, FactVerificationStatus, PageSourcedFeature } from '../types';
 import { CLARIVATE_WOS_JOURNALS_SOURCE } from './metricSources';
+import { formatUsageCount, parseUsageCount } from './usageCounts';
 
 /** Numbers in ads may come only from these. A catalog snapshot is not one of them. */
 export const TRUSTED_METRIC_STATUSES: readonly FactVerificationStatus[] = [
@@ -51,15 +52,27 @@ export function metricFieldIsTrusted(facts: MetricCarrier, field: string): boole
 }
 
 /**
- * Journal impact factors in ad copy come from the Clarivate API or the user.
- * A figure read from the journal website stays on the facts panel only.
+ * An impact factor enters ads, prompts, and exports only from clarivate_wos_journals_api,
+ * and only when the record has a JCR year so the number can be labelled.
+ * Page, catalog, and hand-entered figures stay on the facts panel.
  */
 export function impactFactorMayEnterCopy(facts: MetricCarrier, field: 'impactFactor' | 'fiveYearImpactFactor'): boolean {
-  if (!metricFieldIsTrusted(facts, field)) return false;
   const source = fieldProvenance(facts, field);
-  if (source === 'page_sourced' || source === 'landing_page') return false;
-  if (!source && facts?.verificationStatus === 'page_sourced' && !metricsFromClarivateWos(facts)) return false;
-  return true;
+  const clarivateField = source === 'clarivate_wos_journals_api';
+  const clarivateRecord = !source && metricsFromClarivateWos(facts);
+  if (!clarivateField && !clarivateRecord) return false;
+  return typeof facts?.jcrYear === 'number' && Number.isInteger(facts.jcrYear);
+}
+
+/** Full label for a Clarivate impact factor: source, JCR year, and the number. */
+export function clarivateImpactPhrase(
+  facts: MetricCarrier,
+  field: 'impactFactor' | 'fiveYearImpactFactor' = 'impactFactor'
+): string | null {
+  const value = field === 'impactFactor' ? trustedImpactFactor(facts) : trustedFiveYearImpactFactor(facts);
+  if (value == null || facts?.jcrYear == null) return null;
+  const name = field === 'impactFactor' ? 'IF' : '5-year IF';
+  return `clarivate_wos_journals_api JCR ${facts.jcrYear} ${name} ${value}`;
 }
 
 function trustedNumber(facts: MetricCarrier, field: string, value: number | null | undefined): number | null {
@@ -126,6 +139,14 @@ export function trustedApcUsd(facts: MetricCarrier): number | null {
   return trustedNumber(facts, 'apcUsd', facts?.apcUsd);
 }
 
+export function trustedArticleDownloads(facts: MetricCarrier): number | null {
+  return trustedNumber(facts, 'articleDownloads', facts?.articleDownloads);
+}
+
+export function trustedFullTextViews(facts: MetricCarrier): number | null {
+  return trustedNumber(facts, 'fullTextViews', facts?.fullTextViews);
+}
+
 export function trustedQuartile(facts: MetricCarrier): string | null {
   return trustedText(facts, 'jcrQuartile', facts?.jcrQuartile);
 }
@@ -148,6 +169,8 @@ export function factsForCopy<T extends MetricCarrier>(facts: T): T {
     casZone: metricFieldIsTrusted(facts, 'casZone') ? facts.casZone ?? null : null,
     firstDecisionDays: metricFieldIsTrusted(facts, 'firstDecisionDays') ? facts.firstDecisionDays ?? null : null,
     apcUsd: metricFieldIsTrusted(facts, 'apcUsd') ? facts.apcUsd ?? null : null,
+    articleDownloads: trustedArticleDownloads(facts),
+    fullTextViews: trustedFullTextViews(facts),
     indexing: metricFieldIsTrusted(facts, 'indexing') ? facts.indexing || [] : [],
   };
 }
@@ -157,18 +180,20 @@ export function metricPromptSection(facts: MetricCarrier): string {
   if (!metricsAreTrusted(facts)) {
     return [
       'METRICS: No trusted metric values are on this record.',
-      'Do not state an impact factor, 5-year impact factor, JCR quartile, CAS zone, review-time days, APC, indexing service, or any other number or ranking.',
+      'Do not state an impact factor, 5-year impact factor, JCR quartile, CAS zone, review-time days, APC, indexing service, article downloads, full-text views, or any other number or ranking.',
       'Do not mention Clarivate.',
     ].join('\n');
   }
 
   const lines = ['METRICS (these are the only numbers and rankings you may use):'];
-  const impactFactor = trustedImpactFactor(facts);
-  const fiveYear = trustedFiveYearImpactFactor(facts);
   const quartile = trustedQuartile(facts);
   const casZone = trustedCasZone(facts);
   const days = trustedFirstDecisionDays(facts);
   const apc = trustedApcUsd(facts);
+  const downloads = trustedArticleDownloads(facts);
+  const views = trustedFullTextViews(facts);
+  const impactFactor = trustedImpactFactor(facts);
+  const fiveYear = trustedFiveYearImpactFactor(facts);
   const fieldFromClarivate = (field: string) => {
     const source = fieldProvenance(facts, field);
     if (source === 'clarivate_wos_journals_api') return true;
@@ -176,21 +201,43 @@ export function metricPromptSection(facts: MetricCarrier): string {
     return metricsFromClarivateWos(facts);
   };
 
+  const impactPhrase = clarivateImpactPhrase(facts, 'impactFactor');
+  const fiveYearPhrase = clarivateImpactPhrase(facts, 'fiveYearImpactFactor');
   if (impactFactor != null) {
     lines.push(`- Impact factor: ${impactFactor}`);
     const jifClaim = formatJifClaim(facts);
     if (jifClaim) lines.push(`- Cite the impact factor exactly as: ${jifClaim}`);
+    if (impactPhrase) lines.push(`- Source label: ${impactPhrase}`);
   } else if (facts?.impactFactor != null) {
-    lines.push('- Do not state an impact factor. A journal-website figure is reference only.');
+    lines.push('- Do not state an impact factor. A journal-website or catalog figure is reference only.');
   }
-  if (fiveYear != null) lines.push(`- 5-year impact factor: ${fiveYear}`);
-  else if (facts?.fiveYearImpactFactor != null) {
-    lines.push('- Do not state a 5-year impact factor. A journal-website figure is reference only.');
+  if (fiveYear != null) {
+    lines.push(`- 5-year impact factor: ${fiveYear}`);
+    if (fiveYearPhrase) lines.push(`- Source label: ${fiveYearPhrase}`);
+  } else if (facts?.fiveYearImpactFactor != null) {
+    lines.push('- Do not state a 5-year impact factor. A journal-website or catalog figure is reference only.');
   }
   if (quartile) lines.push(`- JCR quartile: ${quartile}`);
   if (casZone) lines.push(`- CAS zone: ${casZone}`);
   if (days != null) lines.push(`- First decision days: ${days}`);
   if (apc != null) lines.push(`- APC USD: ${apc}`);
+  if (downloads != null) lines.push(`- Article downloads: ${formatUsageCount(downloads)}`);
+  if (views != null) lines.push(`- Full-text views: ${formatUsageCount(views)}`);
+  if (downloads != null || views != null) {
+    lines.push('- Article downloads and full-text views are counts. Do not invent a download date.');
+  }
+  for (const feature of facts?.pageFeatures || []) {
+    if (!DATE_FEATURE_KINDS.includes(feature.kind) || !feature.text.trim()) continue;
+    const source = feature.provenance === 'clarivate_wos_journals_api' ? 'clarivate_wos_journals_api' : 'journal website';
+    lines.push(`- ${feature.label}: ${feature.text} (${source})`);
+  }
+  const hasDownloadDate = (facts?.pageFeatures || []).some((feature) => feature.kind === 'download_date' && feature.text.trim());
+  const hasRetrievalDate = (facts?.pageFeatures || []).some(
+    (feature) => feature.kind === 'retrieval_date' && feature.provenance === 'clarivate_wos_journals_api'
+  );
+  if (hasRetrievalDate && !hasDownloadDate) {
+    lines.push('- The retrieval date is when the Journals API response was retrieved. It is not a download date.');
+  }
   if (lines.length === 1) lines.push('- None of the metric fields are filled in.');
   const cited = [
     impactFactor != null && fieldFromClarivate('impactFactor'),
@@ -211,9 +258,9 @@ export function metricPromptSection(facts: MetricCarrier): string {
   ].some(Boolean);
   lines.push(
     clarivateCited && !otherCited
-      ? 'These values came from the Clarivate API. You may say Clarivate only for these values.'
+      ? 'These values came from the Clarivate API. Name clarivate_wos_journals_api and the JCR year whenever you state an impact factor. You may say Clarivate only for these values.'
       : clarivateCited
-        ? 'You may say Clarivate only for values labelled Clarivate JCR. Do not attribute any other value to Clarivate.'
+        ? 'You may say clarivate_wos_journals_api only for the impact factor labelled with that source and its JCR year. Do not attribute any other value to Clarivate.'
         : 'Do not attribute these values to Clarivate.'
   );
   lines.push('Do not add any number or ranking that is not listed above.');
@@ -224,6 +271,8 @@ export interface MetricClaimGuardResult {
   text: string;
   flags: string[];
 }
+
+const DATE_FEATURE_KINDS: PageSourcedFeature['kind'][] = ['usage_date', 'download_date', 'data_retrieved', 'retrieval_date'];
 
 function sameNumber(claimed: string, trusted: number | null): boolean {
   if (trusted == null) return false;
@@ -274,6 +323,8 @@ export function guardMetricClaims(text: string, facts: MetricCarrier): MetricCla
   const fiveYear = trustedFiveYearImpactFactor(facts);
   const days = trustedFirstDecisionDays(facts);
   const apc = trustedApcUsd(facts);
+  const downloads = trustedArticleDownloads(facts);
+  const views = trustedFullTextViews(facts);
   const quartile = trustedQuartile(facts);
   const casZone = trustedCasZone(facts);
   const clarivateOk = metricsFromClarivateWos(facts);
@@ -367,6 +418,17 @@ export function guardMetricClaims(text: string, facts: MetricCarrier): MetricCla
   );
   out = out.replace(new RegExp(String.raw`${CLAIM_NUMBER}\s+\b${otherMetricLabel}\b`, 'gi'), stripOtherMetric);
 
+  const keepUsage = (token: string) => {
+    const count = parseUsageCount(token);
+    if (count != null && (count === downloads || count === views || count === apc || count === impactFactor || count === fiveYear)) return token;
+    flags.push(`Stripped untrusted usage count "${token.trim()}"`);
+    return '';
+  };
+  out = out.replace(
+    /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?(?:\s*(?:million|billion|thousand|[kmb]))?\b|\b\d+(?:\.\d+)?\s*(?:million|billion|thousand|[kmb])\b/gi,
+    (token) => keepUsage(token)
+  );
+
   out = out.replace(
     /中科院[\u4e00-\u9fffA-Za-z0-9/ ]{0,20}?[1-4]区(?:\s*Top)?|[1-4]区(?:\s*Top)?/g,
     (full) => {
@@ -379,6 +441,12 @@ export function guardMetricClaims(text: string, facts: MetricCarrier): MetricCla
   if (!clarivateOk && /\bclarivate\b/i.test(out)) {
     flags.push('Removed Clarivate attribution');
     out = out.replace(/\bclarivate\b/gi, '');
+  }
+
+  const hasDownloadDate = (facts?.pageFeatures || []).some((feature) => feature.kind === 'download_date' && feature.text.trim());
+  if (!hasDownloadDate && /\bdownload date\b/i.test(out)) {
+    flags.push('Removed a download date that was not on the record');
+    out = out.replace(/\bdownload dates?\b/gi, '');
   }
 
   out = out

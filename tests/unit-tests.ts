@@ -194,8 +194,9 @@ console.log('\n[Test Suite 4] Google Ads Editor CSV Schema...');
   assert.strictEqual(lines[0], expectedHeader, 'CSV header must include the 12 editor columns plus Fact Provenance, Confidence, and Quality Notes');
   assert.strictEqual(lines[0].split(',').length, 15, 'CSV header must have 15 columns');
 
-  // user_provided rows cite the number without calling it a Clarivate result
-  assert(lines[1].includes('IF 6.9 (user_provided)'), 'Fact Provenance should cite the impact factor and verification status');
+  // A hand-entered impact factor stays out of the export.
+  assert(lines[1].includes('Impact factor omitted'), 'Fact Provenance should omit an impact factor that did not come from the Journals API');
+  assert(!lines[1].includes('6.9'), 'A user-provided impact factor must not be exported');
   assert(!lines[1].includes('Clarivate'), 'A user-provided impact factor must not be labeled Clarivate');
   assert(lines[1].includes('"0.85"'), 'user_provided confidence should be 0.85');
   assert(lines[1].includes('User-provided metrics; verify before scale'), 'Quality Notes should describe user-provided metrics');
@@ -401,8 +402,10 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
     apcUsd: null,
     sourceAttribution: 'Manually supplied by user',
   };
+  assert.strictEqual(factsForCopy(trusted).impactFactor, null);
+  assert(!metricPromptSection(trusted).includes('6.9'));
   const kept = guardMetricClaims('IF 6.9 and First Decision in 23 Days. Q1. Clarivate IF 50.5.', trusted);
-  assert(kept.text.includes('IF 6.9'));
+  assert(!kept.text.includes('6.9'));
   assert(kept.text.includes('23 Days'));
   assert(kept.text.includes('Q1'));
   assert(!kept.text.includes('50.5'));
@@ -438,7 +441,7 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
 
   const trustedCampaign = generateDeterministicCampaign(trusted, 'CON', 'EN');
   const trustedCopy = JSON.stringify(trustedCampaign.searchAds);
-  assert(trustedCopy.includes('6.9'));
+  assert(!trustedCopy.includes('6.9'));
   assert(trustedCopy.includes('23'));
   assert(!/clarivate/i.test(trustedCopy));
 
@@ -566,15 +569,56 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert.strictEqual(fromApi.isVerifiedClarivate, true);
   assert.strictEqual(fromApi.jcrYear, 2025);
   assert.strictEqual(fromApi.retrievedAt, retrievedAt.toISOString());
+  assert.strictEqual(fromApi.articleDownloads ?? null, null);
+  assert.strictEqual(fromApi.fullTextViews ?? null, null);
+  assert.strictEqual('downloadDate' in fromApi, false);
+  assert.strictEqual(fromApi.pageFeatures?.find((feature) => feature.kind === 'retrieval_date')?.text, '2026-10-08');
+  assert.strictEqual(fromApi.pageFeatures?.find((feature) => feature.kind === 'retrieval_date')?.provenance, 'clarivate_wos_journals_api');
+  assert.equal(fromApi.pageFeatures?.some((feature) => feature.kind === 'download_date'), false);
   assert.strictEqual(fromApi.wosJournalId, 'NATURE');
   assert.strictEqual(fromApi.jcrQuartile, 'Q1');
   assert.strictEqual(fromApi.jifRanks?.[0]?.rank, '1/140');
   assert.notStrictEqual(fromApi.impactFactor, 50.5);
 
+  const wosPrompt = metricPromptSection(fromApi);
+  assert(wosPrompt.includes('56.1'));
+  assert(wosPrompt.includes('clarivate_wos_journals_api'));
+  assert(wosPrompt.includes('JCR 2025'));
   const wosCopy = guardMetricClaims('Clarivate IF 56.1. JCR quartile Q1.', fromApi);
   assert(wosCopy.text.includes('56.1'));
   assert(wosCopy.text.includes('Q1'));
   assert(/clarivate/i.test(wosCopy.text));
+  const wosCampaign = JSON.stringify(generateDeterministicCampaign(fromApi, 'CON', 'EN').searchAds);
+  assert(wosCampaign.includes('clarivate_wos_journals_api'));
+  assert(wosCampaign.includes('JCR 2025'));
+  assert(wosCampaign.includes('56.1'));
+  assert(wosCampaign.includes('Retrieval date: 2026-10-08 (clarivate_wos_journals_api)'));
+  assert(!/download date/i.test(wosCampaign));
+  const inventedDownloadDate = guardMetricClaims('Download date 2025-01-01 and Retrieval date 2026-10-08', fromApi);
+  assert(!/download date/i.test(inventedDownloadDate.text));
+  assert(inventedDownloadDate.text.includes('2026-10-08'));
+
+  const withDownloadDate = await lookupMetricsByIssn('0028-0836', {
+    async searchByIssn() {
+      return { hits: [{ id: 'NATURE' }] };
+    },
+    async getJournal() {
+      return { journalCitationReports: [{ year: 2025 }] };
+    },
+    async getYearReport() {
+      return {
+        downloadDate: '2024-06-20',
+        metrics: { impactMetrics: { jif: '56.1' } },
+      };
+    },
+  }, retrievedAt);
+  assert(withDownloadDate, 'A payload that states a download date should map it');
+  assert.strictEqual(withDownloadDate.pageFeatures?.find((feature) => feature.kind === 'download_date')?.text, '2024-06-20');
+  assert.strictEqual(withDownloadDate.pageFeatures?.find((feature) => feature.kind === 'download_date')?.provenance, 'clarivate_wos_journals_api');
+  assert.strictEqual(withDownloadDate.pageFeatures?.find((feature) => feature.kind === 'retrieval_date')?.label, 'Retrieval date');
+  const datedCampaign = JSON.stringify(generateDeterministicCampaign(withDownloadDate, 'CON', 'EN').searchAds);
+  assert(datedCampaign.includes('Download date: 2024-06-20 (clarivate_wos_journals_api)'));
+  assert(datedCampaign.includes('Retrieval date: 2026-10-08 (clarivate_wos_journals_api)'));
 
   const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
   assert(!serverSource.includes('academic publishing metrics database'));
@@ -621,7 +665,7 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
       negativeKeywords: [],
     },
   });
-  assert(snapshotCsv.includes('No trusted impact factor'));
+  assert(snapshotCsv.includes('Impact factor omitted'));
   assert(!snapshotCsv.includes('6.9'));
   assert(!snapshotCsv.includes('50.5'));
   assert(!/clarivate/i.test(snapshotCsv));
