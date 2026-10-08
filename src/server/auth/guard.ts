@@ -10,9 +10,61 @@ const PUBLIC_POST = new Set([
   '/api/auth/logout',
 ]);
 
-function normalizeApiPath(path: string): string {
-  if (path.length > 1 && path.endsWith('/')) return path.slice(0, -1);
-  return path;
+function decodeRepeated(value: string, times = 2): string {
+  let current = value;
+  for (let i = 0; i < times; i++) {
+    if (!current.includes('%')) break;
+    try {
+      const next = decodeURIComponent(current);
+      if (next === current) break;
+      current = next;
+    } catch {
+      break;
+    }
+  }
+  return current;
+}
+
+function collapseDotSegments(path: string): string {
+  const parts: string[] = [];
+  for (const part of path.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') {
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return `/${parts.join('/')}`;
+}
+
+/** Lowercase, percent-decode (twice), and drop the query, hash, and trailing slash. */
+export function normalizeRequestPath(input: string): string {
+  const raw = input.split('?')[0]?.split('#')[0] || '/';
+  const decoded = decodeRepeated(raw).replace(/\\/g, '/').toLowerCase();
+  let path = collapseDotSegments(decoded);
+  if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+  return path || '/';
+}
+
+function isApiPath(path: string): boolean {
+  return path === '/api' || path.startsWith('/api/');
+}
+
+/**
+ * Express matches routes case-insensitively unless case-sensitive routing is on,
+ * and it decodes the path once before matching. Compare a normalised path so
+ * `/API/...` and `/%41PI/...` cannot skip this guard and still hit a handler.
+ * `originalUrl` is required because a guard mounted at `/api` sees a stripped `req.path`.
+ */
+export function normalizedApiPath(req: Request): string | null {
+  const candidates = [req.originalUrl, req.url, req.path];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const path = normalizeRequestPath(candidate);
+    if (isApiPath(path)) return path;
+  }
+  return null;
 }
 
 export function getRequestSession(res: Response): SessionRecord | null {
@@ -49,7 +101,8 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
  * requests also require the session CSRF token.
  */
 export function apiGuard(req: Request, res: Response, next: NextFunction): void {
-  if (!req.path.startsWith('/api')) {
+  const path = normalizedApiPath(req);
+  if (!path) {
     next();
     return;
   }
@@ -65,7 +118,6 @@ export function apiGuard(req: Request, res: Response, next: NextFunction): void 
   res.locals.authSession = session;
   res.locals.authUser = session?.user ?? null;
 
-  const path = normalizeApiPath(req.path);
   const method = req.method.toUpperCase();
   const isPublic = (method === 'GET' || method === 'HEAD') ? PUBLIC_GET.has(path) : method === 'POST' && PUBLIC_POST.has(path);
 

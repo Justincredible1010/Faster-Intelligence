@@ -115,7 +115,7 @@ export const InputStudio: React.FC<Props> = ({
         ...editedFacts,
         verificationStatus: 'user_provided',
         isVerifiedClarivate: false,
-        sourceAttribution: 'Manually verified and supplied by user (User Verified)',
+        sourceAttribution: 'Manually entered (unverified)',
         missingFields: [],
       });
       setIsEditingMetrics(false);
@@ -483,7 +483,9 @@ export const InputStudio: React.FC<Props> = ({
               <div className="flex items-center gap-1.5">
                 <Clock className="w-3 h-3 text-slate-400" />
                 <span>
-                  {clarivateFacts.isFromCache
+                  {clarivateFacts.verificationStatus === 'user_provided'
+                    ? 'Manually entered (unverified)'
+                    : clarivateFacts.isFromCache
                     ? 'Cached record (refreshed automatically)'
                     : 'Real-time verified source'}
                 </span>

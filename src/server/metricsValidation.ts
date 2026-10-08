@@ -15,12 +15,16 @@ const ALLOWED_FACT_FIELDS = [
   'primaryDiscipline',
   'sourceAttribution',
   'reportingYear',
+  'jcrYear',
   'verificationStatus',
   'isVerifiedClarivate',
   'missingFields',
 ] as const;
 
 const ALLOWED = new Set<string>(ALLOWED_FACT_FIELDS);
+
+/** Public label for user-entered metrics. Never include an email address here. */
+export const MANUAL_METRIC_SOURCE = 'Manually entered (unverified)';
 
 export class MetricsValidationError extends Error {
   constructor(message: string) {
@@ -46,6 +50,7 @@ export interface SanitizedJournalMetrics {
   primaryDiscipline: string;
   sourceAttribution: string;
   reportingYear: string;
+  jcrYear: number;
 }
 
 function fail(message: string): never {
@@ -141,6 +146,9 @@ export function validateJournalMetricsUpdate(body: unknown): SanitizedJournalMet
 
   const journalName = readString(facts.journalName, 'journalName', 300, true);
   if (!journalName) fail('journalName is required');
+  const jcrYear = readJcrYear(facts.jcrYear);
+  if (facts.sourceAttribution !== undefined) readString(facts.sourceAttribution, 'sourceAttribution', 500);
+  if (facts.reportingYear !== undefined) readString(facts.reportingYear, 'reportingYear', 80);
 
   return {
     url: readHttpUrl(facts.url),
@@ -161,7 +169,15 @@ export function validateJournalMetricsUpdate(body: unknown): SanitizedJournalMet
         : fail('chinaWaiverAvailable must be a boolean'),
     aimsAndScopeSummary: readString(facts.aimsAndScopeSummary, 'aimsAndScopeSummary', 4000) || '',
     primaryDiscipline: readString(facts.primaryDiscipline, 'primaryDiscipline', 200) || '',
-    sourceAttribution: readString(facts.sourceAttribution, 'sourceAttribution', 500) || 'Manually supplied by user',
-    reportingYear: readString(facts.reportingYear, 'reportingYear', 80) || 'User provided',
+    sourceAttribution: MANUAL_METRIC_SOURCE,
+    reportingYear: `JCR ${jcrYear}`,
+    jcrYear,
   };
+}
+
+function readJcrYear(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1900 || value > 2100) {
+    fail('jcrYear must be a 4-digit year');
+  }
+  return value;
 }

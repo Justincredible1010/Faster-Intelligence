@@ -18,9 +18,10 @@ function validFacts(overrides: Record<string, unknown> = {}) {
     chinaWaiverAvailable: false,
     aimsAndScopeSummary: 'Peer-reviewed research.',
     primaryDiscipline: 'Biology',
-    sourceAttribution: 'Manually supplied by user (User Verified)',
+    sourceAttribution: 'editor@springernature.com',
     verificationStatus: 'user_provided',
     reportingYear: 'User Provided (2025/2026)',
+    jcrYear: 2024,
     isVerifiedClarivate: false,
     missingFields: [],
     ...overrides,
@@ -44,6 +45,10 @@ describe('journal metrics schema', () => {
     assert.deepEqual(facts.indexing, ['SCIE', 'Scopus']);
     assert.equal('verificationStatus' in facts, false);
     assert.equal('isVerifiedClarivate' in facts, false);
+    assert.equal(facts.jcrYear, 2024);
+    assert.equal(facts.sourceAttribution, 'Manually entered (unverified)');
+    assert.equal(facts.reportingYear, 'JCR 2024');
+    assert.equal(facts.sourceAttribution.includes('@'), false);
   });
 
   it('rejects unknown fields, prototype keys, and wrong types', () => {
@@ -57,6 +62,12 @@ describe('journal metrics schema', () => {
     expectReject({ facts: validFacts({ isVerifiedClarivate: true }) }, /isVerifiedClarivate/);
     expectReject({ facts: validFacts({ url: 'javascript:alert(1)' }) }, /http/);
     expectReject({ facts: validFacts({ journalName: '' }) }, /journalName/);
+    expectReject({ facts: validFacts({ jcrYear: undefined }) }, /jcrYear/);
+    expectReject({ facts: validFacts({ jcrYear: '2024' }) }, /jcrYear/);
+    expectReject({ facts: validFacts({ jcrYear: 24 }) }, /jcrYear/);
+    expectReject({ facts: validFacts({ jcrYear: 1899 }) }, /jcrYear/);
+    expectReject({ facts: validFacts({ jcrYear: 10000 }) }, /jcrYear/);
+    expectReject({ facts: validFacts({ jcrYear: 2024.5 }) }, /jcrYear/);
     expectReject(
       { facts: { ...validFacts(), constructor: { prototype: { admin: true } } } },
       /Unknown journal metric fields/

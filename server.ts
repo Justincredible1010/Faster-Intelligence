@@ -10,7 +10,7 @@ import { diffTrackedFields, recordMetricsAudit, type FieldChange, type MetricsAu
 import { assertProductionAuthConfig } from './src/server/auth/config';
 import { apiGuard, getRequestSession, requireAdmin } from './src/server/auth/guard';
 import { registerAuthRoutes } from './src/server/auth/routes';
-import { MetricsValidationError, validateJournalMetricsUpdate } from './src/server/metricsValidation';
+import { MANUAL_METRIC_SOURCE, MetricsValidationError, validateJournalMetricsUpdate } from './src/server/metricsValidation';
 
 dotenv.config();
 
@@ -19,6 +19,10 @@ const __dirname = path.dirname(__filename);
 
 export const app = express();
 const PORT = 3000;
+
+// Express matches routes case-insensitively by default. Keep matching strict so
+// `/API/...` cannot reach a handler that the guard only recognised as `/api`.
+app.set('case sensitive routing', true);
 
 if (process.env.TRUST_PROXY === 'true') {
   app.set('trust proxy', 1);
@@ -36,6 +40,7 @@ app.use((err: { type?: string; status?: number; statusCode?: number }, _req: exp
   next(err);
 });
 app.use(apiGuard);
+app.use('/api', apiGuard);
 registerAuthRoutes(app);
 
 // Shared Gemini client utility
@@ -75,6 +80,7 @@ export interface JCRJournalEntry {
   missingFields?: string[];
   isVerifiedClarivate?: boolean;
   reportingYear?: string;
+  jcrYear?: number;
   sourceAttribution: string;
   isFromCache?: boolean;
   cachedAt?: string;
@@ -745,9 +751,10 @@ app.post('/api/update-journal-metrics', (req, res) => {
       primaryDiscipline: facts.primaryDiscipline,
       isVerifiedClarivate: false,
       verificationStatus: 'user_provided',
-      sourceAttribution: `Manually supplied by ${actor.email}`,
+      sourceAttribution: MANUAL_METRIC_SOURCE,
       missingFields: [],
       reportingYear: facts.reportingYear,
+      jcrYear: facts.jcrYear,
     };
 
     const changedFields: FieldChange[] = diffTrackedFields(
@@ -769,8 +776,8 @@ app.post('/api/update-journal-metrics', (req, res) => {
     const metric = (name: string, value: number | string | null) => ({
       metric: name,
       value,
-      year: new Date().getFullYear(),
-      source: `User provided by ${actor.email}`,
+      year: facts.jcrYear,
+      source: MANUAL_METRIC_SOURCE,
       cachedAt: nowStr,
       expireAt: calculateMetricExpiry(name),
     });
@@ -802,7 +809,7 @@ app.post('/api/update-journal-metrics', (req, res) => {
     console.log(`[Metrics Cache] ${actor.email} saved user-provided metrics for ${facts.journalName} (${journalId})`);
     res.json({
       success: true,
-      message: `Saved verified metrics for ${facts.journalName}`,
+      message: `Saved manually entered metrics for ${facts.journalName}`,
       facts: userProvidedFacts,
       audit: {
         at: auditEvent.at,

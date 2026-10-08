@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import fs from 'fs';
-import type { Server } from 'http';
+import http from 'node:http';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'os';
 import path from 'path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { getAuditEventsForTests } from '../src/server/auditLog';
 import { getDevOutbox } from '../src/server/auth/email';
+import { MagicLinkRejected, requestMagicLink } from '../src/server/auth/magicLink';
+import { loadAuthConfig } from '../src/server/auth/config';
 import { resetAuthForTests } from '../src/server/auth/reset';
 import { MockOidcIssuer, type MockClaims } from './mockOidcIssuer';
 
@@ -146,9 +150,10 @@ function validFacts(overrides: Record<string, unknown> = {}) {
     chinaWaiverAvailable: false,
     aimsAndScopeSummary: 'Peer-reviewed research.',
     primaryDiscipline: 'Biology',
-    sourceAttribution: 'Manually supplied by user (User Verified)',
+    sourceAttribution: 'editor@springernature.com',
     verificationStatus: 'user_provided',
     reportingYear: 'User Provided (2025/2026)',
+    jcrYear: 2024,
     isVerifiedClarivate: false,
     missingFields: [],
     ...overrides,
@@ -445,7 +450,12 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(body.audit.actorEmail, 'dev.user@springernature.com');
     assert.equal(body.facts.verificationStatus, 'user_provided');
     assert.equal(body.facts.isVerifiedClarivate, false);
-    assert.equal(body.facts.sourceAttribution, 'Manually supplied by dev.user@springernature.com');
+    assert.equal(body.facts.sourceAttribution, 'Manually entered (unverified)');
+    assert.equal(body.facts.reportingYear, 'JCR 2024');
+    assert.equal(body.facts.jcrYear, 2024);
+    assert.equal(body.facts.sourceAttribution.includes('@'), false);
+    assert.match(body.message, /Saved manually entered metrics/);
+    assert.doesNotMatch(body.message, /verified/i);
     assert.equal('arbitrary' in body.facts, false);
     const audit = getAuditEventsForTests();
     assert.equal(audit.length, 1);
@@ -456,6 +466,100 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(cached.status, 200);
     const cachedBody = await cached.json();
     assert.equal(cachedBody.cachedJournal.lastModifiedBy.email, 'dev.user@springernature.com');
+    assert.equal(cachedBody.cachedJournal.metrics.impactFactor.year, 2024);
+    assert.equal(cachedBody.cachedJournal.metrics.impactFactor.source, 'Manually entered (unverified)');
+    assert.equal(cachedBody.cachedJournal.fullFacts.sourceAttribution.includes('@'), false);
+    assert.equal(String(cachedBody.cachedJournal.metrics.impactFactor.source).includes('@'), false);
+  });
+
+  it('returns 401 for mixed-case and percent-encoded /api paths', async () => {
+    const blocked = [
+      { method: 'POST', path: '/API/generate-campaign' },
+      { method: 'GET', path: '/Api/cache/list' },
+      { method: 'GET', path: '/API/cache/list?unused=1' },
+      { method: 'GET', path: '/%61pi/cache/list' },
+      { method: 'GET', path: '/%41PI/cache/list' },
+      { method: 'POST', path: '/%2561pi/generate-campaign' },
+      { method: 'GET', path: '/%252e%252e/API/cache/list' },
+    ];
+    for (const route of blocked) {
+      const res = await rawApi(route.method, route.path);
+      assert.equal(res.status, 401, `${route.method} ${route.path}`);
+      assert.equal(res.body.error, 'Authentication required');
+    }
+  });
+
+  it('rate limits magic-link requests per email and per IP', async () => {
+    applyEnv({ AUTH_PROVIDER: 'magic_link' });
+    const config = loadAuthConfig();
+    for (let i = 0; i < 5; i++) {
+      await requestMagicLink('same.person@springernature.com', config, 'http://localhost:3000', `203.0.113.${i}`);
+    }
+    await assert.rejects(
+      () => requestMagicLink('same.person@springernature.com', config, 'http://localhost:3000', '203.0.113.99'),
+      (err: unknown) => err instanceof MagicLinkRejected && err.status === 429
+    );
+
+    resetAuthForTests();
+    for (let i = 0; i < 5; i++) {
+      await requestMagicLink(`person${i}@springernature.com`, config, 'http://localhost:3000', '198.51.100.10');
+    }
+    await assert.rejects(
+      () => requestMagicLink('person5@springernature.com', config, 'http://localhost:3000', '198.51.100.10'),
+      (err: unknown) => err instanceof MagicLinkRejected && err.status === 429
+    );
+
+    resetAuthForTests();
+    const jar: Jar = new Map();
+    const anon = await session(jar);
+    for (let i = 0; i < 5; i++) {
+      const res = await api('/api/auth/magic-link/request', {
+        jar,
+        csrf: anon.csrfToken,
+        body: { email: `ip${i}@springernature.com` },
+      });
+      assert.equal(res.status, 200, `ip request ${i}`);
+    }
+    const blocked = await api('/api/auth/magic-link/request', {
+      jar,
+      csrf: anon.csrfToken,
+      body: { email: 'ip5@springernature.com' },
+    });
+    assert.equal(blocked.status, 429);
+  });
+
+  it('does not build magic links from X-Forwarded-Host outside production', async () => {
+    applyEnv({ AUTH_PROVIDER: 'magic_link' });
+    const jar: Jar = new Map();
+    const anon = await session(jar);
+    const forwarded = {
+      'X-Forwarded-Host': 'evil.example',
+      'X-Forwarded-Proto': 'https',
+    };
+    const configured = await api('/api/auth/magic-link/request', {
+      jar,
+      csrf: anon.csrfToken,
+      body: { email: 'person@springernature.com' },
+      headers: forwarded,
+    });
+    assert.equal(configured.status, 200);
+    const configuredLink = getDevOutbox().at(-1)?.text || '';
+    assert.match(configuredLink, new RegExp(`${baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/#magic=`));
+    assert.doesNotMatch(configuredLink, /evil\.example/);
+
+    applyEnv({ AUTH_PROVIDER: 'magic_link', APP_URL: undefined });
+    const fallback = await api('/api/auth/magic-link/request', {
+      jar,
+      csrf: anon.csrfToken,
+      body: { email: 'other.person@springernature.com' },
+      headers: forwarded,
+    });
+    assert.equal(fallback.status, 200);
+    const port = (appServer.address() as AddressInfo).port;
+    const fallbackLink = getDevOutbox().at(-1)?.text || '';
+    assert.match(fallbackLink, new RegExp(`http://localhost:${port}/#magic=`));
+    assert.doesNotMatch(fallbackLink, /evil\.example/);
+    assert.doesNotMatch(fallbackLink, /x-forwarded-host/i);
   });
 
   it('rejects a request body over 1mb', async () => {
@@ -465,6 +569,45 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(res.status, 413);
   });
 });
+
+function rawApi(
+  method: string,
+  requestPath: string,
+  jar?: Jar
+): Promise<{ status: number; body: { error?: string } }> {
+  const address = appServer.address() as AddressInfo;
+  const payload = method === 'GET' || method === 'HEAD' ? null : Buffer.from('{}');
+  const headers: Record<string, string> = {};
+  if (payload) {
+    headers['content-type'] = 'application/json';
+    headers['content-length'] = String(payload.length);
+  }
+  if (jar && jar.size > 0) {
+    headers.Cookie = [...jar.entries()].map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join('; ');
+  }
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: '127.0.0.1', port: address.port, path: requestPath, method, headers },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          let body: { error?: string } = {};
+          try {
+            body = JSON.parse(text);
+          } catch {
+            body = {};
+          }
+          resolve({ status: res.statusCode || 0, body });
+        });
+      }
+    );
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
 
 async function devLogin(jar: Jar): Promise<{ csrfToken: string; email: string }> {
   applyEnv({ NODE_ENV: 'development', AUTH_DEV_BYPASS: 'true', AUTH_PROVIDER: 'magic_link' });

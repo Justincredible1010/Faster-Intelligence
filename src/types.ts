@@ -50,6 +50,7 @@ export interface ClarivateJournalMetrics {
   isVerifiedClarivate?: boolean;
   verificationStatus: FactVerificationStatus;
   reportingYear?: string; // e.g. "JCR 2024 (released June 2024)"
+  jcrYear?: number;
   missingFields?: string[];
   isFromCache?: boolean;
   cachedAt?: string;

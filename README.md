@@ -284,13 +284,21 @@ Every `/api` route except the sign-in endpoints below requires a server session.
 
 Admin means the signed-in email is listed in `AUTH_ADMIN_EMAILS`. Anyone else receives **403**.
 
-`POST /api/update-journal-metrics` accepts only these `facts` fields: `url`, `journalName`, `publisher`, `impactFactor`, `fiveYearImpactFactor`, `jcrQuartile`, `casZone`, `firstDecisionDays`, `indexing`, `openAccessType`, `apcUsd`, `chinaWaiverAvailable`, `aimsAndScopeSummary`, `primaryDiscipline`, `sourceAttribution`, `reportingYear`, `verificationStatus` (`user_provided` only), `isVerifiedClarivate` (`false` only), and `missingFields` (strings). The stored record is rebuilt from that schema. `verificationStatus` is forced to `user_provided`, and `sourceAttribution` is rewritten to name the signed-in email. Each save appends a line to `metrics-audit.jsonl`.
+`POST /api/update-journal-metrics` accepts only these `facts` fields: `url`, `journalName`, `publisher`, `impactFactor`, `fiveYearImpactFactor`, `jcrQuartile`, `casZone`, `firstDecisionDays`, `indexing`, `openAccessType`, `apcUsd`, `chinaWaiverAvailable`, `aimsAndScopeSummary`, `primaryDiscipline`, `sourceAttribution`, `reportingYear`, `jcrYear`, `verificationStatus` (`user_provided` only), `isVerifiedClarivate` (`false` only), and `missingFields` (strings). `jcrYear` is required and must be an integer from 1900 to 2100 (a numeric string is rejected). The stored record is rebuilt from that schema. `verificationStatus` is forced to `user_provided`. `source` and `sourceAttribution` are set to `Manually entered (unverified)` and never include the editor's email. `reportingYear` is stored as `JCR <jcrYear>`, and the metric `year` is that same JCR year. The editor's email is kept only on the audit event and `lastModifiedBy`. The response says the metrics were manually entered, not verified. Each save appends a line to `metrics-audit.jsonl`.
 
 ---
 
 ## 10. Authentication
 
 Sign-in is selected with one environment variable, `AUTH_PROVIDER`. The session layer, CSRF check, and `@springernature.com` rule are the same for every provider. The browser only ever holds an `HttpOnly` session id (`sn_session`, `SameSite=Lax`, `Secure` when `APP_URL` is https in production). The server stores the user, the OAuth transaction, and the CSRF token. The SPA sends that CSRF token as `X-CSRF-Token` on every state-changing request.
+
+Route matching is case-sensitive. The API guard also normalises the path (percent-decoded, lowercased) and is mounted both globally and on `/api`, so `/API/...` and `/%41PI/...` require a session and cannot reach a handler.
+
+### Single instance until a shared store exists
+
+Sessions, magic-link tokens, and OAuth state go through `SessionStore`, `MagicLinkStore`, and `OauthStateStore` in `src/server/auth/stores.ts`. The metrics audit log goes through `AuditLogStore` in `src/server/auditLog.ts`. The defaults are in-memory maps and a local JSONL file (`metrics-audit.jsonl`). Those are what run today. A shared durable store — the database planned for the Clarivate step — can be plugged in later with `setSessionStore`, `setMagicLinkStore`, `setOauthStateStore`, and `setAuditLogStore` without changing the sign-in flow.
+
+Until that store is in place, Cloud Run must be pinned to a single instance (`max-instances=1`). A second instance will not see sessions, magic links, or OAuth state created on the first. A restart or a new revision logs everyone out and drops in-flight magic links and OAuth sign-ins.
 
 The email domain check runs on the server after the provider has proven the address:
 
@@ -323,7 +331,7 @@ The dev bypass is not a fourth production option. It is registered only when `NO
 | :--- | :--- | :--- |
 | `AUTH_PROVIDER` | Yes in production | `google`, `magic_link`, or `oidc`. |
 | `AUTH_SESSION_SECRET` | Yes in production | At least 32 characters. Signs the session cookie. In local development an ephemeral secret is generated if this is unset. |
-| `APP_URL` | Yes in production | Public origin with no trailing slash, for example `https://mcge.example.com`. Used for OAuth redirects and magic links. Must be `https` except for localhost. |
+| `APP_URL` | Yes in production | Public origin with no trailing slash, for example `https://mcge.example.com`. Used for OAuth redirects and magic links. Must be `https` except for localhost. Outside production, if this is unset, links use `http://localhost:<port>` and `X-Forwarded-Host` is ignored. |
 | `AUTH_ALLOWED_EMAIL_DOMAINS` | No | Comma-separated apex domains. Default `springernature.com`. |
 | `AUTH_ALLOWED_EMAIL_SUBDOMAINS` | No | Comma-separated full hosts that are subdomains of an allowed apex. Default empty (subdomains rejected). |
 | `AUTH_ADMIN_EMAILS` | For cache admin | Comma-separated emails allowed to call cache clear and cache refresh. |
@@ -392,7 +400,7 @@ AUTH_PROVIDER=magic_link
 AUTH_EMAIL_TRANSPORT=console
 ```
 
-The link is printed in the server log. It looks like `http://localhost:3000/#magic=...`. Opening it shows a confirm button so inbox scanners that only GET the URL cannot consume the token. `MAGIC_LINK_TTL_SECONDS` defaults to 900.
+The link is printed in the server log. It looks like `http://localhost:3000/#magic=...`. Opening it shows a confirm button so inbox scanners that only GET the URL cannot consume the token. `MAGIC_LINK_TTL_SECONDS` defaults to 900. Requests are limited to 5 per email address and 5 per client IP in a 15-minute window. Outside production the client IP is the socket address, not `X-Forwarded-For`.
 
 ### Generic OIDC (Azure AD / Entra, Okta, and others)
 

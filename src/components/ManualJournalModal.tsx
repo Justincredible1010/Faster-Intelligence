@@ -30,6 +30,9 @@ export const ManualJournalModal: React.FC<Props> = ({
       : ''
   );
   const [jcrQuartile, setJcrQuartile] = useState<string>(initialFacts?.jcrQuartile || 'Q1');
+  const [jcrYear, setJcrYear] = useState<string>(
+    initialFacts?.jcrYear ? String(initialFacts.jcrYear) : ''
+  );
   const [casZone, setCasZone] = useState<string>(initialFacts?.casZone || '中科院综合性期刊1区 Top');
   const [firstDecisionDays, setFirstDecisionDays] = useState<string>(
     initialFacts?.firstDecisionDays !== null && initialFacts?.firstDecisionDays !== undefined
@@ -64,6 +67,11 @@ export const ManualJournalModal: React.FC<Props> = ({
       setFormError('Journal name is required.');
       return;
     }
+    const yearNum = Number(jcrYear);
+    if (!/^\d{4}$/.test(jcrYear.trim()) || !Number.isInteger(yearNum) || yearNum < 1900 || yearNum > 2100) {
+      setFormError('Enter the JCR year as a 4-digit year.');
+      return;
+    }
 
     const ifNum = impactFactor ? parseFloat(impactFactor) : null;
     const fiveYearNum = fiveYearIf ? parseFloat(fiveYearIf) : null;
@@ -90,9 +98,10 @@ export const ManualJournalModal: React.FC<Props> = ({
       chinaWaiverAvailable: chinaWaiver,
       aimsAndScopeSummary: aimsAndScope.trim(),
       primaryDiscipline: primaryDiscipline.trim(),
-      sourceAttribution: 'Manually supplied by user (User Verified)',
+      sourceAttribution: 'Manually entered (unverified)',
       verificationStatus: 'user_provided',
-      reportingYear: 'User Provided (2025/2026)',
+      reportingYear: `JCR ${yearNum}`,
+      jcrYear: yearNum,
       isVerifiedClarivate: false,
       missingFields: [],
     };
@@ -117,7 +126,7 @@ export const ManualJournalModal: React.FC<Props> = ({
                   : 'Add / Edit Journal Metrics'}
               </h3>
               <p className="text-[11px] text-slate-500">
-                Supplied values are verified as user-provided and unlock campaign generation
+                Supplied values are stored as manually entered (unverified) and unlock campaign generation
               </p>
             </div>
           </div>
@@ -167,6 +176,24 @@ export const ManualJournalModal: React.FC<Props> = ({
                 <option value="Scientific Reports">Scientific Reports</option>
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">
+              JCR year <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1900}
+              max={2100}
+              step={1}
+              value={jcrYear}
+              onChange={(e) => setJcrYear(e.target.value)}
+              placeholder="e.g. 2024"
+              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+              required
+            />
           </div>
 
           {/* IF, 5-Year IF, Quartile */}
@@ -319,7 +346,7 @@ export const ManualJournalModal: React.FC<Props> = ({
               className="px-4 py-2 bg-[#002d62] hover:bg-[#00204d] text-white rounded-lg font-bold shadow-xs transition flex items-center gap-1.5"
             >
               <Save className="w-3.5 h-3.5" />
-              <span>Save &amp; Verify Metrics</span>
+              <span>Save entered metrics</span>
             </button>
           </div>
         </form>

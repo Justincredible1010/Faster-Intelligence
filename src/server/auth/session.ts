@@ -2,6 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
 import { loadAuthConfig, type AuthConfig } from './config';
 import { appendCookie, readCookies, serializeCookie, SESSION_COOKIE } from './cookies';
+import { getOauthStateStore, getSessionStore } from './stores';
 
 export type AuthProviderId = 'google' | 'magic_link' | 'oidc' | 'dev';
 
@@ -30,8 +31,6 @@ export interface SessionRecord {
   user: AuthUser | null;
   oauth?: OauthTransaction;
 }
-
-const sessions = new Map<string, SessionRecord>();
 
 export function safeEqual(left: string, right: string): boolean {
   const a = Buffer.from(left);
@@ -111,22 +110,40 @@ export function createSession(user: AuthUser | null, ttlSeconds?: number): Sessi
     expiresAt: now + ttl,
     user,
   };
-  sessions.set(session.id, session);
+  getSessionStore().set(session);
   return session;
 }
 
 export function destroySession(id: string): void {
-  sessions.delete(id);
+  getSessionStore().delete(id);
+  getOauthStateStore().delete(id);
 }
 
 export function getSession(id: string): SessionRecord | null {
-  const session = sessions.get(id);
+  const session = getSessionStore().get(id);
   if (!session) return null;
   if (session.expiresAt <= Date.now()) {
-    sessions.delete(id);
+    destroySession(id);
     return null;
   }
   return session;
+}
+
+export function saveOauthTransaction(session: SessionRecord, transaction: OauthTransaction): void {
+  getOauthStateStore().set(session.id, transaction);
+  session.oauth = transaction;
+}
+
+export function readOauthTransaction(session: SessionRecord): OauthTransaction | null {
+  const transaction = getOauthStateStore().get(session.id);
+  if (!transaction) return null;
+  if (Date.now() - transaction.createdAt > 10 * 60 * 1000) {
+    getOauthStateStore().delete(session.id);
+    delete session.oauth;
+    return null;
+  }
+  session.oauth = transaction;
+  return transaction;
 }
 
 export function readSession(req: Request, config: AuthConfig = loadAuthConfig()): SessionRecord | null {
@@ -158,7 +175,8 @@ export function rotateSession(res: Response, user: AuthUser, previous?: SessionR
 }
 
 export function clearAllSessions(): void {
-  sessions.clear();
+  getSessionStore().clear();
+  getOauthStateStore().clear();
 }
 
 export function isAdminEmail(email: string, config: AuthConfig = loadAuthConfig()): boolean {

@@ -3,15 +3,10 @@ import type { AuthConfig } from './config';
 import { isEmailDomainAllowed, normalizeEmail } from './domain';
 import { createEmailSender, type EmailMessage } from './email';
 import { randomToken } from './session';
+import { getMagicLinkStore, type MagicLinkRecord } from './stores';
 
-interface MagicRecord {
-  email: string;
-  expiresAt: number;
-  createdAt: number;
-}
-
-const links = new Map<string, MagicRecord>();
-const recentRequests = new Map<string, number[]>();
+const recentByEmail = new Map<string, number[]>();
+const recentByIp = new Map<string, number[]>();
 
 const MAX_REQUESTS = 5;
 const RATE_WINDOW_MS = 15 * 60 * 1000;
@@ -21,26 +16,28 @@ export function hashToken(token: string): string {
 }
 
 export function clearMagicLinks(): void {
-  links.clear();
-  recentRequests.clear();
+  getMagicLinkStore().clear();
+  recentByEmail.clear();
+  recentByIp.clear();
 }
 
 function sweep(now = Date.now()): void {
-  for (const [hash, record] of links) {
+  const links = getMagicLinkStore();
+  for (const [hash, record] of links.entries()) {
     if (record.expiresAt <= now) links.delete(hash);
   }
 }
 
-function tooMany(email: string, now = Date.now()): boolean {
-  const stamps = (recentRequests.get(email) || []).filter((stamp) => now - stamp < RATE_WINDOW_MS);
-  recentRequests.set(email, stamps);
+function tooMany(bucket: Map<string, number[]>, key: string, now = Date.now()): boolean {
+  const stamps = (bucket.get(key) || []).filter((stamp) => now - stamp < RATE_WINDOW_MS);
+  bucket.set(key, stamps);
   return stamps.length >= MAX_REQUESTS;
 }
 
-function remember(email: string, now = Date.now()): void {
-  const stamps = recentRequests.get(email) || [];
+function remember(bucket: Map<string, number[]>, key: string, now = Date.now()): void {
+  const stamps = bucket.get(key) || [];
   stamps.push(now);
-  recentRequests.set(email, stamps);
+  bucket.set(key, stamps);
 }
 
 export interface MagicLinkRequestResult {
@@ -64,23 +61,34 @@ export class MagicLinkRejected extends Error {
   }
 }
 
-export async function requestMagicLink(email: unknown, config: AuthConfig, appUrl: string): Promise<MagicLinkRequestResult> {
+export async function requestMagicLink(
+  email: unknown,
+  config: AuthConfig,
+  appUrl: string,
+  clientIp = 'unknown'
+): Promise<MagicLinkRequestResult> {
   const normalized = assertMagicLinkEmail(email, config);
+  const ip = clientIp.trim() || 'unknown';
   sweep();
-  if (tooMany(normalized)) {
+  if (tooMany(recentByEmail, normalized) || tooMany(recentByIp, ip)) {
     throw new MagicLinkRejected('Too many sign-in emails were requested. Try again later.', 429);
   }
   const token = randomToken(32);
   const tokenHash = hashToken(token);
   const now = Date.now();
-  links.set(tokenHash, {
+  const links = getMagicLinkStore();
+  const record: MagicLinkRecord = {
     email: normalized,
     createdAt: now,
     expiresAt: now + config.magicLinkTtlSeconds * 1000,
-  });
-  if (links.size > 1000) {
-    const oldest = [...links.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt)[0];
-    if (oldest && oldest[0] !== tokenHash) links.delete(oldest[0]);
+  };
+  links.set(tokenHash, record);
+  if (links.size() > 1000) {
+    let oldest: { hash: string; createdAt: number } | null = null;
+    for (const [hash, existing] of links.entries()) {
+      if (!oldest || existing.createdAt < oldest.createdAt) oldest = { hash, createdAt: existing.createdAt };
+    }
+    if (oldest && oldest.hash !== tokenHash) links.delete(oldest.hash);
   }
   const link = `${appUrl.replace(/\/+$/, '')}/#magic=${token}`;
   const safeLink = escapeHtml(link);
@@ -100,10 +108,11 @@ export async function requestMagicLink(email: unknown, config: AuthConfig, appUr
     const sender = createEmailSender(config.emailTransport);
     await sender.send(message);
   } catch (err) {
-    links.delete(tokenHash);
+    getMagicLinkStore().delete(tokenHash);
     throw err;
   }
-  remember(normalized, now);
+  remember(recentByEmail, normalized, now);
+  remember(recentByIp, ip, now);
   return { ok: true };
 }
 
@@ -128,6 +137,7 @@ export function consumeMagicLink(token: unknown, config: AuthConfig): string | n
   if (typeof token !== 'string' || token.length < 20 || token.length > 200) return null;
   sweep();
   const tokenHash = hashToken(token);
+  const links = getMagicLinkStore();
   const record = links.get(tokenHash);
   if (!record) return null;
   links.delete(tokenHash);

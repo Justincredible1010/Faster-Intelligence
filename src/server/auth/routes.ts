@@ -11,9 +11,11 @@ import {
   destroySession,
   isAdminEmail,
   publicSessionUser,
+  readOauthTransaction,
   readSession,
   rotateSession,
   safeEqual,
+  saveOauthTransaction,
   writeSessionCookie,
   ensureSession,
   type SessionRecord,
@@ -24,9 +26,23 @@ const SAFE_ERRORS = new Set<string>(AUTH_ERROR_CODES);
 export function resolveAppUrl(req: Request): string {
   const configured = loadAuthConfig().appUrl;
   if (configured) return configured;
+  // Outside production, never trust X-Forwarded-Host (or Host). Links stay on this process.
+  if (process.env.NODE_ENV !== 'production') {
+    const port = req.socket?.localPort || Number(process.env.PORT) || 3000;
+    return `http://localhost:${port}`;
+  }
   const proto = (req.get('x-forwarded-proto') || req.protocol || 'http').split(',')[0].trim();
   const host = (req.get('x-forwarded-host') || req.get('host') || '127.0.0.1:3000').split(',')[0].trim();
   return `${proto}://${host}`;
+}
+
+/** Socket address by default. Forwarded client IP is used only in production behind TRUST_PROXY. */
+export function requestClientIp(req: Request): string {
+  if (process.env.NODE_ENV === 'production' && process.env.TRUST_PROXY === 'true') {
+    const forwarded = req.ip?.trim();
+    if (forwarded) return forwarded;
+  }
+  return req.socket?.remoteAddress?.trim() || 'unknown';
 }
 
 function loginRedirect(req: Request, error?: string): string {
@@ -79,7 +95,7 @@ export function registerAuthRoutes(app: Express): void {
       const session = ensureSession(req, res);
       const redirectUri = `${resolveAppUrl(req)}/api/auth/callback`;
       const transaction = createOauthTransaction(redirectUri);
-      session.oauth = transaction;
+      saveOauthTransaction(session, transaction);
       const extra: Record<string, string> = {};
       if (settings.provider === 'google' && config.allowedDomains.length === 1) {
         extra.hd = config.allowedDomains[0];
@@ -101,18 +117,18 @@ export function registerAuthRoutes(app: Express): void {
     }
     try {
       const session = readSession(req);
-      if (!session?.oauth) throw new AuthFlowError('invalid_state');
-      if (Date.now() - session.oauth.createdAt > 10 * 60 * 1000) throw new AuthFlowError('invalid_state');
+      const oauth = session ? readOauthTransaction(session) : null;
+      if (!session || !oauth) throw new AuthFlowError('invalid_state');
       const state = typeof req.query.state === 'string' ? req.query.state : '';
-      if (!state || !safeEqual(state, session.oauth.state)) throw new AuthFlowError('invalid_state');
+      if (!state || !safeEqual(state, oauth.state)) throw new AuthFlowError('invalid_state');
       if (typeof req.query.error === 'string' && req.query.error) {
         throw new AuthFlowError(mapIdentityProviderError(req.query.error));
       }
       const code = typeof req.query.code === 'string' ? req.query.code : '';
       if (!code) throw new AuthFlowError('provider_error');
       const claims = await exchangeAuthorizationCode(
-        { ...settings, redirectUri: session.oauth.redirectUri },
-        session.oauth,
+        { ...settings, redirectUri: oauth.redirectUri },
+        oauth,
         code
       );
       const user = evaluateIdentity(claims, config, settings.provider);
@@ -138,7 +154,7 @@ export function registerAuthRoutes(app: Express): void {
       return;
     }
     try {
-      await requestMagicLink(body.email, config, resolveAppUrl(req));
+      await requestMagicLink(body.email, config, resolveAppUrl(req), requestClientIp(req));
       res.json({ ok: true });
     } catch (err) {
       if (err instanceof MagicLinkRejected) {
