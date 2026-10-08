@@ -290,6 +290,7 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
 {
   const { JOURNAL_CATALOG } = await import('../src/data/journalCatalog.ts');
   const {
+    factsForCopy,
     formatJifClaim,
     guardAdCopy,
     guardMetricClaims,
@@ -474,7 +475,78 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   assert.strictEqual(resolveJournalIssn({ requested: '00280836', catalog: { issn: '1476-4687' } }), '0028-0836');
   assert.strictEqual(resolveJournalIssn({ cached: { issn: '1234-5678' }, catalog: nature }), '1234-5678');
   assert.strictEqual(resolveJournalIssn({ pageIssn: '14764687', catalog: nature }), '1476-4687');
+  assert.strictEqual(resolveJournalIssn({
+    pagePrintIssn: '0028-0836',
+    pageElectronicIssn: '1476-4687',
+    catalog: { issn: '1111-1111' },
+  }), '0028-0836');
+  assert.strictEqual(resolveJournalIssn({
+    pageElectronicIssn: '14764687',
+    catalog: { issn: '1111-1111' },
+  }), '1476-4687');
   assert.strictEqual(resolveJournalIssn({ catalog: nature }), '0028-0836');
+
+  const mixed = mergeClarivateOverLanding(
+    {
+      ...nature,
+      impactFactor: 50,
+      fiveYearImpactFactor: 51,
+      firstDecisionDays: 9,
+      provenanceMap: {
+        impactFactor: { source: 'page_sourced', confidence: 0.8, note: 'from the journal website' },
+        fiveYearImpactFactor: { source: 'page_sourced', confidence: 0.8, note: 'from the journal website' },
+        firstDecisionDays: { source: 'page_sourced', confidence: 0.8 },
+        jcrQuartile: { source: 'catalog_snapshot', confidence: 0.5 },
+        casZone: { source: 'catalog_snapshot', confidence: 0.5 },
+        indexing: { source: 'catalog_snapshot', confidence: 0.5 },
+        publisher: { source: 'page_sourced', confidence: 0.9 },
+      },
+    },
+    {
+      journalName: 'NATURE',
+      jcrTitle: 'Nature',
+      publisher: 'NATURE PORTFOLIO',
+      impactFactor: 56.1,
+      fiveYearImpactFactor: null,
+      firstDecisionDays: null,
+      jcrQuartile: 'Q1',
+      casZone: null,
+      indexing: ['SCIE'],
+      verificationStatus: 'clarivate_api',
+      provenanceSource: 'clarivate_wos_journals_api',
+      isVerifiedClarivate: true,
+      jcrYear: 2025,
+      sourceAttribution: 'JIF 56.1 (Clarivate JCR 2025)',
+    }
+  );
+  assert.strictEqual(mixed.impactFactor, 56.1);
+  assert.strictEqual(mixed.provenanceMap?.impactFactor?.source, 'clarivate_wos_journals_api');
+  assert.strictEqual(mixed.provenanceMap?.impactFactor?.year, 2025);
+  assert.strictEqual(mixed.fiveYearImpactFactor, 51);
+  assert.strictEqual(mixed.provenanceMap?.fiveYearImpactFactor?.source, 'page_sourced');
+  assert.strictEqual(mixed.firstDecisionDays, 9);
+  assert.strictEqual(mixed.provenanceMap?.firstDecisionDays?.source, 'page_sourced');
+  assert.strictEqual(mixed.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+  assert.strictEqual(mixed.provenanceMap?.casZone?.source, 'catalog_snapshot');
+  assert.strictEqual(mixed.provenanceMap?.indexing?.source, 'catalog_snapshot');
+  assert.deepStrictEqual(mixed.indexing, nature.indexing);
+  assert.strictEqual(mixed.provenanceMap?.publisher?.source, 'page_sourced');
+  assert.strictEqual(formatJifClaim(mixed), 'JIF 56.1 (Clarivate JCR 2025)');
+  assert.strictEqual(factsForCopy(mixed).impactFactor, 56.1);
+  assert.strictEqual(factsForCopy(mixed).fiveYearImpactFactor, null);
+  assert.strictEqual(factsForCopy(mixed).casZone, null);
+  assert.deepStrictEqual(factsForCopy(mixed).indexing, []);
+  const pageOnly = {
+    ...mixed,
+    impactFactor: 50,
+    provenanceSource: 'clarivate_wos_journals_api' as const,
+    provenanceMap: {
+      ...mixed.provenanceMap,
+      impactFactor: { source: 'page_sourced', confidence: 0.8, note: 'from the journal website' },
+    },
+  };
+  assert.strictEqual(factsForCopy(pageOnly).impactFactor, null);
+  assert.strictEqual(formatJifClaim(pageOnly), null);
   assert.strictEqual(clarivateAdminRefreshDisabled({}), false);
   assert.strictEqual(clarivateAdminRefreshDisabled({ CLARIVATE_ADMIN_REFRESH_ENABLED: 'false' }), true);
   assert.strictEqual(clarivateAdminRefreshDisabled({ CLARIVATE_ADMIN_REFRESH_ENABLED: 'true' }), false);

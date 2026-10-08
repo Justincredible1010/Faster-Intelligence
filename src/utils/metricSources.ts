@@ -94,12 +94,8 @@ export const clarivateWosJournals: ClarivateWosJournalsClient = {
 };
 
 /**
- * Facts read from the journal page itself (aims, fees, decision time printed
- * on the site). This build does not scrape pages, so the client returns null.
- *
- * PR #3 landing-page scraper hook: implement extractFromPage and set `issn`
- * or `eIssn` from the page. lookupClarivateFacts passes that value into the
- * Journals API. You can also call lookupClarivateFacts(url, false, issn, pageIssn).
+ * Optional page-facts override. Production lookup reads the journal landing
+ * page in landingPage.ts. This client stays unset unless a test installs one.
  */
 export interface PageFactsClient {
   extractFromPage(canonicalUrl: string): Promise<ClarivateJournalMetrics | null>;
@@ -107,11 +103,10 @@ export interface PageFactsClient {
 
 let extractPageFacts: PageFactsClient['extractFromPage'] = async () => null;
 
-/**
- * Test seam from main. Production leaves the extractor unset, so page lookup
- * returns null until PR #3's landing-page reader is installed here.
- */
-export function setPageFactsClientForTests(client: Pick<PageFactsClient, 'extractFromPage'> | null): void {
+/** Test seam. Production leaves the extractor unset, so page lookup returns null. */
+export function setPageFactsClientForTests(
+  client: Pick<PageFactsClient, 'extractFromPage'> | null
+): void {
   extractPageFacts = client?.extractFromPage ?? (async () => null);
 }
 

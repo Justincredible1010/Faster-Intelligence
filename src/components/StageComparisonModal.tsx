@@ -13,6 +13,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { StageCode, STAGE_CONFIGS, ClarivateJournalMetrics, GeneratedAdCampaign } from '../types';
+import { apiFetch } from '../auth/api';
 
 interface Props {
   isOpen: boolean;
@@ -47,9 +48,8 @@ export const StageComparisonModal: React.FC<Props> = ({
   const fetchComparison = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/compare-stages', {
+      const res = await apiFetch('/api/compare-stages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ landingPageUrl }),
       });
       const data = await res.json();

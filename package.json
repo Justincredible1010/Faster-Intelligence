@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/unit-tests.ts && tsx tests/clarivate.test.ts",
+    "test": "tsx tests/unit-tests.ts && tsx tests/clarivate.test.ts && tsx --test --test-concurrency=1 tests/auth-domain.test.ts tests/metrics-validation.test.ts tests/auth-http.test.ts",
     "verify:clarivate": "tsx scripts/verify-clarivate.ts"
   },
   "dependencies": {

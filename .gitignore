@@ -7,8 +7,9 @@ coverage/
 .env*
 !.env.example
 
-# Runtime journal-metrics cache. Created on first lookup; the server starts without it.
+# Runtime journal-metrics cache and audit log. Created on first write; the server starts without them.
 metrics-cache.json
+metrics-audit.jsonl
 
 # Local Clarivate metrics store (METRICS_STORE=file). Not used in production.
 .data/

@@ -33,8 +33,25 @@ import {
   normalizeStage,
 } from '../types';
 import { JOURNAL_CATALOG } from '../data/journalCatalog';
+import { pickEditableJournalFacts } from '../utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from '../utils/journalUrl';
-import { sanitizeUserProvidedFacts } from '../utils/metricClaims';
+import { metricFieldIsTrusted } from '../utils/metricClaims';
+
+function metricSourceLabel(source: string | undefined, field?: string, year?: number): string {
+  if (
+    (field === 'impactFactor' || field === 'fiveYearImpactFactor') &&
+    (source === 'page_sourced' || source === 'landing_page')
+  ) {
+    return 'from journal website';
+  }
+  if (source === 'page_sourced' || source === 'landing_page') return 'Page-sourced';
+  if (source === 'catalog_snapshot') return 'Catalog snapshot';
+  if (source === 'user_provided') return 'User provided';
+  if (source === 'clarivate_wos_journals_api') {
+    return year != null ? `Clarivate JCR ${year}` : 'Clarivate Web of Science Journals API';
+  }
+  return '';
+}
 
 interface Props {
   landingPageUrl: string;
@@ -73,6 +90,20 @@ const POPULAR_JOURNALS = JOURNAL_CATALOG.map((journal) => ({
   tag: JOURNAL_TAGS[journal.url] || journal.publisher,
 }));
 
+const INLINE_METRIC_FIELDS = ['journalName', 'impactFactor', 'casZone', 'firstDecisionDays'] as const;
+
+function sameMetricValue(left: unknown, right: unknown): boolean {
+  if (left == null && right == null) return true;
+  return Object.is(left, right);
+}
+
+function inlineMetricsChanged(
+  original: ClarivateJournalMetrics,
+  edited: ClarivateJournalMetrics
+): boolean {
+  return INLINE_METRIC_FIELDS.some((field) => !sameMetricValue(original[field], edited[field]));
+}
+
 export const InputStudio: React.FC<Props> = ({
   landingPageUrl,
   onChangeUrl,
@@ -96,6 +127,7 @@ export const InputStudio: React.FC<Props> = ({
   const [isEditingMetrics, setIsEditingMetrics] = useState(false);
   const [showAdvancedMetrics, setShowAdvancedMetrics] = useState(false);
   const [editedFacts, setEditedFacts] = useState<ClarivateJournalMetrics | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
 
   useEffect(() => {
     if (clarivateFacts) {
@@ -118,15 +150,35 @@ export const InputStudio: React.FC<Props> = ({
     onFetchFacts(url);
   };
 
+  const closeMetricsEditor = () => {
+    setIsEditingMetrics(false);
+    setEditError(null);
+    if (clarivateFacts) setEditedFacts(clarivateFacts);
+  };
+
   const handleSaveMetrics = () => {
-    if (editedFacts && onUpdateClarivateFacts) {
-      onUpdateClarivateFacts(sanitizeUserProvidedFacts({
-        ...editedFacts,
-        sourceAttribution: 'Manually supplied by user (User Verified)',
-        missingFields: [],
-      }));
-      setIsEditingMetrics(false);
+    if (!editedFacts || !clarivateFacts || !onUpdateClarivateFacts) return;
+    if (!inlineMetricsChanged(clarivateFacts, editedFacts)) {
+      closeMetricsEditor();
+      return;
     }
+    const year = editedFacts.jcrYear;
+    if (typeof year !== 'number' || !Number.isInteger(year) || year < 1900 || year > 2100) {
+      setEditError('Enter the JCR year for the metrics you changed.');
+      return;
+    }
+    setEditError(null);
+    onUpdateClarivateFacts(pickEditableJournalFacts({
+      ...editedFacts,
+      verificationStatus: 'user_provided',
+      provenanceSource: 'user_provided',
+      isVerifiedClarivate: false,
+      sourceAttribution: 'Manually entered (unverified)',
+      reportingYear: `JCR ${year}`,
+      jcrYear: year,
+      missingFields: [],
+    }));
+    setIsEditingMetrics(false);
   };
 
   const currentStageNormalized = normalizeStage(funnelStage);
@@ -351,7 +403,10 @@ export const InputStudio: React.FC<Props> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsEditingMetrics(!isEditingMetrics)}
+                  onClick={() => {
+                    if (isEditingMetrics) closeMetricsEditor();
+                    else setIsEditingMetrics(true);
+                  }}
                   className="text-xs text-blue-700 hover:text-blue-900 font-semibold flex items-center gap-1"
                 >
                   <Edit3 className="w-3.5 h-3.5" />
@@ -366,16 +421,40 @@ export const InputStudio: React.FC<Props> = ({
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                   <span className="text-[10px] text-slate-400 font-semibold uppercase block">Impact Factor</span>
                   <div className="text-base font-extrabold text-slate-900 flex items-center gap-1.5">
-                    <span>{clarivateFacts.impactFactor || 'N/A'}</span>
-                    {clarivateFacts.jcrQuartile && (
+                    <span>{clarivateFacts.impactFactor ?? 'N/A'}</span>
+                    {clarivateFacts.jcrQuartile && metricFieldIsTrusted(clarivateFacts, 'jcrQuartile') && (
                       <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
                         {clarivateFacts.jcrQuartile}
                       </span>
                     )}
                   </div>
-                  <span className="text-[10px] text-slate-400">
-                    5-Yr: {clarivateFacts.fiveYearImpactFactor || 'N/A'}
+                  <span className="text-[10px] text-slate-400 block">
+                    5-Yr: {clarivateFacts.fiveYearImpactFactor ?? 'N/A'}
+                    {metricSourceLabel(
+                      clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source,
+                      'fiveYearImpactFactor',
+                      clarivateFacts.provenanceMap?.fiveYearImpactFactor?.year
+                    )
+                      ? ` · ${metricSourceLabel(
+                          clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source,
+                          'fiveYearImpactFactor',
+                          clarivateFacts.provenanceMap?.fiveYearImpactFactor?.year
+                        )}`
+                      : ''}
                   </span>
+                  {metricSourceLabel(
+                    clarivateFacts.provenanceMap?.impactFactor?.source,
+                    'impactFactor',
+                    clarivateFacts.provenanceMap?.impactFactor?.year ?? clarivateFacts.jcrYear
+                  ) && (
+                    <span className="text-[10px] text-slate-500 block">
+                      {metricSourceLabel(
+                        clarivateFacts.provenanceMap?.impactFactor?.source,
+                        'impactFactor',
+                        clarivateFacts.provenanceMap?.impactFactor?.year ?? clarivateFacts.jcrYear
+                      )}
+                    </span>
+                  )}
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -383,7 +462,12 @@ export const InputStudio: React.FC<Props> = ({
                   <span className="text-xs font-bold text-slate-900 line-clamp-1">
                     {clarivateFacts.casZone || 'Not stated'}
                   </span>
-                  <span className="text-[10px] text-slate-400">Chinese Academy of Sciences</span>
+                  <span className="text-[10px] text-slate-400">
+                    {metricSourceLabel(clarivateFacts.provenanceMap?.casZone?.source) ||
+                      (clarivateFacts.casZone && clarivateFacts.verificationStatus === 'page_sourced'
+                        ? 'Catalog snapshot'
+                        : 'Chinese Academy of Sciences')}
+                  </span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -391,7 +475,9 @@ export const InputStudio: React.FC<Props> = ({
                   <span className="text-sm font-bold text-slate-900">
                     {clarivateFacts.firstDecisionDays ? `${clarivateFacts.firstDecisionDays} Days` : 'N/A'}
                   </span>
-                  <span className="text-[10px] text-slate-500 block">Initial editorial review</span>
+                  <span className="text-[10px] text-slate-500 block">
+                    {metricSourceLabel(clarivateFacts.provenanceMap?.firstDecisionDays?.source) || 'Initial editorial review'}
+                  </span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -401,7 +487,7 @@ export const InputStudio: React.FC<Props> = ({
                   </span>
                   <span className="text-[10px] text-slate-500 font-medium">
                     {clarivateFacts.apcUsd
-                      ? `APC: $${clarivateFacts.apcUsd}`
+                      ? `APC: $${clarivateFacts.apcUsd}${metricSourceLabel(clarivateFacts.provenanceMap?.apcUsd?.source) ? ` · ${metricSourceLabel(clarivateFacts.provenanceMap?.apcUsd?.source)}` : ''}`
                       : 'APC not stated'}
                   </span>
                 </div>
@@ -460,11 +546,34 @@ export const InputStudio: React.FC<Props> = ({
                       className="w-full text-xs p-1.5 border border-slate-300 rounded bg-slate-50 text-slate-900"
                     />
                   </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 font-semibold block">JCR year</label>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="2024"
+                      value={editedFacts?.jcrYear ?? ''}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        const year = raw === '' ? undefined : Number(raw);
+                        setEditedFacts((prev) => (
+                          prev ? { ...prev, jcrYear: year !== undefined && Number.isFinite(year) ? year : undefined } : null
+                        ));
+                      }}
+                      className="w-full text-xs p-1.5 border border-slate-300 rounded bg-slate-50 text-slate-900"
+                    />
+                  </div>
                 </div>
+                <p className="text-[10px] text-slate-500">
+                  Required only when you change a metric. An unchanged record keeps its original source.
+                </p>
+                {editError && (
+                  <p className="text-[11px] text-rose-700">{editError}</p>
+                )}
                 <div className="flex justify-end gap-2 pt-1">
                   <button
                     type="button"
-                    onClick={() => setIsEditingMetrics(false)}
+                    onClick={closeMetricsEditor}
                     className="px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-100 rounded"
                   >
                     Cancel
@@ -486,16 +595,16 @@ export const InputStudio: React.FC<Props> = ({
               <div className="flex items-center gap-1.5">
                 <Clock className="w-3 h-3 text-slate-400" />
                 <span>
-                  {clarivateFacts.provenanceSource === 'clarivate_wos_journals_api'
-                    ? 'Web of Science Journals API'
-                    : clarivateFacts.verificationStatus === 'user_provided'
-                    ? 'User-provided record'
+                  {clarivateFacts.verificationStatus === 'user_provided'
+                    ? 'Manually entered (unverified)'
+                    : clarivateFacts.provenanceSource === 'clarivate_wos_journals_api'
+                    ? 'Includes Web of Science Journals API values'
                     : clarivateFacts.verificationStatus === 'page_sourced'
                     ? 'Read from the journal page'
                     : clarivateFacts.verificationStatus === 'catalog_snapshot'
                     ? 'Catalog snapshot'
                     : clarivateFacts.isFromCache
-                    ? 'Cached record'
+                    ? 'Cached record (refreshed automatically)'
                     : 'Record loaded'}
                 </span>
                 {clarivateFacts.reportingYear && (
@@ -520,6 +629,9 @@ export const InputStudio: React.FC<Props> = ({
                 <div className="flex flex-wrap items-center gap-4 text-slate-500">
                   <span>
                     Indexing: <strong>{clarivateFacts.indexing?.length ? clarivateFacts.indexing.join(', ') : 'Not stated'}</strong>
+                    {metricSourceLabel(clarivateFacts.provenanceMap?.indexing?.source)
+                      ? ` (${metricSourceLabel(clarivateFacts.provenanceMap?.indexing?.source)})`
+                      : ''}
                   </span>
                   <span>
                     Discipline: <strong>{clarivateFacts.primaryDiscipline}</strong>

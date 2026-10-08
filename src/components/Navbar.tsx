@@ -11,7 +11,9 @@ import {
   FileSpreadsheet,
   FileText,
   ChevronDown,
+  LogOut,
 } from 'lucide-react';
+import { useAuth } from '../auth/AuthGate';
 
 interface Props {
   onOpenGuide: () => void;
@@ -38,6 +40,7 @@ export const Navbar: React.FC<Props> = ({
 }) => {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const { user, logout } = useAuth();
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -75,6 +78,20 @@ export const Navbar: React.FC<Props> = ({
 
         {/* Actions */}
         <div className="flex items-center gap-2">
+          <span className="text-[11px] font-medium text-slate-600 max-w-[140px] sm:max-w-[240px] truncate" title={user.email}>
+            {user.email}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              logout().catch(() => undefined);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 rounded-lg border border-slate-200 transition"
+            title="Sign out"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Sign out</span>
+          </button>
           {onOpenCompareStages && (
             <button
               onClick={onOpenCompareStages}

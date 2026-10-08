@@ -20,16 +20,79 @@ export function metricsFromClarivateWos(facts: MetricCarrier): boolean {
   return facts?.provenanceSource === CLARIVATE_WOS_JOURNALS_SOURCE;
 }
 
-/** Ad and export wording. Clarivate is named only for the Journals API source. */
+function fieldProvenance(facts: MetricCarrier, field: string): string | undefined {
+  const map = (facts as { provenanceMap?: Record<string, { source?: string }> } | null | undefined)?.provenanceMap;
+  return map?.[field]?.source;
+}
+
+function recordKeepsCatalogFields(facts: MetricCarrier): boolean {
+  const map = (facts as { provenanceMap?: Record<string, { source?: string }> } | null | undefined)?.provenanceMap;
+  if (!map) return false;
+  return Object.values(map).some((item) => item?.source === 'catalog_snapshot');
+}
+
+/**
+ * A page-sourced, user-supplied, or Clarivate API field is trusted.
+ * A catalog snapshot field is not, even when another field on the same record came from the page.
+ */
+export function metricFieldIsTrusted(facts: MetricCarrier, field: string): boolean {
+  const source = fieldProvenance(facts, field);
+  if (source === 'catalog_snapshot') return false;
+  if (
+    source === 'page_sourced' ||
+    source === 'landing_page' ||
+    source === 'user_provided' ||
+    source === 'clarivate_wos_journals_api'
+  ) {
+    return true;
+  }
+  if (recordKeepsCatalogFields(facts)) return false;
+  return metricsAreTrusted(facts);
+}
+
+/**
+ * Journal impact factors in ad copy come from the Clarivate API or the user.
+ * A figure read from the journal website stays on the facts panel only.
+ */
+export function impactFactorMayEnterCopy(facts: MetricCarrier, field: 'impactFactor' | 'fiveYearImpactFactor'): boolean {
+  if (!metricFieldIsTrusted(facts, field)) return false;
+  const source = fieldProvenance(facts, field);
+  if (source === 'page_sourced' || source === 'landing_page') return false;
+  if (!source && facts?.verificationStatus === 'page_sourced' && !metricsFromClarivateWos(facts)) return false;
+  return true;
+}
+
+function trustedNumber(facts: MetricCarrier, field: string, value: number | null | undefined): number | null {
+  if (field === 'impactFactor' || field === 'fiveYearImpactFactor') {
+    if (!impactFactorMayEnterCopy(facts, field)) return null;
+  } else if (!metricFieldIsTrusted(facts, field)) {
+    return null;
+  }
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function trustedText(facts: MetricCarrier, field: string, value: string | null | undefined): string | null {
+  if (!metricFieldIsTrusted(facts, field)) return null;
+  const text = (value || '').trim();
+  return text || null;
+}
+
+export function trustedImpactFactor(facts: MetricCarrier): number | null {
+  return trustedNumber(facts, 'impactFactor', facts?.impactFactor);
+}
+
+/** Ad and export wording. Clarivate is named only when this impact factor came from the Journals API. */
 export function formatJifClaim(facts: MetricCarrier): string | null {
   const value = trustedImpactFactor(facts);
   if (value == null) return null;
-  if (metricsFromClarivateWos(facts)) {
-    return facts?.jcrYear != null
-      ? `JIF ${value} (Clarivate JCR ${facts.jcrYear})`
-      : `JIF ${value} (Clarivate)`;
-  }
-  return `JIF ${value}`;
+  const source = fieldProvenance(facts, 'impactFactor');
+  if (source === 'page_sourced' || source === 'landing_page' || source === 'catalog_snapshot') return null;
+  const fromClarivate = source === 'clarivate_wos_journals_api' || (!source && metricsFromClarivateWos(facts));
+  if (!fromClarivate) return `JIF ${value}`;
+  const year =
+    (facts as { provenanceMap?: Record<string, { year?: number }> } | null | undefined)?.provenanceMap?.impactFactor?.year ??
+    facts?.jcrYear;
+  return year != null ? `JIF ${value} (Clarivate JCR ${year})` : `JIF ${value} (Clarivate)`;
 }
 
 /**
@@ -51,39 +114,24 @@ export function sanitizeUserProvidedFacts<T extends MetricCarrier & { sourceAttr
   };
 }
 
-function trustedNumber(facts: MetricCarrier, value: number | null | undefined): number | null {
-  if (!metricsAreTrusted(facts)) return null;
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function trustedText(facts: MetricCarrier, value: string | null | undefined): string | null {
-  if (!metricsAreTrusted(facts)) return null;
-  const text = (value || '').trim();
-  return text || null;
-}
-
-export function trustedImpactFactor(facts: MetricCarrier): number | null {
-  return trustedNumber(facts, facts?.impactFactor);
-}
-
 export function trustedFiveYearImpactFactor(facts: MetricCarrier): number | null {
-  return trustedNumber(facts, facts?.fiveYearImpactFactor);
+  return trustedNumber(facts, 'fiveYearImpactFactor', facts?.fiveYearImpactFactor);
 }
 
 export function trustedFirstDecisionDays(facts: MetricCarrier): number | null {
-  return trustedNumber(facts, facts?.firstDecisionDays);
+  return trustedNumber(facts, 'firstDecisionDays', facts?.firstDecisionDays);
 }
 
 export function trustedApcUsd(facts: MetricCarrier): number | null {
-  return trustedNumber(facts, facts?.apcUsd);
+  return trustedNumber(facts, 'apcUsd', facts?.apcUsd);
 }
 
 export function trustedQuartile(facts: MetricCarrier): string | null {
-  return trustedText(facts, facts?.jcrQuartile);
+  return trustedText(facts, 'jcrQuartile', facts?.jcrQuartile);
 }
 
 export function trustedCasZone(facts: MetricCarrier): string | null {
-  return trustedText(facts, facts?.casZone);
+  return trustedText(facts, 'casZone', facts?.casZone);
 }
 
 /**
@@ -91,16 +139,16 @@ export function trustedCasZone(facts: MetricCarrier): string | null {
  * Journal name, publisher, and scope stay so ads can still be written.
  */
 export function factsForCopy<T extends MetricCarrier>(facts: T): T {
-  if (!facts || metricsAreTrusted(facts)) return facts;
+  if (!facts) return facts;
   return {
     ...facts,
-    impactFactor: null,
-    fiveYearImpactFactor: null,
-    jcrQuartile: null,
-    casZone: null,
-    firstDecisionDays: null,
-    apcUsd: null,
-    indexing: [],
+    impactFactor: impactFactorMayEnterCopy(facts, 'impactFactor') ? facts.impactFactor ?? null : null,
+    fiveYearImpactFactor: impactFactorMayEnterCopy(facts, 'fiveYearImpactFactor') ? facts.fiveYearImpactFactor ?? null : null,
+    jcrQuartile: metricFieldIsTrusted(facts, 'jcrQuartile') ? facts.jcrQuartile ?? null : null,
+    casZone: metricFieldIsTrusted(facts, 'casZone') ? facts.casZone ?? null : null,
+    firstDecisionDays: metricFieldIsTrusted(facts, 'firstDecisionDays') ? facts.firstDecisionDays ?? null : null,
+    apcUsd: metricFieldIsTrusted(facts, 'apcUsd') ? facts.apcUsd ?? null : null,
+    indexing: metricFieldIsTrusted(facts, 'indexing') ? facts.indexing || [] : [],
   };
 }
 
@@ -121,21 +169,52 @@ export function metricPromptSection(facts: MetricCarrier): string {
   const casZone = trustedCasZone(facts);
   const days = trustedFirstDecisionDays(facts);
   const apc = trustedApcUsd(facts);
-  const fromClarivate = metricsFromClarivateWos(facts);
+  const fieldFromClarivate = (field: string) => {
+    const source = fieldProvenance(facts, field);
+    if (source === 'clarivate_wos_journals_api') return true;
+    if (source) return false;
+    return metricsFromClarivateWos(facts);
+  };
 
-  if (impactFactor != null) lines.push(`- Impact factor: ${impactFactor}`);
-  const jifClaim = formatJifClaim(facts);
-  if (jifClaim) lines.push(`- Cite the impact factor exactly as: ${jifClaim}`);
+  if (impactFactor != null) {
+    lines.push(`- Impact factor: ${impactFactor}`);
+    const jifClaim = formatJifClaim(facts);
+    if (jifClaim) lines.push(`- Cite the impact factor exactly as: ${jifClaim}`);
+  } else if (facts?.impactFactor != null) {
+    lines.push('- Do not state an impact factor. A journal-website figure is reference only.');
+  }
   if (fiveYear != null) lines.push(`- 5-year impact factor: ${fiveYear}`);
+  else if (facts?.fiveYearImpactFactor != null) {
+    lines.push('- Do not state a 5-year impact factor. A journal-website figure is reference only.');
+  }
   if (quartile) lines.push(`- JCR quartile: ${quartile}`);
   if (casZone) lines.push(`- CAS zone: ${casZone}`);
   if (days != null) lines.push(`- First decision days: ${days}`);
   if (apc != null) lines.push(`- APC USD: ${apc}`);
   if (lines.length === 1) lines.push('- None of the metric fields are filled in.');
+  const cited = [
+    impactFactor != null && fieldFromClarivate('impactFactor'),
+    fiveYear != null && fieldFromClarivate('fiveYearImpactFactor'),
+    !!quartile && fieldFromClarivate('jcrQuartile'),
+    !!casZone && fieldFromClarivate('casZone'),
+    days != null && fieldFromClarivate('firstDecisionDays'),
+    apc != null && fieldFromClarivate('apcUsd'),
+  ];
+  const clarivateCited = cited.some(Boolean);
+  const otherCited = [
+    impactFactor != null && !fieldFromClarivate('impactFactor'),
+    fiveYear != null && !fieldFromClarivate('fiveYearImpactFactor'),
+    !!quartile && !fieldFromClarivate('jcrQuartile'),
+    !!casZone && !fieldFromClarivate('casZone'),
+    days != null && !fieldFromClarivate('firstDecisionDays'),
+    apc != null && !fieldFromClarivate('apcUsd'),
+  ].some(Boolean);
   lines.push(
-    fromClarivate
+    clarivateCited && !otherCited
       ? 'These values came from the Clarivate API. You may say Clarivate only for these values.'
-      : 'Do not attribute these values to Clarivate.'
+      : clarivateCited
+        ? 'You may say Clarivate only for values labelled Clarivate JCR. Do not attribute any other value to Clarivate.'
+        : 'Do not attribute these values to Clarivate.'
   );
   lines.push('Do not add any number or ranking that is not listed above.');
   return lines.join('\n');

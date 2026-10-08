@@ -4,17 +4,35 @@ import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { loadMetricsCacheFromDisk } from './src/utils/metricsCache';
+import { diffTrackedFields, recordMetricsAudit, type FieldChange, type MetricsAuditEvent } from './src/server/auditLog';
+import { assertProductionAuthConfig } from './src/server/auth/config';
+import { apiGuard, getRequestSession, requireAdmin } from './src/server/auth/guard';
+import { registerAuthRoutes } from './src/server/auth/routes';
+import { MANUAL_METRIC_SOURCE, MetricsValidationError, sanitizeUserProvidedFacts, validateJournalMetricsUpdate } from './src/server/metricsValidation';
 import { JOURNAL_CATALOG } from './src/data/journalCatalog';
-import { joinJournalUrl, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
-import { installClarivateClient, pageFacts } from './src/utils/metricSources';
+import { NATURE_HOMEPAGE_URL, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
+import { CLARIVATE_WOS_JOURNALS_SOURCE, installClarivateClient, pageFacts } from './src/utils/metricSources';
 import { clarivateWosJournals as clarivateHttpClient } from './src/utils/clarivateHttp';
-import { factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection, sanitizeUserProvidedFacts } from './src/utils/metricClaims';
-import type { ClarivateJournalMetrics } from './src/types';
+import { factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection } from './src/utils/metricClaims';
+import type { ClarivateJournalMetrics, ExtractedPageFacts } from './src/types';
 import { loadJournalMetrics } from './src/utils/metricsRefresh';
 import { normalizeIssn } from './src/utils/issn';
-import { apiGuard, requireAdmin } from './src/server/auth/guard';
+import {
+  LandingPageError,
+  extractLandingPageFacts,
+  fetchLandingPage,
+  formatLandingPagePromptSection,
+  isPublisherHomepage,
+  journalCacheKey,
+  mergeLandingPageFacts,
+  parseAllowedJournalUrl,
+  campaignLandingUrl,
+  resolveCampaignUrl,
+  stageDestinationUrl,
+  type FetchLandingPageDeps,
+} from './src/utils/landingPage';
 
 dotenv.config();
 installClarivateClient(clarivateHttpClient);
@@ -25,7 +43,28 @@ const __dirname = path.dirname(__filename);
 export const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '15mb' }));
+// Express matches routes case-insensitively by default. Keep matching strict so
+// `/API/...` cannot reach a handler that the guard only recognised as `/api`.
+app.set('case sensitive routing', true);
+
+if (process.env.TRUST_PROXY === 'true') {
+  app.set('trust proxy', 1);
+}
+
+// Campaign payloads are JSON text. 1mb is enough for playbooks and journal facts
+// and replaces the previous 15mb limit.
+export const JSON_BODY_LIMIT = '1mb';
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+app.use((err: { type?: string; status?: number; statusCode?: number }, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.type === 'entity.too.large' || err?.status === 413 || err?.statusCode === 413) {
+    res.status(413).json({ error: 'Request body is too large. Maximum size is 1mb.' });
+    return;
+  }
+  next(err);
+});
+app.use(apiGuard);
+app.use('/api', apiGuard);
+registerAuthRoutes(app);
 
 // Shared Gemini client utility
 const apiKey = process.env.GEMINI_API_KEY;
@@ -78,6 +117,18 @@ export interface JCRJournalEntry {
   isFromCache?: boolean;
   cachedAt?: string;
   cacheExpiresAt?: string;
+  submissionPortalUrl?: string | null;
+  authorGuidelinesUrl?: string | null;
+  extractedFacts?: ExtractedPageFacts;
+  provenanceMap?: Record<string, { source: string; confidence: number; year?: number; note?: string }>;
+}
+
+export interface JournalLookupOptions {
+  persist?: boolean;
+  cache?: Map<string, CachedJournal>;
+  fetchPage?: (url: string) => Promise<string | { html: string; finalUrl?: string }>;
+  fetchDeps?: FetchLandingPageDeps;
+  issn?: string;
 }
 
 export interface CachedMetricEntry {
@@ -96,14 +147,33 @@ export interface CachedJournal {
   metrics: Record<string, CachedMetricEntry>;
   lastAccess: string;
   fullFacts?: JCRJournalEntry;
+  lastModifiedBy?: { email: string; sub: string; provider: string; at: string };
+  audit?: MetricsAuditEvent[];
 }
 
 // --- PERSISTENT METRICS CACHE (metrics-cache.json) ---
-const CACHE_FILE_PATH = path.resolve(__dirname, 'metrics-cache.json');
+function cacheFilePath(): string {
+  const override = process.env.METRICS_CACHE_PATH;
+  if (override && override.trim()) return path.resolve(override);
+  return path.resolve(__dirname, 'metrics-cache.json');
+}
 const metricsCache = new Map<string, CachedJournal>();
 
+export function resetMetricsCacheForTests(): void {
+  metricsCache.clear();
+}
+
+type LandingPageFetchForTests = NonNullable<JournalLookupOptions['fetchPage']>;
+let landingPageFetchForTests: LandingPageFetchForTests | null = null;
+
+/** Test seam. Production leaves this unset, so lookup reads the live page. */
+export function setLandingPageFetchForTests(fetchPage: LandingPageFetchForTests | null): void {
+  landingPageFetchForTests = fetchPage;
+}
+
 function loadCacheFromDisk() {
-  const loaded = loadMetricsCacheFromDisk<CachedJournal>(CACHE_FILE_PATH);
+  metricsCache.clear();
+  const loaded = loadMetricsCacheFromDisk<CachedJournal>(cacheFilePath());
   loaded.forEach((val, key) => {
     // Clarivate editions live in the metrics store, not metrics-cache.json.
     if (val.fullFacts?.provenanceSource === 'clarivate_wos_journals_api') return;
@@ -117,7 +187,7 @@ function saveCacheToDisk() {
     metricsCache.forEach((val, key) => {
       obj[key] = val;
     });
-    fs.writeFileSync(CACHE_FILE_PATH, JSON.stringify(obj, null, 2), 'utf-8');
+    fs.writeFileSync(cacheFilePath(), JSON.stringify(obj, null, 2), 'utf-8');
   } catch (err) {
     console.error('[Metrics Cache] Failed to write cache to disk:', err);
   }
@@ -209,7 +279,6 @@ export const STAGE_CONFIGS: Record<StageCode, any> = {
     primaryCta: 'Explore the journal',
     recommendedDestination: {
       label: 'Journal Overview & Latest Research',
-      urlPath: '/about',
       description: 'Scope overview, editorial mission, and recently published highlights.',
     },
   },
@@ -222,7 +291,6 @@ export const STAGE_CONFIGS: Record<StageCode, any> = {
     primaryCta: 'Check journal fit',
     recommendedDestination: {
       label: 'Aims & Scope and Publishing Options',
-      urlPath: '/aims-and-scope',
       description: 'Accepted article formats, editorial standards, and transparent fee policies.',
     },
   },
@@ -235,7 +303,6 @@ export const STAGE_CONFIGS: Record<StageCode, any> = {
     primaryCta: 'View submission checklist',
     recommendedDestination: {
       label: 'Author Guidelines & Submission Portal',
-      urlPath: '/submission-guidelines',
       description: 'Manuscript preparation instructions, checklist, and direct submission link.',
     },
   },
@@ -254,7 +321,12 @@ export const CLARIVATE_JCR_CATALOG: JCRJournalEntry[] = JOURNAL_CATALOG;
 
 const CURRENT_METRIC_STATUSES = new Set(['user_provided', 'page_sourced', 'clarivate_api', 'catalog_snapshot']);
 
-function rememberJournal(journalId: string, facts: JCRJournalEntry) {
+function rememberJournal(
+  journalId: string,
+  facts: JCRJournalEntry,
+  cache: Map<string, CachedJournal> = metricsCache,
+  persist = true
+) {
   const nowStr = new Date().toISOString();
   const source = facts.verificationStatus === 'catalog_snapshot'
     ? `Catalog snapshot ${facts.catalogDataYear || ''}`.trim()
@@ -300,8 +372,8 @@ function rememberJournal(journalId: string, facts: JCRJournalEntry) {
     },
     fullFacts: facts,
   };
-  metricsCache.set(journalId, cachedEntry);
-  if (facts.provenanceSource !== 'clarivate_wos_journals_api') {
+  cache.set(journalId, cachedEntry);
+  if (persist && cache === metricsCache && facts.provenanceSource !== 'clarivate_wos_journals_api') {
     saveCacheToDisk();
   }
   return cachedEntry;
@@ -430,20 +502,24 @@ export function withAdIdentity<T extends { journalName?: string; publisher?: str
 
 /**
  * ISSN for a journal URL.
- * Client input wins, then the landing-page scraper, then cached facts, then the catalog.
+ * Client input wins, then the print ISSN on the page, then the electronic ISSN,
+ * then cached facts, then the catalog.
  */
 export function resolveJournalIssn(input: {
   requested?: string | null;
-  /**
-   * PR #3 landing-page scraper hook. Pass the ISSN printed on the page.
-   * lookupClarivateFacts also reads issn/eIssn from extractFromPage when this is omitted.
-   */
+  /** Print ISSN read from the landing page. */
+  pagePrintIssn?: string | null;
+  /** Electronic ISSN read from the landing page. */
+  pageElectronicIssn?: string | null;
+  /** Single page ISSN from an older caller. Used after the print and electronic values. */
   pageIssn?: string | null;
   cached?: { issn?: string | null; eIssn?: string | null } | null;
   catalog?: { issn?: string | null; eIssn?: string | null } | null;
 }): string {
   const candidates = [
     input.requested,
+    input.pagePrintIssn,
+    input.pageElectronicIssn,
     input.pageIssn,
     input.cached?.issn,
     input.cached?.eIssn,
@@ -457,134 +533,265 @@ export function resolveJournalIssn(input: {
   return '';
 }
 
-const CLARIVATE_OVERLAY_SKIP = new Set(['journalName', 'publisher', 'jcrTitle', 'isoTitle', 'wosName', 'url', 'slugs']);
+const CLARIVATE_OVERLAY_SKIP = new Set([
+  'journalName',
+  'publisher',
+  'jcrTitle',
+  'isoTitle',
+  'wosName',
+  'url',
+  'slugs',
+  'provenanceMap',
+  'extractedFacts',
+  'verificationStatus',
+  'provenanceSource',
+  'isVerifiedClarivate',
+  'sourceAttribution',
+  'missingFields',
+  'reportingYear',
+  'submissionPortalUrl',
+  'authorGuidelinesUrl',
+  'isFromCache',
+  'cachedAt',
+  'cacheExpiresAt',
+]);
+
+/** Catalog quartile, CAS zone, and indexing stay catalog snapshots when that is how they arrived. */
+const CATALOG_LOCKED_FIELDS = new Set(['jcrQuartile', 'casZone', 'indexing']);
+
+function catalogFieldLocked(landing: JCRJournalEntry, key: string): boolean {
+  if (!CATALOG_LOCKED_FIELDS.has(key)) return false;
+  const labelled = landing.provenanceMap?.[key]?.source;
+  if (labelled === 'catalog_snapshot') return true;
+  if (landing.verificationStatus !== 'catalog_snapshot' && landing.provenanceSource !== 'catalog_snapshot') return false;
+  const value = (landing as unknown as Record<string, unknown>)[key];
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'string') return labelText(value).length > 0;
+  return false;
+}
+
+function clarivateFieldProvenance(api: ClarivateJournalMetrics) {
+  return {
+    source: CLARIVATE_WOS_JOURNALS_SOURCE,
+    confidence: 0.95,
+    year: api.jcrYear,
+    note: api.jcrYear != null ? `Clarivate JCR ${api.jcrYear}` : 'Clarivate Web of Science Journals API',
+  };
+}
 
 /**
- * Spread Clarivate fields over landing-page facts. Empty Clarivate values
- * and an all-caps name do not replace a better landing-page name or publisher.
+ * Spread non-empty Clarivate fields over landing-page facts.
+ * An all-caps name does not replace a better landing-page name or publisher.
+ * A field the page or catalog already filled keeps that source.
  */
 export function mergeClarivateOverLanding(landing: JCRJournalEntry, api: ClarivateJournalMetrics): JCRJournalEntry {
-  const merged: JCRJournalEntry = { ...landing };
+  const merged: JCRJournalEntry = { ...landing, provenanceMap: { ...(landing.provenanceMap || {}) } };
+  const provenance = merged.provenanceMap || {};
   for (const [key, value] of Object.entries(api)) {
-    if (CLARIVATE_OVERLAY_SKIP.has(key) || !filled(value)) continue;
+    if (CLARIVATE_OVERLAY_SKIP.has(key) || catalogFieldLocked(landing, key) || !filled(value)) continue;
     (merged as unknown as Record<string, unknown>)[key] = value;
+    provenance[key] = clarivateFieldProvenance(api);
   }
+  const previousName = labelText(landing.journalName);
+  const previousPublisher = labelText(landing.publisher);
   merged.journalName = displayJournalName(api, landing.journalName);
   merged.publisher = displayPublisher(api.publisher, landing.publisher);
+  if (merged.journalName && merged.journalName !== previousName) {
+    provenance.journalName = clarivateFieldProvenance(api);
+  }
+  if (merged.publisher && merged.publisher !== previousPublisher) {
+    provenance.publisher = clarivateFieldProvenance(api);
+  }
   merged.jcrTitle = labelText(api.jcrTitle) || landing.jcrTitle;
   merged.isoTitle = labelText(api.isoTitle) || landing.isoTitle;
   merged.wosName = labelText(api.wosName) || landing.wosName;
   merged.url = landing.url;
   merged.slugs = landing.slugs || [];
+  merged.extractedFacts = landing.extractedFacts;
+  merged.verificationStatus = 'clarivate_api';
+  merged.provenanceSource = CLARIVATE_WOS_JOURNALS_SOURCE;
+  merged.isVerifiedClarivate = true;
+  merged.reportingYear = api.reportingYear || (api.jcrYear != null ? String(api.jcrYear) : landing.reportingYear);
+  merged.sourceAttribution = labelText(api.sourceAttribution) || landing.sourceAttribution;
+  merged.missingFields = [];
+  merged.provenanceMap = provenance;
   return merged;
+}
+
+function lookupRequest(issnOrOptions?: string | JournalLookupOptions): { issn?: string; options: JournalLookupOptions } {
+  if (typeof issnOrOptions === 'string') return { issn: issnOrOptions, options: {} };
+  return { issn: issnOrOptions?.issn, options: issnOrOptions || {} };
+}
+
+function catalogForUrl(canonical: string): JCRJournalEntry | undefined {
+  const norm = normalizeJournalUrl(canonical);
+  return CLARIVATE_JCR_CATALOG.find((entry) => journalUrlsMatch(norm, normalizeJournalUrl(entry.url)));
+}
+
+const NATURE_HOME_CACHE_MS = 24 * 60 * 60 * 1000;
+
+function isNatureHomepage(canonical: string): boolean {
+  return journalUrlsMatch(normalizeJournalUrl(canonical), normalizeJournalUrl(NATURE_HOMEPAGE_URL));
+}
+
+function freshCachedFacts(cached: CachedJournal | undefined, requestUrl: string): JCRJournalEntry | null {
+  if (!cached?.fullFacts) return null;
+  const status = cached.fullFacts.verificationStatus;
+  if (!status || status === 'missing' || !CURRENT_METRIC_STATUSES.has(status)) return null;
+  if (isNatureHomepage(requestUrl)) {
+    const fetchedAt = Date.parse(cached.lastAccess || '');
+    if (!Number.isFinite(fetchedAt) || Date.now() - fetchedAt > NATURE_HOME_CACHE_MS) return null;
+    return cached.fullFacts;
+  }
+  if (status === 'catalog_snapshot' || isCachedJournalExpired(cached)) return null;
+  return cached.fullFacts;
 }
 
 export async function lookupClarivateFacts(
   url: string,
   forceRefresh = false,
-  issn?: string,
-  /**
-   * PR #3 landing-page scraper hook. Pass the ISSN the scraper read on the page.
-   * Until that scraper lands, extractFromPage returns null and this stays empty.
-   */
-  pageIssn?: string
+  issnOrOptions?: string | JournalLookupOptions
 ): Promise<JCRJournalEntry> {
+  const { issn: issnArg, options } = lookupRequest(issnOrOptions);
+  const persist = options.persist !== false;
+  const cache = options.cache || metricsCache;
   const norm = normalizeJournalUrl(url);
-  const journalId = norm.cacheKey;
   if (!norm.canonical) return missingJournalFacts(url || '');
 
-  const cachedRecord = metricsCache.get(journalId);
-  const catalog = CLARIVATE_JCR_CATALOG.find((entry) => journalUrlsMatch(norm, normalizeJournalUrl(entry.url)));
-
-  if (!forceRefresh && cachedRecord) {
-    const cached = cachedRecord;
-    const status = cached.fullFacts?.verificationStatus;
-    // Catalog snapshots are re-read from the in-repo list so a stale hardcoded
-    // figure cannot linger in metrics-cache.json.
-    const usable = !!status
-      && status !== 'catalog_snapshot'
-      && CURRENT_METRIC_STATUSES.has(status)
-      && !isCachedJournalExpired(cached)
-      && cached.fullFacts;
-    if (usable && cached.fullFacts) {
-      console.log(`[Cache HIT] Retrieved ${journalId} (${cached.journalName}) from metrics-cache.json`);
-      return withAdIdentity({
-        ...cached.fullFacts,
-        url: normalizeJournalUrl(cached.fullFacts.url).canonical || norm.canonical,
-        isFromCache: true,
-        cachedAt: cached.lastAccess,
-        cacheExpiresAt: cached.metrics['impactFactor']?.expireAt,
-      });
-    }
-    console.log(status === 'catalog_snapshot'
-      ? `[Cache SKIP] Catalog snapshot for ${journalId} is re-read from the in-repo catalog.`
-      : status && !CURRENT_METRIC_STATUSES.has(status)
-      ? `[Cache SKIP] Legacy entry for ${journalId} is not a current metric status.`
-      : `[Cache EXPIRED] Cached data for ${journalId} is stale. Refreshing...`);
+  if (isPublisherHomepage(norm.canonical)) {
+    return {
+      ...missingJournalFacts(norm.canonical),
+      journalName: 'Publisher homepage',
+      publisher: 'Springer Nature',
+      sourceAttribution: 'This URL is a publisher homepage, not a journal. Paste a journal landing page.',
+    };
   }
 
-  const fromPage = await pageFacts.extractFromPage(norm.canonical);
-  const issnToUse = resolveJournalIssn({
-    requested: issn,
-    pageIssn: pageIssn || fromPage?.issn || fromPage?.eIssn,
-    cached: cachedRecord?.fullFacts,
-    catalog,
-  });
-  const landing: JCRJournalEntry = fromPage
-    ? {
-        ...missingJournalFacts(norm.canonical),
-        ...fromPage,
-        url: norm.canonical,
-        slugs: [],
-        verificationStatus: 'page_sourced',
-        provenanceSource: 'page_sourced',
-        isVerifiedClarivate: false,
-        sourceAttribution: fromPage.sourceAttribution || 'Read from the journal page',
-      }
-    : catalog
-      ? { ...catalog, url: normalizeJournalUrl(catalog.url).canonical }
-      : missingJournalFacts(norm.canonical);
-
-  if (issnToUse) {
-    const fromApi = await loadJournalMetrics(issnToUse);
-    if (fromApi) {
-      const facts = mergeClarivateOverLanding(landing, fromApi);
-      facts.url = norm.canonical;
-      rememberJournal(journalId, facts);
-      return facts;
-    }
+  try {
+    parseAllowedJournalUrl(norm.canonical);
+  } catch (err) {
+    if (err instanceof LandingPageError && err.code === 'ssrf') throw err;
+    return missingJournalFacts(norm.canonical);
   }
 
-  if (fromPage) {
+  const urlKey = journalCacheKey({ requestUrl: norm.canonical });
+  const cachedUrl = forceRefresh ? null : freshCachedFacts(cache.get(urlKey), norm.canonical);
+  if (cachedUrl) {
+    console.log(`[Cache HIT] Retrieved ${urlKey} (${cachedUrl.journalName})`);
+    return withAdIdentity({
+      ...cachedUrl,
+      url: norm.canonical,
+      isFromCache: true,
+      cachedAt: cache.get(urlKey)?.lastAccess,
+      cacheExpiresAt: cache.get(urlKey)?.metrics['impactFactor']?.expireAt,
+    });
+  }
+
+  // Tests can install a page client. Production reads the landing page below.
+  const fromClient = await pageFacts.extractFromPage(norm.canonical);
+  if (fromClient) {
     const facts: JCRJournalEntry = {
       ...missingJournalFacts(norm.canonical),
-      ...fromPage,
+      ...fromClient,
       url: norm.canonical,
       slugs: [],
       verificationStatus: 'page_sourced',
       provenanceSource: 'page_sourced',
       isVerifiedClarivate: false,
-      sourceAttribution: fromPage.sourceAttribution || 'Read from the journal page',
+      sourceAttribution: fromClient.sourceAttribution || 'Read from the journal page',
     };
-    rememberJournal(journalId, facts);
+    const key = journalCacheKey({
+      issn: facts.issn,
+      eIssn: facts.eIssn,
+      requestUrl: norm.canonical,
+    });
+    rememberJournal(key, facts, cache, persist);
+    if (key !== urlKey) rememberJournal(urlKey, facts, cache, persist);
     return facts;
   }
 
-  const exact = CLARIVATE_JCR_CATALOG.find((entry) => journalUrlsMatch(norm, normalizeJournalUrl(entry.url)));
-  if (exact) {
-    console.log(`[Catalog MATCH] Found catalog snapshot for ${exact.journalName}`);
-    const facts: JCRJournalEntry = { ...exact, url: normalizeJournalUrl(exact.url).canonical };
-    const cachedEntry = rememberJournal(journalId, facts);
+  let page: ExtractedPageFacts | null = null;
+  let fetchError: string | undefined;
+  try {
+    const fetchPage = options.fetchPage ?? landingPageFetchForTests ?? undefined;
+    const fetched = await fetchLandingPage(norm.canonical, options.fetchDeps, fetchPage);
+    page = extractLandingPageFacts(fetched.html, fetched.finalUrl);
+  } catch (err) {
+    if (err instanceof LandingPageError && err.code === 'ssrf') throw err;
+    fetchError = err instanceof Error ? err.message : 'Landing page fetch failed';
+  }
+
+  const issnKey = journalCacheKey({
+    issn: page?.issnPrint.value || issnArg,
+    eIssn: page?.issnElectronic.value,
+    canonicalUrl: page?.canonicalUrl.value,
+    requestUrl: norm.canonical,
+  });
+  if (!forceRefresh && issnKey !== urlKey) {
+    const cachedIssn = freshCachedFacts(cache.get(issnKey), norm.canonical);
+    if (cachedIssn) {
+      console.log(`[Cache ALIAS] ${urlKey} matches ${issnKey}`);
+      const aliased = withAdIdentity({ ...cachedIssn, url: norm.canonical });
+      rememberJournal(urlKey, aliased, cache, persist);
+      return {
+        ...aliased,
+        isFromCache: true,
+        cachedAt: cache.get(issnKey)?.lastAccess,
+        cacheExpiresAt: cache.get(issnKey)?.metrics['impactFactor']?.expireAt,
+      };
+    }
+  }
+
+  const catalog = catalogForUrl(norm.canonical);
+  const issnToUse = resolveJournalIssn({
+    requested: issnArg,
+    pagePrintIssn: page?.issnPrint.value,
+    pageElectronicIssn: page?.issnElectronic.value,
+    cached: cache.get(urlKey)?.fullFacts || cache.get(issnKey)?.fullFacts,
+    catalog,
+  });
+
+  let base: JCRJournalEntry = catalog
+    ? { ...catalog, url: normalizeJournalUrl(catalog.url).canonical }
+    : missingJournalFacts(norm.canonical);
+
+  let merged = mergeLandingPageFacts(base, page, { fetchError }) as JCRJournalEntry;
+  let usedClarivate = false;
+  if (issnToUse) {
+    const fromApi = await loadJournalMetrics(issnToUse);
+    if (fromApi) {
+      merged = mergeClarivateOverLanding(merged, fromApi);
+      usedClarivate = true;
+    }
+  }
+  if (catalog && !usedClarivate) {
+    console.log(`[Catalog MATCH] Found catalog snapshot for ${base.journalName}`);
+  }
+
+  merged.url = norm.canonical;
+  merged.slugs = merged.slugs || [];
+  if (!labelText(merged.issn)) merged.issn = page?.issnPrint.value || base.issn || undefined;
+  if (!labelText(merged.eIssn)) merged.eIssn = page?.issnElectronic.value || base.eIssn || undefined;
+  merged = withAdIdentity(merged);
+
+  const storeKey = journalCacheKey({
+    issn: merged.issn,
+    eIssn: merged.eIssn,
+    requestUrl: norm.canonical,
+  });
+  if (merged.issn || merged.eIssn || merged.verificationStatus !== 'missing') {
+    const cachedEntry = rememberJournal(storeKey, merged, cache, persist);
+    if (urlKey !== storeKey) rememberJournal(urlKey, merged, cache, persist);
     return {
-      ...facts,
+      ...merged,
       isFromCache: false,
       cachedAt: cachedEntry.lastAccess,
       cacheExpiresAt: cachedEntry.metrics['impactFactor']?.expireAt,
     };
   }
 
-  console.log(`[Metrics Missing] No record for ${norm.canonical}.`);
-  return missingJournalFacts(norm.canonical);
+  console.log(`[Metrics Missing] No trusted record for ${norm.canonical}.`);
+  return merged;
 }
 
 // --- REST API ENDPOINTS ---
@@ -600,6 +807,10 @@ app.post('/api/fetch-clarivate-facts', async (req, res) => {
     const facts = await lookupClarivateFacts(url, forceRefresh, requestedIssn);
     res.json({ success: true, facts });
   } catch (err: any) {
+    if (err instanceof LandingPageError) {
+      const status = err.code === 'ssrf' ? 400 : 502;
+      return res.status(status).json({ error: err.message });
+    }
     console.error('Clarivate lookup error:', err);
     res.status(500).json({ error: 'Failed to retrieve Clarivate metrics' });
   }
@@ -619,7 +830,7 @@ app.get('/api/cache/journal/:journalId', (req, res) => {
   });
 });
 
-app.post('/api/cache/refresh/:journalId', async (req, res) => {
+app.post('/api/cache/refresh/:journalId', requireAdmin, async (req, res) => {
   try {
     const { journalId } = req.params;
     const { url } = req.body;
@@ -635,6 +846,10 @@ app.post('/api/cache/refresh/:journalId', async (req, res) => {
       message: `Forced fresh lookup and updated persistent cache for ${journalId}`,
     });
   } catch (err: any) {
+    if (err instanceof LandingPageError) {
+      const status = err.code === 'ssrf' ? 400 : 502;
+      return res.status(status).json({ error: err.message });
+    }
     res.status(500).json({ error: err.message || 'Failed to refresh cache' });
   }
 });
@@ -661,7 +876,7 @@ app.get('/api/cache/list', (_req, res) => {
 /**
  * Extra kill switch for the quota-burning refresh. The real gate is apiGuard
  * plus requireAdmin, the same middleware /api/cache/refresh and /api/cache/clear
- * use on main. Set CLARIVATE_ADMIN_REFRESH_ENABLED=false to hide the route.
+ * use. Set CLARIVATE_ADMIN_REFRESH_ENABLED=false to hide the route.
  */
 export function clarivateAdminRefreshDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.CLARIVATE_ADMIN_REFRESH_ENABLED === 'false';
@@ -687,11 +902,12 @@ app.post('/api/admin/clarivate-metrics/refresh', apiGuard, requireAdmin, async (
   }
 });
 
-app.post('/api/cache/clear', (_req, res) => {
+app.post('/api/cache/clear', requireAdmin, (_req, res) => {
   metricsCache.clear();
   try {
-    if (fs.existsSync(CACHE_FILE_PATH)) {
-      fs.unlinkSync(CACHE_FILE_PATH);
+    const filePath = cacheFilePath();
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
     }
   } catch (err) {
     console.warn('Failed to delete cache file:', err);
@@ -700,85 +916,173 @@ app.post('/api/cache/clear', (_req, res) => {
   res.json({ success: true, message: 'All cached metrics cleared successfully.' });
 });
 
-// Update or store user-provided journal metrics into cache
+function cacheKeysForFacts(facts: { url?: string | null; issn?: string | null; eIssn?: string | null }): string[] {
+  const canonical = normalizeJournalUrl(facts.url || '').canonical;
+  const keys = [
+    journalCacheKey({ issn: facts.issn, eIssn: facts.eIssn, requestUrl: canonical }),
+    facts.eIssn ? journalCacheKey({ eIssn: facts.eIssn, requestUrl: canonical }) : '',
+    canonical ? journalCacheKey({ requestUrl: canonical }) : '',
+  ];
+  return [...new Set(keys.filter((key) => key && key !== 'host:unknown'))];
+}
+
+/** The cached page record for this URL or ISSN, preferring one that still has extracted links. */
+function cachedFactsFor(facts: { url?: string | null; issn?: string | null; eIssn?: string | null }): JCRJournalEntry | null {
+  const matches = cacheKeysForFacts(facts)
+    .map((key) => metricsCache.get(key)?.fullFacts)
+    .filter((entry): entry is JCRJournalEntry => Boolean(entry));
+  return (
+    matches.find((entry) => entry.extractedFacts || entry.submissionPortalUrl || entry.authorGuidelinesUrl) ||
+    matches[0] ||
+    null
+  );
+}
+
+/**
+ * Browser edits drop extractedFacts, provenance links, and the portal fields.
+ * Put back the page facts and links already cached for that URL or ISSN.
+ */
+function attachCachedPageFacts<T extends JCRJournalEntry>(facts: T): T {
+  const cached = cachedFactsFor(facts);
+  if (!cached) return facts;
+  return {
+    ...facts,
+    extractedFacts: facts.extractedFacts ?? cached.extractedFacts,
+    submissionPortalUrl: facts.submissionPortalUrl ?? cached.submissionPortalUrl,
+    authorGuidelinesUrl: facts.authorGuidelinesUrl ?? cached.authorGuidelinesUrl,
+  };
+}
+
+function rejectedJournalHost(res: express.Response, raw: string): boolean {
+  try {
+    parseAllowedJournalUrl(raw);
+    return false;
+  } catch (err) {
+    if (err instanceof LandingPageError && err.code === 'ssrf') {
+      res.status(400).json({ error: err.message });
+      return true;
+    }
+    throw err;
+  }
+}
+
+// Update or store user-provided journal metrics into cache.
+// Only known fields are accepted. The signed-in user is recorded on the entry and in the audit log.
 app.post('/api/update-journal-metrics', (req, res) => {
   try {
-    const { facts } = req.body;
-    if (!facts || !facts.journalName) {
-      return res.status(400).json({ error: 'Valid journal metrics object is required.' });
+    const actor = getRequestSession(res)?.user;
+    if (!actor) {
+      return res.status(401).json({ error: 'Authentication required' });
     }
-
-    const norm = normalizeJournalUrl(facts.url || '');
+    const facts = validateJournalMetricsUpdate(req.body);
+    const norm = normalizeJournalUrl(facts.url);
     if (!norm.canonical) {
       return res.status(400).json({ error: 'A journal URL is required. Metrics are stored against that URL, not an invented path.' });
     }
-    const journalId = norm.cacheKey;
+    if (rejectedJournalHost(res, norm.canonical)) return;
+    const journalId = journalCacheKey({
+      issn: facts.issn,
+      eIssn: facts.eIssn,
+      requestUrl: norm.canonical,
+    });
     const nowStr = new Date().toISOString();
+    const previous = metricsCache.get(journalId);
 
     const userProvidedFacts: JCRJournalEntry = {
-      ...facts,
       url: norm.canonical,
       slugs: [],
+      journalName: facts.journalName,
+      publisher: facts.publisher,
+      impactFactor: facts.impactFactor,
+      fiveYearImpactFactor: facts.fiveYearImpactFactor,
+      jcrQuartile: facts.jcrQuartile,
+      casZone: facts.casZone,
+      firstDecisionDays: facts.firstDecisionDays,
+      indexing: facts.indexing,
+      openAccessType: facts.openAccessType,
+      apcUsd: facts.apcUsd,
+      chinaWaiverAvailable: facts.chinaWaiverAvailable,
+      aimsAndScopeSummary: facts.aimsAndScopeSummary,
+      primaryDiscipline: facts.primaryDiscipline,
+      issn: facts.issn,
+      eIssn: facts.eIssn,
       isVerifiedClarivate: false,
       verificationStatus: 'user_provided',
       provenanceSource: 'user_provided',
-      sourceAttribution: facts.sourceAttribution || 'Manually supplied by user (User Verified)',
+      sourceAttribution: MANUAL_METRIC_SOURCE,
       missingFields: [],
-      reportingYear: facts.reportingYear || 'User Provided (2025/2026)',
+      reportingYear: facts.reportingYear,
+      jcrYear: facts.jcrYear,
     };
+    const savedFacts = attachCachedPageFacts(userProvidedFacts);
+
+    const changedFields: FieldChange[] = diffTrackedFields(
+      previous?.fullFacts as unknown as Record<string, unknown> | undefined,
+      savedFacts as unknown as Record<string, unknown>
+    );
+    const auditEvent: MetricsAuditEvent = {
+      at: nowStr,
+      actorEmail: actor.email,
+      actorSub: actor.sub,
+      actorProvider: actor.provider,
+      journalId,
+      journalName: facts.journalName,
+      action: previous ? 'update' : 'create',
+      changedFields,
+    };
+    recordMetricsAudit(auditEvent);
+
+    const metric = (name: string, value: number | string | null) => ({
+      metric: name,
+      value,
+      year: facts.jcrYear,
+      source: MANUAL_METRIC_SOURCE,
+      cachedAt: nowStr,
+      expireAt: calculateMetricExpiry(name),
+    });
 
     const cachedEntry: CachedJournal = {
       journalId,
       journalName: facts.journalName,
-      publisher: facts.publisher || 'Springer Nature',
+      publisher: facts.publisher,
       lastAccess: nowStr,
       metrics: {
-        impactFactor: {
-          metric: 'impactFactor',
-          value: facts.impactFactor,
-          year: 2025,
-          source: 'User Provided',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('impactFactor'),
-        },
-        casZone: {
-          metric: 'casZone',
-          value: facts.casZone || null,
-          year: 2025,
-          source: 'User Provided',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('casZone'),
-        },
-        firstDecisionDays: {
-          metric: 'firstDecisionDays',
-          value: facts.firstDecisionDays || null,
-          year: 2025,
-          source: 'User Provided',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('firstDecisionDays'),
-        },
-        apcUsd: {
-          metric: 'apcUsd',
-          value: facts.apcUsd || null,
-          year: 2025,
-          source: 'User Provided',
-          cachedAt: nowStr,
-          expireAt: calculateMetricExpiry('apcUsd'),
-        },
+        impactFactor: metric('impactFactor', facts.impactFactor),
+        casZone: metric('casZone', facts.casZone),
+        firstDecisionDays: metric('firstDecisionDays', facts.firstDecisionDays),
+        apcUsd: metric('apcUsd', facts.apcUsd),
       },
-      fullFacts: userProvidedFacts,
+      fullFacts: savedFacts,
+      lastModifiedBy: {
+        email: actor.email,
+        sub: actor.sub,
+        provider: actor.provider,
+        at: nowStr,
+      },
+      audit: [...(previous?.audit || []), auditEvent].slice(-20),
     };
 
     metricsCache.set(journalId, cachedEntry);
+    const urlKey = journalCacheKey({ requestUrl: norm.canonical });
+    if (urlKey !== journalId) metricsCache.set(urlKey, cachedEntry);
     saveCacheToDisk();
 
-    console.log(`[Metrics Cache] Saved user-provided metrics for ${facts.journalName} (${journalId})`);
+    console.log(`[Metrics Cache] ${actor.email} saved user-provided metrics for ${facts.journalName} (${journalId})`);
     res.json({
       success: true,
-      message: `Saved verified metrics for ${facts.journalName}`,
-      facts: userProvidedFacts,
+      message: `Saved manually entered metrics for ${facts.journalName}`,
+      facts: savedFacts,
+      audit: {
+        at: auditEvent.at,
+        actorEmail: auditEvent.actorEmail,
+        action: auditEvent.action,
+        changedFields: auditEvent.changedFields,
+      },
     });
   } catch (err: any) {
+    if (err instanceof MetricsValidationError) {
+      return res.status(400).json({ error: err.message });
+    }
     console.error('Failed to update journal metrics:', err);
     res.status(500).json({ error: err.message || 'Failed to update metrics' });
   }
@@ -1147,6 +1451,21 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
   };
 }
 
+function uniqueSitelinks(
+  links: { title: string; desc: string; urlPath: string }[],
+  landingUrl: string
+) {
+  const seen = new Set<string>();
+  const landingKey = normalizeJournalUrl(landingUrl).canonical;
+  if (landingKey) seen.add(landingKey);
+  return links.filter((link) => {
+    const key = normalizeJournalUrl(link.urlPath).canonical;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function generateDeterministicCampaign(
   facts: any,
   stage: StageCode,
@@ -1164,30 +1483,36 @@ export function generateDeterministicCampaign(
   displayAd.descriptionCharCount = displayAd.description.length;
 
   const copyFacts = factsForCopy(facts);
-  const baseUrl = normalizeJournalUrl(facts.url || '').canonical;
-  const destinationUrl = joinJournalUrl(baseUrl, stageConfig.recommendedDestination.urlPath);
+  const destinationUrl = stageDestinationUrl(facts, stage);
+  const sitelink = (title: string, desc: string, role: Parameters<typeof resolveCampaignUrl>[1]) => ({
+    title,
+    desc,
+    urlPath: resolveCampaignUrl(facts, role),
+  });
 
-  const sitelinks =
+  const sitelinks = uniqueSitelinks(
     stage === 'AWA'
       ? [
-          { title: 'Journal Overview & Scope', desc: 'Explore research fields and mission', urlPath: `${baseUrl}/about` },
-          { title: 'Browse Latest Articles', desc: 'Read recent peer-reviewed discoveries', urlPath: `${baseUrl}/articles` },
-          { title: 'Editorial Leadership', desc: 'Meet the international editorial board', urlPath: `${baseUrl}/editors` },
-          { title: 'Research Collections', desc: 'Curated thematic paper collections', urlPath: `${baseUrl}/collections` },
+          sitelink('Journal Overview & Scope', 'Explore research fields and mission', 'about'),
+          sitelink('Browse Latest Articles', 'Read recent peer-reviewed discoveries', 'articles'),
+          sitelink('Editorial Leadership', 'Meet the international editorial board', 'editors'),
+          sitelink('Research Collections', 'Curated thematic paper collections', 'collections'),
         ]
       : stage === 'CON'
       ? [
-          { title: 'Aims & Scope Evaluation', desc: 'Check topical alignment and criteria', urlPath: `${baseUrl}/aims-and-scope` },
-          { title: 'Article Types & Formats', desc: 'Accepted original research & reviews', urlPath: `${baseUrl}/article-types` },
-          { title: 'Journal Metrics & Indexing', desc: 'Indexing and journal metrics', urlPath: `${baseUrl}/metrics` },
-          { title: 'Publishing Options & Fees', desc: `Transparent APC & OA publishing`, urlPath: `${baseUrl}/open-access` },
+          sitelink('Aims & Scope Evaluation', 'Check topical alignment and criteria', 'aims'),
+          sitelink('Article Types & Formats', 'Accepted original research and reviews', 'articles'),
+          sitelink('Journal Metrics & Indexing', 'Indexing and journal metrics', 'landing'),
+          sitelink('Publishing Options & Fees', 'Transparent APC and OA publishing', 'fees'),
         ]
       : [
-          { title: 'Author Guidelines', desc: 'Manuscript preparation and style guide', urlPath: `${baseUrl}/for-authors` },
-          { title: 'Submission Checklist', desc: 'Required documentation before submitting', urlPath: `${baseUrl}/checklist` },
-          { title: 'APC & Waiver Criteria', desc: 'Fee policy and funding guidelines', urlPath: `${baseUrl}/apc-waivers` },
-          { title: 'Online Submission Portal', desc: 'Submit paper for peer review', urlPath: `${baseUrl}/submit` },
-        ];
+          sitelink('Author Guidelines', 'Manuscript preparation and style guide', 'guidelines'),
+          sitelink('Submission Checklist', 'Required documentation before submitting', 'checklist'),
+          sitelink('APC & Waiver Criteria', 'Fee policy and funding guidelines', 'fees'),
+          sitelink('Online Submission Portal', 'Submit paper for peer review', 'submission'),
+        ],
+    campaignLandingUrl(facts)
+  );
 
   const callouts =
     stage === 'AWA'
@@ -1249,10 +1574,31 @@ app.post('/api/generate-campaign', async (req, res) => {
     const normalizedStage = normalizeStage(funnelStage);
     const stageConfig = STAGE_CONFIGS[normalizedStage];
 
-    // Priority 1: Check facts. If userProvidedFacts is sent, use them directly!
+    // Browser-supplied facts are always user-entered. A hand edit cannot keep a Clarivate label.
     let facts: JCRJournalEntry;
     if (userProvidedFacts && userProvidedFacts.verificationStatus === 'user_provided') {
-      facts = sanitizeUserProvidedFacts(userProvidedFacts);
+      let sanitized;
+      try {
+        sanitized = sanitizeUserProvidedFacts(userProvidedFacts);
+      } catch (err) {
+        if (err instanceof MetricsValidationError) {
+          return res.status(400).json({ error: err.message });
+        }
+        throw err;
+      }
+      const norm = normalizeJournalUrl(sanitized.url);
+      const canonical = norm.canonical || sanitized.url;
+      if (rejectedJournalHost(res, canonical)) return;
+      facts = attachCachedPageFacts({
+        ...sanitized,
+        url: canonical,
+        slugs: [],
+        verificationStatus: 'user_provided',
+        provenanceSource: 'user_provided',
+        isVerifiedClarivate: false,
+        sourceAttribution: MANUAL_METRIC_SOURCE,
+        missingFields: [],
+      });
     } else {
       const requestedIssn = typeof issn === 'string' && issn.trim() ? issn : typeof eIssn === 'string' ? eIssn : undefined;
       // Catalog issn/eIssn, cached facts, and the PR #3 pageIssn hook are resolved inside lookupClarivateFacts.
@@ -1301,6 +1647,8 @@ JOURNAL:
 - Output Language: ${outputLanguage}
 
 ${metricPromptSection(facts)}
+
+${formatLandingPagePromptSection(facts)}
 
 ${customPlaybook ? `PLAYBOOK RULES:\n${customPlaybook}\n` : ''}
 
@@ -1382,7 +1730,7 @@ GOOGLE ADS REQUIREMENTS:
       });
 
       campaignOutput.searchAds.callouts = campaignOutput.searchAds.callouts || fallback.searchAds.callouts;
-      campaignOutput.searchAds.sitelinks = campaignOutput.searchAds.sitelinks || fallback.searchAds.sitelinks;
+      campaignOutput.searchAds.sitelinks = fallback.searchAds.sitelinks;
     }
 
     if (campaignOutput.displayAds) {
@@ -1403,7 +1751,7 @@ GOOGLE ADS REQUIREMENTS:
       campaignOutput.displayAds.targetPlacements = campaignOutput.displayAds.targetPlacements || fallback.displayAds.targetPlacements;
     }
 
-    const destinationUrl = joinJournalUrl(facts.url, stageConfig.recommendedDestination.urlPath);
+    const destinationUrl = stageDestinationUrl(facts, normalizedStage);
 
     const campaign = guardAdCopy({
       funnelStage: normalizedStage,
@@ -1424,6 +1772,10 @@ GOOGLE ADS REQUIREMENTS:
 
     res.json({ success: true, campaign });
   } catch (error: any) {
+    if (error instanceof LandingPageError) {
+      const status = error.code === 'ssrf' ? 400 : 502;
+      return res.status(status).json({ error: error.message });
+    }
     console.error('Campaign generation failed:', error);
     res.status(500).json({ error: error.message || 'Server error' });
   }
@@ -1450,12 +1802,21 @@ app.post('/api/compare-stages', async (req, res) => {
       },
     });
   } catch (err: any) {
+    if (err instanceof LandingPageError) {
+      const status = err.code === 'ssrf' ? 400 : 502;
+      return res.status(status).json({ error: err.message });
+    }
     console.error('Compare stages failed:', err);
     res.status(500).json({ error: err.message || 'Failed to compare stages' });
   }
 });
 
-async function startServer() {
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+export async function startServer() {
+  assertProductionAuthConfig();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1464,7 +1825,11 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (_req, res) => {
+    app.get('*', (req, res) => {
+      if (req.path.startsWith('/api/')) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
   }
@@ -1474,8 +1839,11 @@ async function startServer() {
   });
 }
 
-const entryPoint = process.argv[1] ? path.resolve(process.argv[1]) : '';
-if (entryPoint === fileURLToPath(import.meta.url)) {
+const invokedDirectly = process.argv[1]
+  ? import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+  : false;
+
+if (invokedDirectly) {
   startServer().catch((err) => {
     console.error('Server failed to start:', err);
     process.exit(1);

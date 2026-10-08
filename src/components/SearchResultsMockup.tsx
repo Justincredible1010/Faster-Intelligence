@@ -22,7 +22,7 @@ import {
 } from '../types';
 import { countCharacterWidth, formatCharCountLabel } from '../utils/textUtils';
 import { deriveDisplayUrl } from '../utils/csvExporter';
-import { formatJifClaim, metricsFromClarivateWos, trustedImpactFactor } from '../utils/metricClaims';
+import { formatJifClaim, trustedApcUsd, trustedImpactFactor } from '../utils/metricClaims';
 
 interface Props {
   ads: GoogleSearchAds;
@@ -321,9 +321,9 @@ export const SearchResultsMockup: React.FC<Props> = ({
               <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
                 <Globe className="w-3 h-3 text-slate-400" />
                 <span>
-                  {metricsFromClarivateWos(facts)
+                  {formatJifClaim(facts)?.includes('Clarivate')
                     ? 'clarivate.com > jcr > browse'
-                    : 'journal > about'}
+                    : 'www.nature.com > journal-metrics'}
                 </span>
               </div>
               <h3 className="text-sm font-normal text-[#1a0dab] hover:underline cursor-pointer">
@@ -333,7 +333,6 @@ export const SearchResultsMockup: React.FC<Props> = ({
                 {formatJifClaim(facts)
                   ? `${facts.journalName} ${formatJifClaim(facts)}.`
                   : `${facts.journalName}. Aims, scope, and author information.`}
-                {facts.indexing?.length ? ` Indexed in ${facts.indexing.join(', ')}.` : ''}
               </p>
             </div>
 
@@ -347,7 +346,7 @@ export const SearchResultsMockup: React.FC<Props> = ({
               </h3>
               <p className="text-xs text-[#4d5156] leading-relaxed">
                 Prepare your manuscript for peer review. Download article templates, check open
-                access APC details (${facts.apcUsd || 'standard'}), and view submission checklists.
+                access APC details ({trustedApcUsd(facts) != null ? `$${trustedApcUsd(facts)}` : 'see the journal page'}), and view submission checklists.
               </p>
             </div>
           </div>
