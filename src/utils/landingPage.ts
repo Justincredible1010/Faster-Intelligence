@@ -966,6 +966,63 @@ function pushFeature(
   features.push({ kind, label, text: clean, provenance: 'page-sourced' });
 }
 
+function yearInUsageText(raw: string | null): string | null {
+  const match = raw?.match(/\((\d{4})\)/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  return year >= 1990 && year <= 2100 ? match[1] : null;
+}
+
+function statedPageDate(text: string, cue: RegExp): string | null {
+  const match = text.match(new RegExp(
+    cue.source + String.raw`\s*[:：]?\s*(\d{4}-\d{2}-\d{2}|\d{1,2}\s+[A-Za-z]+\s+\d{4}|[A-Za-z]+\s+\d{1,2},?\s+\d{4})`,
+    'i'
+  ));
+  return match?.[1]?.replace(/\s+/g, ' ').trim() || null;
+}
+
+/**
+ * A year printed on a usage count, or an explicit download / data-retrieved
+ * date. Impact-factor years and Clarivate retrievedAt are not used here.
+ */
+function usageDateFeatures(downloadRaw: string | null, viewsRaw: string | null, html: string): PageSourcedFeature[] {
+  const features: PageSourcedFeature[] = [];
+  const downloadYear = yearInUsageText(downloadRaw);
+  const viewsYear = yearInUsageText(viewsRaw);
+  if (downloadYear && viewsYear && downloadYear !== viewsYear) {
+    features.push({ kind: 'usage_date', label: 'Article downloads data year', text: downloadYear, provenance: 'page-sourced' });
+    features.push({ kind: 'usage_date', label: 'Full-text views data year', text: viewsYear, provenance: 'page-sourced' });
+  } else if (downloadYear || viewsYear) {
+    const label = downloadYear && !viewsYear
+      ? 'Article downloads data year'
+      : viewsYear && !downloadYear
+        ? 'Full-text views data year'
+        : 'Usage data year';
+    pushFeature(features, 'usage_date', label, downloadYear || viewsYear);
+  }
+
+  const pageText = visiblePageText(html);
+  const downloadDate = statedPageDate(pageText, /download date/i);
+  const dataRetrieved = statedPageDate(pageText, /data[- ]retrieved(?:\s+on)?/i);
+  if (downloadDate) {
+    features.push({ kind: 'download_date', label: 'Download date', text: downloadDate, provenance: 'page-sourced' });
+  }
+  if (dataRetrieved) {
+    features.push({ kind: 'data_retrieved', label: 'Data retrieved', text: dataRetrieved, provenance: 'page-sourced' });
+  }
+  return features;
+}
+
+function combinePageFeatures(
+  base: PageSourcedFeature[] | undefined,
+  page: PageSourcedFeature[] | undefined
+): PageSourcedFeature[] {
+  const fromPage = page || [];
+  const fromApi = (base || []).filter((item) => item.provenance === 'clarivate_wos_journals_api');
+  const seen = new Set(fromPage.map((item) => `${item.kind}:${item.text}`));
+  return [...fromPage, ...fromApi.filter((item) => !seen.has(`${item.kind}:${item.text}`))];
+}
+
 /** Features stated in visible page text or in the text of a real link. Impact factors and rankings are left out. */
 function collectPageFeatures(
   html: string,
@@ -1114,6 +1171,7 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
   }
 
   const prose = visibleProse(html);
+  const usageCount = String.raw`[\d,.]+\s*(?:million|billion|thousand|[kmb])?(?:\s*\(\d{4}\))?`;
   const pushUsage = (
     kind: 'downloads' | 'full_text_views',
     label: string,
@@ -1132,15 +1190,15 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
   };
   const downloadRaw =
     dataTestValue(html, 'metrics-downloads-value') ||
-    prose.match(/article downloads of\s+([\d,.]+\s*(?:million|billion|thousand|[kmb])?)/i)?.[1] ||
-    prose.match(/([\d,.]+\s*(?:million|billion|thousand|[kmb])?)\s+(?:annual\s+)?(?:article\s+)?downloads\b/i)?.[1] ||
+    prose.match(new RegExp(`article downloads of\\s+(${usageCount})`, 'i'))?.[1] ||
+    prose.match(new RegExp(`(${usageCount})\\s+(?:annual\\s+)?(?:article\\s+)?downloads\\b`, 'i'))?.[1] ||
     null;
   pushUsage('downloads', 'Article downloads', downloadRaw);
   const viewsRaw =
     dataTestValue(html, 'metrics-full-text-views-value') ||
     dataTestValue(html, 'metrics-views-value') ||
-    prose.match(/full[- ]text views of\s+([\d,.]+\s*(?:million|billion|thousand|[kmb])?)/i)?.[1] ||
-    prose.match(/([\d,.]+\s*(?:million|billion|thousand|[kmb])?)\s+full[- ]text views\b/i)?.[1] ||
+    prose.match(new RegExp(`full[- ]text views of\\s+(${usageCount})`, 'i'))?.[1] ||
+    prose.match(new RegExp(`(${usageCount})\\s+full[- ]text views\\b`, 'i'))?.[1] ||
     null;
   pushUsage('full_text_views', 'Full-text views', viewsRaw);
 
@@ -1201,7 +1259,10 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
     openAccessPolicy: field(openAccess(html), 0.75),
     specialIssuesAvailable: field(specialIssue, specialIssue ? 0.7 : 0),
     pageMetrics: metrics,
-    pageFeatures: collectPageFeatures(html, pageAnchors, aims, types, decision?.numericValue ?? null),
+    pageFeatures: [
+      ...collectPageFeatures(html, pageAnchors, aims, types, decision?.numericValue ?? null),
+      ...usageDateFeatures(downloadRaw, viewsRaw, html),
+    ],
     layout,
     rawConfidenceAverage: 0,
     extractedDate: new Date().toISOString(),
@@ -1313,7 +1374,7 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
   }
 
   result.extractedFacts = page;
-  result.pageFeatures = page.pageFeatures || [];
+  result.pageFeatures = combinePageFeatures(base.pageFeatures, page.pageFeatures);
   const textLocked = userProvided;
 
   if (page.journalTitle.value && !textLocked && !verifiedLive) {
@@ -1435,6 +1496,10 @@ function dropClarivateSnapshotLabels(provenance: Record<string, Provenance>) {
   }
 }
 
+function featureSourceLabel(feature: PageSourcedFeature): string {
+  return feature.provenance === 'clarivate_wos_journals_api' ? 'clarivate_wos_journals_api' : 'Page-sourced';
+}
+
 export function formatLandingPagePromptSection(facts: MergeableJournalFacts): string {
   const page = facts.extractedFacts;
   if (!page) return 'No landing page facts were extracted.';
@@ -1453,7 +1518,7 @@ export function formatLandingPagePromptSection(facts: MergeableJournalFacts): st
     ...page.pageMetrics
       .filter((item) => item.kind !== 'impact_factor' && item.kind !== 'five_year_impact_factor')
       .map((item) => `- Page-sourced ${item.label}: ${item.value}`),
-    ...(page.pageFeatures || []).map((feature) => `- Page-sourced ${feature.label}: ${feature.text}`),
+    ...(page.pageFeatures || []).map((feature) => `- ${featureSourceLabel(feature)} ${feature.label}: ${feature.text}`),
     'Do not state an impact factor, 5-year impact factor, or ranking from the journal page.',
   ];
   return lines.filter(Boolean).join('\n');

@@ -1,4 +1,4 @@
-import { ClarivateJournalMetrics, FactVerificationStatus } from '../types';
+import { ClarivateJournalMetrics, FactVerificationStatus, PageSourcedFeature } from '../types';
 import { CLARIVATE_WOS_JOURNALS_SOURCE } from './metricSources';
 import { formatUsageCount, parseUsageCount } from './usageCounts';
 
@@ -175,7 +175,19 @@ export function metricPromptSection(facts: MetricCarrier): string {
   if (downloads != null) lines.push(`- Article downloads: ${formatUsageCount(downloads)}`);
   if (views != null) lines.push(`- Full-text views: ${formatUsageCount(views)}`);
   if (downloads != null || views != null) {
-    lines.push('- Article downloads and full-text views are counts. Do not turn them into a date.');
+    lines.push('- Article downloads and full-text views are counts. Do not invent a download date.');
+  }
+  for (const feature of facts?.pageFeatures || []) {
+    if (!DATE_FEATURE_KINDS.includes(feature.kind) || !feature.text.trim()) continue;
+    const source = feature.provenance === 'clarivate_wos_journals_api' ? 'clarivate_wos_journals_api' : 'journal website';
+    lines.push(`- ${feature.label}: ${feature.text} (${source})`);
+  }
+  const hasDownloadDate = (facts?.pageFeatures || []).some((feature) => feature.kind === 'download_date' && feature.text.trim());
+  const hasRetrievalDate = (facts?.pageFeatures || []).some(
+    (feature) => feature.kind === 'retrieval_date' && feature.provenance === 'clarivate_wos_journals_api'
+  );
+  if (hasRetrievalDate && !hasDownloadDate) {
+    lines.push('- The retrieval date is when the Journals API response was retrieved. It is not a download date.');
   }
   if (lines.length === 1) lines.push('- None of the metric fields are filled in.');
   lines.push(
@@ -193,6 +205,8 @@ export interface MetricClaimGuardResult {
   text: string;
   flags: string[];
 }
+
+const DATE_FEATURE_KINDS: PageSourcedFeature['kind'][] = ['usage_date', 'download_date', 'data_retrieved', 'retrieval_date'];
 
 function sameNumber(claimed: string, trusted: number | null): boolean {
   if (trusted == null) return false;
@@ -304,6 +318,12 @@ export function guardMetricClaims(text: string, facts: MetricCarrier): MetricCla
   if (!clarivateOk && /\bclarivate\b/i.test(out)) {
     flags.push('Removed Clarivate attribution');
     out = out.replace(/\bclarivate\b/gi, '');
+  }
+
+  const hasDownloadDate = (facts?.pageFeatures || []).some((feature) => feature.kind === 'download_date' && feature.text.trim());
+  if (!hasDownloadDate && /\bdownload date\b/i.test(out)) {
+    flags.push('Removed a download date that was not on the record');
+    out = out.replace(/\bdownload dates?\b/gi, '');
   }
 
   out = out

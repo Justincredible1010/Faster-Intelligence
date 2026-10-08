@@ -29,12 +29,22 @@ export interface ExtractedFactField<T> {
   provenanceLabel?: string;
 }
 
-/** A concrete feature the journal page states. Not an impact factor or a ranking. */
+/** A concrete feature the journal page or the metrics record states. Not an impact factor or a ranking. */
 export interface PageSourcedFeature {
-  kind: 'aims_and_audience' | 'article_types' | 'publishing_model' | 'speed' | 'submission';
+  kind:
+    | 'aims_and_audience'
+    | 'article_types'
+    | 'publishing_model'
+    | 'speed'
+    | 'submission'
+    | 'usage_date'
+    | 'download_date'
+    | 'data_retrieved'
+    | 'retrieval_date';
   label: string;
   text: string;
-  provenance: 'page-sourced';
+  /** page-sourced when the journal site stated it. clarivate_wos_journals_api when the Journals API stated it. */
+  provenance: 'page-sourced' | 'clarivate_wos_journals_api';
 }
 
 /** A number or labelled figure taken from the journal page itself, not from Clarivate or a model guess. */

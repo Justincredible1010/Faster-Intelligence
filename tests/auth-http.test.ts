@@ -792,6 +792,10 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(catalog.provenanceMap?.articleDownloads?.year, undefined);
     assert.equal(catalog.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
     assert.equal('downloadDate' in catalog, false);
+    const usageYear = catalog.pageFeatures?.find((feature: { kind: string }) => feature.kind === 'usage_date');
+    assert.equal(usageYear?.text, '2025');
+    assert.equal(usageYear?.label, 'Article downloads data year');
+    assert.equal(usageYear?.provenance, 'page-sourced');
 
     const edited = {
       url: catalog.url,
@@ -834,9 +838,10 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(facts.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
     const copy = campaignText(generatedBody.campaign);
     assert.match(copy, /349,945,839/);
+    assert.match(copy, /Article downloads data year: 2025 \(journal website\)/);
+    assert.doesNotMatch(copy, /download date/i);
     assert.doesNotMatch(copy, /15\.1/);
     assert.doesNotMatch(copy, /114M/);
-    assert.doesNotMatch(copy, /2025/);
     assert.doesNotMatch(copy, /Q1/);
     assert.doesNotMatch(copy, /1区/);
     assert.doesNotMatch(copy, /SCIE/);

@@ -273,6 +273,7 @@ export async function runLandingPageTests() {
     assert.equal(natureFeatures.some((feature) => feature.kind === 'article_types'), false);
     assert.equal(natureFeatures.some((feature) => feature.kind === 'publishing_model'), false);
     assert.equal(natureFeatures.some((feature) => feature.kind === 'speed'), false);
+    assert.equal(natureFeatures.some((feature) => feature.kind === 'usage_date' || feature.kind === 'download_date' || feature.kind === 'retrieval_date'), false);
     assert.doesNotMatch(JSON.stringify(natureFeatures), /impact factor/i);
 
     const ncomms = extractLandingPageFacts(
@@ -306,6 +307,10 @@ export async function runLandingPageTests() {
     assert.equal(ncommsFeatures.find((feature) => feature.kind === 'publishing_model')?.text, 'Open Access Fees and Funding');
     assert.equal(ncommsFeatures.find((feature) => feature.kind === 'speed')?.text, '9 days to first decision');
     assert.match(ncommsFeatures.find((feature) => feature.kind === 'submission')?.text || '', /Submit manuscript/);
+    assert.equal(ncommsFeatures.find((feature) => feature.kind === 'usage_date')?.text, '2025');
+    assert.equal(ncommsFeatures.find((feature) => feature.kind === 'usage_date')?.label, 'Article downloads data year');
+    assert.equal(ncommsFeatures.find((feature) => feature.kind === 'usage_date')?.provenance, 'page-sourced');
+    assert.equal(ncommsFeatures.some((feature) => feature.kind === 'download_date'), false);
     assert.doesNotMatch(JSON.stringify(ncommsFeatures), /18\.1|14\.7|114M|8 days|impact factor/i);
 
     const jbe = extractLandingPageFacts(
@@ -328,11 +333,32 @@ export async function runLandingPageTests() {
     assert.equal(jbe.openAccessPolicy.value, 'Hybrid');
     assert.equal(jbe.pageFeatures.find((feature) => feature.kind === 'publishing_model')?.text, 'Hybrid');
     assert.equal(jbe.pageFeatures.find((feature) => feature.kind === 'publishing_model')?.provenance, 'page-sourced');
+    assert.equal(jbe.pageFeatures.find((feature) => feature.kind === 'usage_date')?.text, '2025');
+    assert.equal(jbe.pageFeatures.find((feature) => feature.kind === 'usage_date')?.label, 'Article downloads data year');
     assert.doesNotMatch(JSON.stringify(jbe.pageFeatures), /6\.3|9\.7|impact factor/i);
     assert.equal(jbe.publisherName.value, 'Springer');
     assert.equal(jbe.submissionPortalUrl.value, 'https://www.editorialmanager.com/busi');
     assert.match(jbe.authorGuidelinesUrl.value || '', /submission-guidelines$/);
     assert.equal(jbe.articleProcessingChargeUsd.value, null);
+
+    const dated = extractLandingPageFacts(
+      `<html><head><title>Dated Journal</title></head><body>
+        <p>Impact factor of 4.2 (2024).</p>
+        <p>Article downloads of 12,000 (2023).</p>
+        <p>Download date: 2024-03-15</p>
+        <p>Data retrieved: 2 March 2024</p>
+      </body></html>`,
+      'https://www.nature.com/dated'
+    );
+    assert.equal(dated.pageFeatures.find((feature) => feature.kind === 'usage_date')?.text, '2023');
+    assert.equal(dated.pageFeatures.find((feature) => feature.kind === 'download_date')?.text, '2024-03-15');
+    assert.equal(dated.pageFeatures.find((feature) => feature.kind === 'data_retrieved')?.text, '2 March 2024');
+    assert.equal(dated.pageFeatures.every((feature) => feature.provenance === 'page-sourced'), true);
+    const impactYearOnly = extractLandingPageFacts(
+      '<html><head><title>Impact only</title></head><body><p>Impact factor of 18.1 (2025).</p></body></html>',
+      'https://www.nature.com/impact-only'
+    );
+    assert.equal(impactYearOnly.pageFeatures.some((feature) => feature.kind === 'usage_date' || feature.kind === 'download_date'), false);
 
     const fees = extractLandingPageFacts(
       fixture('nature-portfolio-open-access-fees.html'),
@@ -557,7 +583,9 @@ export async function runLandingPageTests() {
     assert.match(ncommsPagePrompt, /biological, health/);
     assert.match(ncommsPagePrompt, /Open Access Fees and Funding/);
     assert.match(ncommsPagePrompt, /9 days to first decision/);
+    assert.match(ncommsPagePrompt, /Article downloads data year: 2025/);
     assert.doesNotMatch(ncommsPagePrompt, /18\.1|14\.7/);
+    assert.doesNotMatch(ncommsPagePrompt, /download date/i);
     assert.doesNotMatch(ncommsText, /18\.1/);
     assert.match(ncommsText, /9 Days/);
     assert.match(ncommsText, /349,945,839/);
@@ -565,7 +593,8 @@ export async function runLandingPageTests() {
     assert.match(ncommsText, /Reviews & Analysis/);
     assert.match(ncommsText, /Open Access Fees and Funding/);
     assert.match(ncommsText, /biological, health/);
-    assert.doesNotMatch(ncommsText, /2025/);
+    assert.match(ncommsText, /Article downloads data year: 2025 \(journal website\)/);
+    assert.doesNotMatch(ncommsText, /download date/i);
     assert.doesNotMatch(ncommsText, /114M/);
     const usageClaim = guardMetricClaims('114M annual downloads and 349,945,839 article downloads', ncomms);
     assert.doesNotMatch(usageClaim.text, /114M/);

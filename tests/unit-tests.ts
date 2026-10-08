@@ -558,6 +558,9 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert.strictEqual(fromApi.articleDownloads ?? null, null);
   assert.strictEqual(fromApi.fullTextViews ?? null, null);
   assert.strictEqual('downloadDate' in fromApi, false);
+  assert.strictEqual(fromApi.pageFeatures?.find((feature) => feature.kind === 'retrieval_date')?.text, '2026-10-08');
+  assert.strictEqual(fromApi.pageFeatures?.find((feature) => feature.kind === 'retrieval_date')?.provenance, 'clarivate_wos_journals_api');
+  assert.equal(fromApi.pageFeatures?.some((feature) => feature.kind === 'download_date'), false);
   assert.strictEqual(fromApi.wosJournalId, 'NATURE');
   assert.strictEqual(fromApi.jcrQuartile, 'Q1');
   assert.strictEqual(fromApi.jifRanks?.[0]?.rank, '1/140');
@@ -575,6 +578,33 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert(wosCampaign.includes('clarivate_wos_journals_api'));
   assert(wosCampaign.includes('JCR 2025'));
   assert(wosCampaign.includes('56.1'));
+  assert(wosCampaign.includes('Retrieval date: 2026-10-08 (clarivate_wos_journals_api)'));
+  assert(!/download date/i.test(wosCampaign));
+  const inventedDownloadDate = guardMetricClaims('Download date 2025-01-01 and Retrieval date 2026-10-08', fromApi);
+  assert(!/download date/i.test(inventedDownloadDate.text));
+  assert(inventedDownloadDate.text.includes('2026-10-08'));
+
+  const withDownloadDate = await lookupMetricsByIssn('0028-0836', {
+    async searchByIssn() {
+      return { hits: [{ id: 'NATURE' }] };
+    },
+    async getJournal() {
+      return { journalCitationReports: [{ year: 2025 }] };
+    },
+    async getYearReport() {
+      return {
+        downloadDate: '2024-06-20',
+        metrics: { impactMetrics: { jif: '56.1' } },
+      };
+    },
+  }, retrievedAt);
+  assert(withDownloadDate, 'A payload that states a download date should map it');
+  assert.strictEqual(withDownloadDate.pageFeatures?.find((feature) => feature.kind === 'download_date')?.text, '2024-06-20');
+  assert.strictEqual(withDownloadDate.pageFeatures?.find((feature) => feature.kind === 'download_date')?.provenance, 'clarivate_wos_journals_api');
+  assert.strictEqual(withDownloadDate.pageFeatures?.find((feature) => feature.kind === 'retrieval_date')?.label, 'Retrieval date');
+  const datedCampaign = JSON.stringify(generateDeterministicCampaign(withDownloadDate, 'CON', 'EN').searchAds);
+  assert(datedCampaign.includes('Download date: 2024-06-20 (clarivate_wos_journals_api)'));
+  assert(datedCampaign.includes('Retrieval date: 2026-10-08 (clarivate_wos_journals_api)'));
 
   const serverSource = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
   assert(!serverSource.includes('academic publishing metrics database'));

@@ -503,7 +503,9 @@ export const InputStudio: React.FC<Props> = ({
                   <li key={feature.kind} className="bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
                     <span className="text-[10px] text-slate-400 font-semibold uppercase">{feature.label}</span>
                     <span className="text-xs font-semibold text-slate-900 block">{feature.text}</span>
-                    <span className="text-[10px] text-slate-500">Page-sourced</span>
+                    <span className="text-[10px] text-slate-500">
+                      {feature.provenance === 'clarivate_wos_journals_api' ? 'clarivate_wos_journals_api' : 'Page-sourced'}
+                    </span>
                   </li>
                 ))}
               </ul>

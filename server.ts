@@ -764,6 +764,30 @@ function attachCachedPageFacts<T extends JCRJournalEntry>(facts: T): T {
   };
 }
 
+const DATED_FEATURE_KINDS = new Set<PageSourcedFeature['kind']>(['usage_date', 'download_date', 'data_retrieved', 'retrieval_date']);
+
+function datedFeatureLines(facts: { pageFeatures?: PageSourcedFeature[] }): string[] {
+  return (facts.pageFeatures || [])
+    .filter((feature) => DATED_FEATURE_KINDS.has(feature.kind) && feature.text.trim())
+    .map((feature) => {
+      const source = feature.provenance === 'clarivate_wos_journals_api' ? 'clarivate_wos_journals_api' : 'journal website';
+      return `${feature.label}: ${feature.text} (${source})`;
+    });
+}
+
+function mixedDescriptions(
+  en: { text: string; sourceFact: string; language: 'EN'; theme: string }[],
+  zh: { text: string; sourceFact: string; language: 'ZH'; theme: string }[],
+  preferred?: { text: string; sourceFact: string; language: 'EN'; theme: string }
+) {
+  const dated = en.filter((item) => item.sourceFact === 'Dated usage');
+  const english = [...dated, preferred, ...en].filter((item, index, list): item is NonNullable<typeof item> => {
+    if (!item) return false;
+    return list.findIndex((other) => other?.text === item.text) === index;
+  }).slice(0, 2);
+  return [english[0] || en[0], zh[0], english[1] || en[1], zh[1]].map((item) => ({ ...item, charCount: item.text.length }));
+}
+
 function pageFeatureText(facts: { pageFeatures?: PageSourcedFeature[] }, kind: PageSourcedFeature['kind']): string | null {
   const found = (facts.pageFeatures || []).find(
     (item) => item.kind === kind && item.provenance === 'page-sourced' && item.text.trim()
@@ -1103,6 +1127,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
   const publishingText = pageFeatureText(facts, 'publishing_model');
   const impactDescription = clarivateDescription(facts);
   const submissionText = pageFeatureText(facts, 'submission');
+  const datedLines = datedFeatureLines(facts);
   const featureDescription = (text: string, sourceFact: string, theme: string) => ({
     text: smartClamp(text, 90),
     sourceFact,
@@ -1114,6 +1139,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
       ...aimsLines.map((text) => featureDescription(text, 'Aims and audience', 'Scope & Relevance')),
       ...(articleTypesText ? [featureDescription(articleTypesText, 'Article types', 'Scope & Relevance')] : []),
       ...(publishingText ? [featureDescription(publishingText, 'Publishing model', 'Publishing Options')] : []),
+      ...datedLines.map((text) => featureDescription(text, 'Dated usage', 'Evaluation & Metrics')),
       { text: smartClamp(`Explore research published in ${facts.journalName}. Serving the global scientific community.`, 90), sourceFact: 'Journal Overview', language: 'EN' as const, theme: 'Scope & Relevance' },
       { text: smartClamp(`Discover multidisciplinary advances and innovative discoveries across ${facts.primaryDiscipline}.`, 90), sourceFact: facts.primaryDiscipline, language: 'EN' as const, theme: 'Scope & Relevance' },
       { text: smartClamp(`Published by ${facts.publisher}. Connect with global readership and open scholarship.`, 90), sourceFact: facts.publisher, language: 'EN' as const, theme: 'Scope & Relevance' },
@@ -1127,7 +1153,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
     ];
     if (outputLanguage === 'EN') return en.map(d => ({ ...d, charCount: d.text.length }));
     if (outputLanguage === 'ZH') return zh.map(d => ({ ...d, charCount: d.text.length }));
-    return [en[0], zh[0], en[1], zh[1]].map(d => ({ ...d, charCount: d.text.length }));
+    return mixedDescriptions(en, zh);
   }
 
   if (stage === 'CON') {
@@ -1144,6 +1170,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
       ...aimsLines.map((text) => featureDescription(text, 'Aims and audience', 'Scope & Relevance')),
       ...(articleTypesText ? [featureDescription(articleTypesText, 'Article types', 'Scope & Relevance')] : []),
       ...(publishingText ? [featureDescription(publishingText, 'Publishing model', 'Publishing Options')] : []),
+      ...datedLines.map((text) => featureDescription(text, 'Dated usage', 'Evaluation & Metrics')),
       ...(impactDescription ? [{ text: smartClamp(impactDescription, 90), sourceFact: 'Clarivate impact factor', language: 'EN' as const, theme: 'Evaluation & Peer Review' }] : []),
       ...(facts.jcrQuartile ? [featureDescription(`Quartile ${facts.jcrQuartile}`, 'JCR quartile', 'Evaluation & Peer Review')] : []),
       { text: smartClamp(`Evaluate ${facts.journalName} for your paper. ${facts.indexing?.length ? `indexed in ${facts.indexing.slice(0, 2).join(' & ')}.` : 'Review the aims and scope.'}`, 90), sourceFact: 'Evaluation', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
@@ -1161,11 +1188,12 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
     if (outputLanguage === 'EN') return en.map(d => ({ ...d, charCount: d.text.length }));
     if (outputLanguage === 'ZH') return zh.map(d => ({ ...d, charCount: d.text.length }));
     const usageLine = en.find((item) => item.theme === 'Readership');
-    return [en[0], zh[0], usageLine || en[2], zh[1]].map(d => ({ ...d, charCount: d.text.length }));
+    return mixedDescriptions(en, zh, usageLine);
   }
 
   // DEC
   const en = [
+    ...datedLines.map((text) => featureDescription(text, 'Dated usage', 'Evaluation & Metrics')),
     ...(submissionText ? [{ text: smartClamp(submissionText, 90), sourceFact: 'Submission', language: 'EN' as const, theme: 'Author Checklist' }] : []),
     { text: smartClamp(`Prepare your manuscript for ${facts.journalName}. Access author guidelines and checklist.`, 90), sourceFact: 'Author Guidelines', language: 'EN' as const, theme: 'Author Checklist' },
     { text: smartClamp(`Clear manuscript formatting instructions and required documents for official submission.`, 90), sourceFact: 'Manuscript Prep', language: 'EN' as const, theme: 'Author Checklist' },
@@ -1180,7 +1208,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
   ];
   if (outputLanguage === 'EN') return en.map(d => ({ ...d, charCount: d.text.length }));
   if (outputLanguage === 'ZH') return zh.map(d => ({ ...d, charCount: d.text.length }));
-  return [en[0], zh[0], en[1], zh[1]].map(d => ({ ...d, charCount: d.text.length }));
+  return mixedDescriptions(en, zh);
 }
 
 export function generateStageKeywords(facts: any, stage: StageCode) {
@@ -1552,6 +1580,10 @@ GOOGLE ADS REQUIREMENTS:
       });
 
       let descs = campaignOutput.searchAds.descriptions || [];
+      for (const line of [...datedFeatureLines(facts)].reverse()) {
+        const already = descs.some((item: { text?: string }) => (item.text || '').includes(line));
+        if (!already) descs.unshift({ text: line, sourceFact: 'Dated usage', language: 'EN', theme: 'Evaluation & Metrics' });
+      }
       if (descs.length < 4) {
         for (const fd of fallback.searchAds.descriptions) {
           if (descs.length >= 4) break;

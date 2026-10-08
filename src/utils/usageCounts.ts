@@ -1,6 +1,6 @@
 /**
  * Counts a journal page prints for downloads or full-text views.
- * A trailing year, such as "(2025)", is not a download date and is ignored.
+ * A trailing year, such as "(2025)", is not part of the count. The page extractor keeps that year as its own usage-date feature.
  */
 export function parseUsageCount(text: string | null | undefined): number | null {
   if (!text) return null;

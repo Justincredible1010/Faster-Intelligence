@@ -29,7 +29,7 @@ export const PRESET_SKILLS = {
 - Maintain prestigious, scholarly, and authoritative tone suitable for Nature Portfolio and Springer Nature.
 - Strict prohibition of predatory publishing terms (never use "guaranteed acceptance", "instant publish", or "easy SCI").
 - State an impact factor or 5-year impact factor only when the metrics section gives a clarivate_wos_journals_api value and a JCR year. Repeat that source and year next to the number. A journal-website or catalog figure stays off the ad.
-- State an article-download or full-text-view count only when that count is in the metrics section. It is a count, not a date. Do not invent a download date.
+- State an article-download or full-text-view count only when that count is in the metrics section. It is a count. State a download date, data-retrieved date, or usage year only when a labelled feature gives that date and its source. Do not invent a date. clarivate_wos_journals_api retrievedAt is a retrieval date, not a download date.
 
 ## 2. Google Responsive Search Ads (RSA) Best Practices
 - Generate EXACTLY 15 diverse headlines (Google Best Practice for maximum Ad Strength):
