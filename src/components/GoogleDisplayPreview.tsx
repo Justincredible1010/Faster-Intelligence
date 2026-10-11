@@ -552,20 +552,20 @@ export const GoogleDisplayPreview: React.FC<Props> = ({
         <div className="flex items-center justify-between">
           <span className="font-bold text-blue-900 flex items-center gap-1.5 uppercase tracking-wider">
             <Info className="w-4 h-4 text-blue-600" />
-            <span>Google Display Ads (RDA) Image Requirements &amp; Marketer Guidelines</span>
+            <span>What a banner image needs</span>
           </span>
           <button
             type="button"
             onClick={() => setShowGuide(!showGuide)}
             className="text-xs text-blue-700 hover:text-blue-900 font-semibold flex items-center gap-1"
           >
-            <span>{showGuide ? 'Hide Specifications' : 'View Full Image Specifications'}</span>
+            <span>{showGuide ? 'Hide sizes' : 'Show image sizes'}</span>
             <ChevronRight className={`w-3.5 h-3.5 transition ${showGuide ? 'rotate-90' : ''}`} />
           </button>
         </div>
 
         <p className="text-slate-600 leading-relaxed text-[11px]">
-          To launch Google Responsive Display Ads (RDA), advertisers must provide high-quality visual assets. You can use visuals from the landing page, pick from the curated Adobe Express stock library below, or upload custom banner assets from your PPT guideline slides.
+          Display ads need a picture as well as the words. Use a picture from the journal page, pick one below, or upload your own.
         </p>
 
         {showGuide && (

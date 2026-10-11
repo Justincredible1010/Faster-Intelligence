@@ -45,7 +45,7 @@ export const StrategySummaryBanner: React.FC<Props> = ({ campaign, onOpenCompare
             }`}
           >
             {isAi ? <Bot className="w-3.5 h-3.5 text-purple-600" /> : <FileCheck className="w-3.5 h-3.5 text-emerald-600" />}
-            <span>{isAi ? 'AI-Grounded (Gemini 2.5)' : 'Curated Publishing Strategy Fallback'}</span>
+            <span>{isAi ? 'Drafted with AI' : 'Drafted from saved templates'}</span>
           </div>
 
           {onOpenCompareStages && (
@@ -66,7 +66,7 @@ export const StrategySummaryBanner: React.FC<Props> = ({ campaign, onOpenCompare
         {/* Cell 1: Author's Main Question / Mindset */}
         <div className="p-3.5 space-y-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-            Author's Question:
+            What the author is asking
           </span>
           <p className="text-slate-800 italic text-[11px] font-medium leading-snug">
             {cfg.authorMindset}
@@ -76,7 +76,7 @@ export const StrategySummaryBanner: React.FC<Props> = ({ campaign, onOpenCompare
         {/* Cell 2: Messaging Focus */}
         <div className="p-3.5 space-y-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-            Messaging Focus:
+            What the ads say
           </span>
           <p className="text-slate-700 text-[11px] leading-snug">
             {stage === 'AWA'
@@ -90,19 +90,19 @@ export const StrategySummaryBanner: React.FC<Props> = ({ campaign, onOpenCompare
         {/* Cell 3: Primary CTA */}
         <div className="p-3.5 space-y-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-            Primary Call-to-Action:
+            Button in the ad
           </span>
           <div className="font-bold text-slate-900 text-xs flex items-center gap-1.5 mt-0.5">
             <span className="w-2 h-2 rounded-full bg-blue-600 shrink-0" />
             <span>"{campaign.primaryCta || cfg.primaryCta}"</span>
           </div>
-          <span className="text-[10px] text-slate-400 block">Aligned with author readiness</span>
+          <span className="text-[10px] text-slate-400 block">Matches the stage you chose</span>
         </div>
 
         {/* Cell 4: Recommended Destination */}
         <div className="p-3.5 space-y-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-            Recommended Destination:
+            Page the ad opens
           </span>
           <a
             href={campaign.recommendedDestination?.url || '#'}

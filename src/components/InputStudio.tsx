@@ -36,26 +36,20 @@ import {
 import { JOURNAL_CATALOG } from '../data/journalCatalog';
 import { pickEditableJournalFacts } from '../utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from '../utils/journalUrl';
+import {
+  factCacheLine,
+  factSourceCopy,
+  factSourceKind,
+  fiveYearPanel,
+  impactPanel,
+  otherFactCaption,
+  plainSourceLabel,
+  shownFigure,
+} from '../utils/factSourceLabel';
 import { metricFieldIsTrusted } from '../utils/metricClaims';
 import { editedStageUrlToApply, suggestStageUrl } from '../utils/stageUrlSuggestion';
 import type { StageUrlRules } from '../utils/stageUrlRules';
 import { formatUsageCount } from '../utils/usageCounts';
-
-function metricSourceLabel(source: string | undefined, field?: string, year?: number): string {
-  if (
-    (field === 'impactFactor' || field === 'fiveYearImpactFactor') &&
-    (source === 'page_sourced' || source === 'landing_page')
-  ) {
-    return 'from journal website';
-  }
-  if (source === 'page_sourced' || source === 'landing_page') return 'Page-sourced';
-  if (source === 'catalog_snapshot') return 'Catalog snapshot';
-  if (source === 'user_provided') return 'User provided';
-  if (source === 'clarivate_wos_journals_api') {
-    return year != null ? `Clarivate JCR ${year}` : 'Clarivate Web of Science Journals API';
-  }
-  return '';
-}
 
 interface Props {
   landingPageUrl: string;
@@ -191,6 +185,18 @@ export const InputStudio: React.FC<Props> = ({
 
   const currentStageNormalized = normalizeStage(funnelStage);
   const stages: StageCode[] = ['AWA', 'CON', 'DEC'];
+  const sourceKind = factSourceKind(clarivateFacts);
+  const sourceCopy = factSourceCopy(sourceKind);
+  const impactCopy = impactPanel(clarivateFacts);
+  const fiveYearCopy = fiveYearPanel(clarivateFacts);
+  const noChannelSelected = !selectedChannels.search && !selectedChannels.display;
+  const channelSummary = selectedChannels.search && selectedChannels.display
+    ? 'Search ads and display ads'
+    : selectedChannels.search
+      ? 'Search ads only'
+      : selectedChannels.display
+        ? 'Display ads only'
+        : 'No channel selected';
   const stageUrlSuggestion = suggestStageUrl(landingPageUrl, currentStageNormalized, clarivateFacts, stageUrlRules);
   const suggestedStageUrl = stageUrlSuggestion?.url || '';
 
@@ -219,14 +225,14 @@ export const InputStudio: React.FC<Props> = ({
       {/* ─────────────────────────────────────────────────────────────
           STEP 1: JOURNAL & SOURCE-VERIFIED FACTS
          ───────────────────────────────────────────────────────────── */}
-      <section className="space-y-4">
+      <section id="campaign-studio" className="space-y-4 scroll-mt-20">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="w-6 h-6 rounded-full bg-[#002d62] text-white flex items-center justify-center text-xs font-bold">
               1
             </span>
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800">
-              Journal facts
+              Journal page
             </h2>
           </div>
 
@@ -238,7 +244,7 @@ export const InputStudio: React.FC<Props> = ({
                 className="flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg text-slate-700 font-semibold shadow-2xs transition"
               >
                 <PlusCircle className="w-3.5 h-3.5 text-blue-600" />
-                <span>Add / Edit Journal</span>
+                <span>Type the figures</span>
               </button>
             )}
 
@@ -253,22 +259,27 @@ export const InputStudio: React.FC<Props> = ({
                 }`}
               >
                 <Sliders className="w-3.5 h-3.5 text-indigo-600" />
-                <span>Playbook &amp; Skills</span>
+                <span>Writing rules</span>
                 {hasCustomPlaybook && <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 ml-0.5" />}
               </button>
             )}
           </div>
         </div>
 
-        {/* Input bar */}
+        <p className="text-xs text-slate-500 -mt-1">
+          Paste the journal page the ads should use. Nothing is filled in until you do.
+        </p>
+
         <div className="flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1">
             <LinkIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
+              id="journal-url"
               type="text"
               value={landingPageUrl}
               onChange={(e) => onChangeUrl(e.target.value)}
-              placeholder="Paste Springer Nature or Nature Portfolio journal URL..."
+              aria-label="Journal page"
+              placeholder="Paste a journal page, such as https://www.nature.com/ncomms"
               className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition"
             />
           </div>
@@ -283,12 +294,12 @@ export const InputStudio: React.FC<Props> = ({
               {isFetchingFacts ? (
                 <>
                   <div className="w-3.5 h-3.5 border-2 border-slate-400 border-t-slate-800 rounded-full animate-spin" />
-                  <span>Checking Facts...</span>
+                  <span>Looking up…</span>
                 </>
               ) : (
                 <>
                   <Search className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Fetch Metrics</span>
+                  <span>Look up this page</span>
                 </>
               )}
             </button>
@@ -297,17 +308,16 @@ export const InputStudio: React.FC<Props> = ({
               type="button"
               onClick={() => onFetchFacts(landingPageUrl, true)}
               disabled={isFetchingFacts || !landingPageUrl.trim()}
-              title="Force fresh lookup and bypass cache"
-              className="p-2.5 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-300 rounded-xl shadow-2xs transition"
+              className="px-3 py-2.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold shadow-2xs transition flex items-center gap-1.5 disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isFetchingFacts ? 'animate-spin' : ''}`} />
+              <span>Look up again</span>
             </button>
           </div>
         </div>
 
-        {/* Quick select journals */}
         <div className="flex flex-wrap items-center gap-1.5 pt-1 text-xs">
-          <span className="text-slate-400 font-medium text-[11px]">Popular Journals:</span>
+          <span className="text-slate-400 font-medium text-[11px]">Or choose a journal:</span>
           {POPULAR_JOURNALS.map((j) => (
             <button
               key={j.url}
@@ -325,16 +335,22 @@ export const InputStudio: React.FC<Props> = ({
           ))}
         </div>
 
+        <div id="journal-facts" className="scroll-mt-20 space-y-3">
+          {!clarivateFacts && (
+            <p className="text-xs text-slate-500 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3">
+              Journal figures show up here after you look up a page.
+            </p>
+          )}
         {/* BLOCKING ALERT: MISSING METRICS DETECTED */}
         {isMissingMetrics && clarivateFacts && (
           <div className="p-4 rounded-xl bg-amber-50/80 border border-amber-300 text-amber-950 space-y-3 text-xs">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 font-bold text-amber-900">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                <span>Journal Metrics Incomplete — Action Required</span>
+                <span>These figures are missing</span>
               </div>
               <span className="bg-amber-200 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded">
-                Generation Blocked
+                Ads are paused
               </span>
             </div>
 
@@ -366,14 +382,14 @@ export const InputStudio: React.FC<Props> = ({
                 className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition flex items-center gap-1.5 shadow-xs"
               >
                 <PlusCircle className="w-3.5 h-3.5" />
-                <span>Supply Metrics Manually</span>
+                <span>Enter the figures</span>
               </button>
               <button
                 type="button"
                 onClick={() => setIsEditingMetrics(true)}
                 className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg font-medium transition"
               >
-                Inline Edit
+                Edit on this page
               </button>
             </div>
           </div>
@@ -388,7 +404,7 @@ export const InputStudio: React.FC<Props> = ({
                   {(clarivateFacts.journalName || 'J').slice(0, 2)}
                 </div>
                 <div>
-                  <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <div className="font-bold text-slate-900 text-sm flex flex-wrap items-center gap-2">
                     <span>{clarivateFacts.journalName}</span>
                     <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
                       {clarivateFacts.publisher}
@@ -396,26 +412,17 @@ export const InputStudio: React.FC<Props> = ({
                     {/* Provenance Badge */}
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        clarivateFacts.provenanceSource === 'clarivate_wos_journals_api'
+                        sourceKind === 'clarivate'
                           ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : clarivateFacts.verificationStatus === 'user_provided' ||
-                            clarivateFacts.verificationStatus === 'page_sourced'
+                          : sourceKind === 'website' || sourceKind === 'entered'
                           ? 'bg-blue-100 text-blue-800 border border-blue-300'
                           : 'bg-amber-100 text-amber-800 border border-amber-300'
                       }`}
                     >
-                      {clarivateFacts.provenanceSource === 'clarivate_wos_journals_api'
-                        ? `WOS Journals API${clarivateFacts.jcrYear ? ` JCR ${clarivateFacts.jcrYear}` : ''}`
-                        : clarivateFacts.verificationStatus === 'user_provided'
-                        ? 'User provided'
-                        : clarivateFacts.verificationStatus === 'page_sourced'
-                        ? 'Page sourced'
-                        : clarivateFacts.verificationStatus === 'catalog_snapshot'
-                        ? 'Catalog snapshot'
-                        : 'Metrics missing'}
+                      {sourceCopy.badge}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-500">{clarivateFacts.sourceAttribution}</p>
+                  <p className="text-[11px] text-slate-600 leading-relaxed mt-1">{sourceCopy.detail}</p>
                 </div>
               </div>
 
@@ -425,7 +432,7 @@ export const InputStudio: React.FC<Props> = ({
                   onClick={() => setShowAdvancedMetrics(!showAdvancedMetrics)}
                   className="text-xs text-slate-600 hover:text-slate-900 font-medium flex items-center gap-1"
                 >
-                  <span>{showAdvancedMetrics ? 'Hide Details' : 'View Scope & Details'}</span>
+                  <span>{showAdvancedMetrics ? 'Hide scope' : 'Show scope'}</span>
                   {showAdvancedMetrics ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                 </button>
                 <button
@@ -437,7 +444,7 @@ export const InputStudio: React.FC<Props> = ({
                   className="text-xs text-blue-700 hover:text-blue-900 font-semibold flex items-center gap-1"
                 >
                   <Edit3 className="w-3.5 h-3.5" />
-                  <span>{isEditingMetrics ? 'Cancel Edit' : 'Edit Facts'}</span>
+                  <span>{isEditingMetrics ? 'Cancel' : 'Edit figures'}</span>
                 </button>
               </div>
             </div>
@@ -446,76 +453,60 @@ export const InputStudio: React.FC<Props> = ({
             {!isEditingMetrics ? (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">Impact Factor</span>
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">Impact factor</span>
                   <div className="text-base font-extrabold text-slate-900 flex items-center gap-1.5">
-                    <span>{clarivateFacts.impactFactor ?? 'N/A'}</span>
-                    {clarivateFacts.jcrQuartile && metricFieldIsTrusted(clarivateFacts, 'jcrQuartile') && (
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                    <span>{impactCopy.valueText}</span>
+                    {clarivateFacts.jcrQuartile && (
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                        impactCopy.fromClarivate && metricFieldIsTrusted(clarivateFacts, 'jcrQuartile')
+                          ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                          : 'text-slate-600 bg-slate-100 border-slate-200'
+                      }`}>
                         {clarivateFacts.jcrQuartile}
                       </span>
                     )}
                   </div>
                   <span className="text-[10px] text-slate-400 block">
-                    5-Yr: {clarivateFacts.fiveYearImpactFactor ?? 'N/A'}
-                    {metricSourceLabel(
-                      clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source,
-                      'fiveYearImpactFactor',
-                      clarivateFacts.provenanceMap?.fiveYearImpactFactor?.year
-                    )
-                      ? ` · ${metricSourceLabel(
-                          clarivateFacts.provenanceMap?.fiveYearImpactFactor?.source,
-                          'fiveYearImpactFactor',
-                          clarivateFacts.provenanceMap?.fiveYearImpactFactor?.year
-                        )}`
-                      : ''}
+                    5-year: {fiveYearCopy.valueText}
                   </span>
-                  {metricSourceLabel(
-                    clarivateFacts.provenanceMap?.impactFactor?.source,
-                    'impactFactor',
-                    clarivateFacts.provenanceMap?.impactFactor?.year ?? clarivateFacts.jcrYear
-                  ) && (
-                    <span className="text-[10px] text-slate-500 block">
-                      {metricSourceLabel(
-                        clarivateFacts.provenanceMap?.impactFactor?.source,
-                        'impactFactor',
-                        clarivateFacts.provenanceMap?.impactFactor?.year ?? clarivateFacts.jcrYear
-                      )}
-                    </span>
+                  {fiveYearCopy.fromClarivate && (
+                    <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{fiveYearCopy.caption}</span>
                   )}
+                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{impactCopy.caption}</span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">CAS Zone (中科院)</span>
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">CAS zone (中科院)</span>
                   <span className="text-xs font-bold text-slate-900 line-clamp-1">
-                    {clarivateFacts.casZone || 'Not stated'}
+                    {clarivateFacts.casZone || (sourceKind === 'sample' ? 'Not in this sample' : 'Not stated')}
                   </span>
-                  <span className="text-[10px] text-slate-400">
-                    {metricSourceLabel(clarivateFacts.provenanceMap?.casZone?.source) ||
-                      (clarivateFacts.casZone && clarivateFacts.verificationStatus === 'page_sourced'
-                        ? 'Catalog snapshot'
-                        : 'Chinese Academy of Sciences')}
-                  </span>
+                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{otherFactCaption(clarivateFacts, 'casZone')}</span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">1st Decision Time</span>
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">First decision</span>
                   <span className="text-sm font-bold text-slate-900">
-                    {clarivateFacts.firstDecisionDays ? `${clarivateFacts.firstDecisionDays} Days` : 'N/A'}
+                    {typeof clarivateFacts.firstDecisionDays === 'number'
+                      ? `${clarivateFacts.firstDecisionDays} days`
+                      : shownFigure(clarivateFacts.firstDecisionDays, sourceKind)}
                   </span>
-                  <span className="text-[10px] text-slate-500 block">
-                    {metricSourceLabel(clarivateFacts.provenanceMap?.firstDecisionDays?.source) || 'Initial editorial review'}
-                  </span>
+                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{otherFactCaption(clarivateFacts, 'firstDecisionDays')}</span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">Publishing Model &amp; APC</span>
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">Publishing fee</span>
                   <span className="text-xs font-bold text-slate-900 line-clamp-1">
                     {clarivateFacts.openAccessType || 'Not stated'}
                   </span>
-                  <span className="text-[10px] text-slate-500 font-medium">
-                    {clarivateFacts.apcUsd
-                      ? `APC: $${clarivateFacts.apcUsd}${metricSourceLabel(clarivateFacts.provenanceMap?.apcUsd?.source) ? ` · ${metricSourceLabel(clarivateFacts.provenanceMap?.apcUsd?.source)}` : ''}`
-                      : 'APC not stated'}
+                  <span className="text-[10px] text-slate-500 font-medium block">
+                    {typeof clarivateFacts.apcUsd === 'number'
+                      ? `Fee: $${clarivateFacts.apcUsd}`
+                      : sourceKind === 'sample' ? 'Fee not in this sample' : 'Fee not stated'}
+                  </span>
+                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">
+                    {typeof clarivateFacts.apcUsd === 'number'
+                      ? otherFactCaption(clarivateFacts, 'apcUsd')
+                      : otherFactCaption(clarivateFacts, 'openAccessType')}
                   </span>
                 </div>
               </div>
@@ -533,10 +524,10 @@ export const InputStudio: React.FC<Props> = ({
                     : ''}
                 </span>
                 <span className="text-[10px] text-slate-500 block">
-                  {metricSourceLabel(
+                  {plainSourceLabel(
                     clarivateFacts.provenanceMap?.articleDownloads?.source ||
                       clarivateFacts.provenanceMap?.fullTextViews?.source
-                  ) || 'Page-sourced'}
+                  ) || 'From the journal website'}
                 </span>
               </div>
             ) : null}
@@ -547,7 +538,7 @@ export const InputStudio: React.FC<Props> = ({
                     <span className="text-[10px] text-slate-400 font-semibold uppercase">{feature.label}</span>
                     <span className="text-xs font-semibold text-slate-900 block">{feature.text}</span>
                     <span className="text-[10px] text-slate-500">
-                      {feature.provenance === 'clarivate_wos_journals_api' ? 'clarivate_wos_journals_api' : 'Page-sourced'}
+                      {feature.provenance === 'clarivate_wos_journals_api' ? 'From Clarivate' : 'From the journal website'}
                     </span>
                   </li>
                 ))}
@@ -556,7 +547,7 @@ export const InputStudio: React.FC<Props> = ({
             {isEditingMetrics ? (
               /* Inline Editable Form */
               <div className="space-y-3 bg-white p-3 rounded-lg border border-blue-200">
-                <span className="font-bold text-xs text-slate-800 block">Override or Verify Journal Metrics:</span>
+                <span className="font-bold text-xs text-slate-800 block">Edit the figures on this page</span>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <div>
                     <label className="text-[10px] text-slate-500 font-semibold block">Journal Name</label>
@@ -645,40 +636,18 @@ export const InputStudio: React.FC<Props> = ({
                     className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded flex items-center gap-1"
                   >
                     <Check className="w-3.5 h-3.5" />
-                    <span>Apply Override</span>
+                    <span>Save these figures</span>
                   </button>
                 </div>
               </div>
             ) : null}
 
             {/* Cache indicator */}
-            <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-200/60">
+            <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/60">
               <div className="flex items-center gap-1.5">
                 <Clock className="w-3 h-3 text-slate-400" />
-                <span>
-                  {clarivateFacts.verificationStatus === 'user_provided'
-                    ? 'Manually entered (unverified)'
-                    : clarivateFacts.provenanceSource === 'clarivate_wos_journals_api'
-                    ? 'Includes Web of Science Journals API values'
-                    : clarivateFacts.verificationStatus === 'page_sourced'
-                    ? 'Read from the journal page'
-                    : clarivateFacts.verificationStatus === 'catalog_snapshot'
-                    ? 'Catalog snapshot'
-                    : clarivateFacts.isFromCache
-                    ? 'Cached record (refreshed automatically)'
-                    : 'Record loaded'}
-                </span>
-                {clarivateFacts.reportingYear && (
-                  <span>· {clarivateFacts.reportingYear}</span>
-                )}
+                <span>{factCacheLine(clarivateFacts)}</span>
               </div>
-              <button
-                type="button"
-                onClick={() => onFetchFacts(landingPageUrl, true)}
-                className="text-blue-700 hover:underline font-medium"
-              >
-                Force refresh metrics
-              </button>
             </div>
 
             {/* Progressive Disclosure: Scope & Indexing details */}
@@ -690,8 +659,8 @@ export const InputStudio: React.FC<Props> = ({
                 <div className="flex flex-wrap items-center gap-4 text-slate-500">
                   <span>
                     Indexing: <strong>{clarivateFacts.indexing?.length ? clarivateFacts.indexing.join(', ') : 'Not stated'}</strong>
-                    {metricSourceLabel(clarivateFacts.provenanceMap?.indexing?.source)
-                      ? ` (${metricSourceLabel(clarivateFacts.provenanceMap?.indexing?.source)})`
+                    {plainSourceLabel(clarivateFacts.provenanceMap?.indexing?.source)
+                      ? ` (${plainSourceLabel(clarivateFacts.provenanceMap?.indexing?.source)})`
                       : ''}
                   </span>
                   <span>
@@ -705,19 +674,20 @@ export const InputStudio: React.FC<Props> = ({
             )}
           </div>
         )}
+        </div>
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
           STEP 2: AUDIENCE STAGE, CHANNELS & LANGUAGE
          ───────────────────────────────────────────────────────────── */}
-      <section className="space-y-4 pt-2 border-t border-slate-200">
+      <section id="stage-and-url" className="space-y-4 pt-2 border-t border-slate-200 scroll-mt-20">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="w-6 h-6 rounded-full bg-[#002d62] text-white flex items-center justify-center text-xs font-bold">
               2
             </span>
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800">
-              Audience Stage &amp; Channels
+              Stage and channels
             </h2>
           </div>
 
@@ -728,13 +698,13 @@ export const InputStudio: React.FC<Props> = ({
               className="text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-xl border border-blue-200 transition flex items-center gap-1.5 self-start sm:self-auto"
             >
               <Compass className="w-3.5 h-3.5 text-blue-600" />
-              <span>Compare All 3 Stages Side-by-Side</span>
+              <span>Compare the three stages</span>
             </button>
           )}
         </div>
 
         <p className="text-xs text-slate-500">
-          Choose what the author needs next. This changes the messaging focus, primary CTA, keyword intent, and recommended destination.
+          Choose the stage the author is in. This changes the message, the button in the ad, and the page the ad opens. Choosing a stage does not write the ads until you generate them.
         </p>
 
         {/* Rich Selectable Cards for AWA, CON, DEC */}
@@ -748,21 +718,20 @@ export const InputStudio: React.FC<Props> = ({
                 key={st}
                 type="button"
                 onClick={() => onChangeFunnel(st)}
-                className={`p-4 rounded-xl border text-left transition flex flex-col justify-between gap-3 ${
+                className={`p-4 rounded-xl border text-left transition flex flex-col justify-between gap-2 ${
                   isSelected
                     ? 'bg-blue-50/70 border-blue-600 ring-2 ring-blue-500/20 shadow-xs'
                     : 'bg-slate-50/60 border-slate-200 text-slate-700 hover:bg-slate-100/80 hover:border-slate-300'
                 }`}
               >
                 <div className="space-y-2">
-                  {/* Stage Name & Tag */}
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <span
-                      className={`text-xs font-bold ${
-                        isSelected ? 'text-blue-950 font-extrabold' : 'text-slate-800'
+                      className={`text-sm font-bold ${
+                        isSelected ? 'text-blue-950' : 'text-slate-800'
                       }`}
                     >
-                      {cfg.name}
+                      {cfg.shortLabel}
                     </span>
                     <span
                       className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
@@ -771,36 +740,17 @@ export const InputStudio: React.FC<Props> = ({
                           : 'bg-slate-200 text-slate-600'
                       }`}
                     >
-                      {cfg.shortLabel}
+                      {isSelected ? 'Chosen' : 'Choose'}
                     </span>
                   </div>
 
-                  {/* Author Mindset */}
                   <div className="text-[11px] text-slate-600 italic bg-white p-2 rounded-lg border border-slate-200/80 leading-relaxed">
                     {cfg.authorMindset}
                   </div>
-
-                  {/* Campaign Objective */}
-                  <div className="text-[11px] text-slate-700 leading-snug">
-                    <span className="font-semibold text-slate-900 block text-[10px] uppercase text-slate-400">
-                      Objective:
-                    </span>
-                    {cfg.campaignObjective}
-                  </div>
                 </div>
 
-                {/* Example CTA & Destination */}
-                <div className="pt-2 border-t border-slate-200/70 flex items-center justify-between text-[11px]">
-                  <span className="text-slate-500">
-                    CTA: <strong className="text-slate-800">"{cfg.exampleCtas[0]}"</strong>
-                  </span>
-                  <span
-                    className={`font-semibold text-[10px] ${
-                      isSelected ? 'text-blue-700' : 'text-slate-400'
-                    }`}
-                  >
-                    {isSelected ? '✓ Selected' : 'Select'}
-                  </span>
+                <div className="pt-2 border-t border-slate-200/70 text-[11px] text-slate-500">
+                  Button in the ad: <strong className="text-slate-800">"{cfg.exampleCtas[0]}"</strong>
                 </div>
               </button>
             );
@@ -861,7 +811,7 @@ export const InputStudio: React.FC<Props> = ({
           {/* Ad Channels */}
           <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 block">
-              Google Ad Networks:
+              Where the ads run
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -880,7 +830,10 @@ export const InputStudio: React.FC<Props> = ({
                 ) : (
                   <Square className="w-4 h-4 text-slate-400 shrink-0" />
                 )}
-                <span>Search (15H / 4D)</span>
+                <span className="text-left leading-tight">
+                  <span className="block">Search ads</span>
+                  <span className="block text-[10px] font-normal text-slate-500">15 headlines, 4 descriptions</span>
+                </span>
               </button>
 
               <button
@@ -899,7 +852,10 @@ export const InputStudio: React.FC<Props> = ({
                 ) : (
                   <Square className="w-4 h-4 text-slate-400 shrink-0" />
                 )}
-                <span>Display (RDA Banners)</span>
+                <span className="text-left leading-tight">
+                  <span className="block">Display ads</span>
+                  <span className="block text-[10px] font-normal text-slate-500">Banners on other sites</span>
+                </span>
               </button>
             </div>
           </div>
@@ -907,13 +863,13 @@ export const InputStudio: React.FC<Props> = ({
           {/* Output Language Selector */}
           <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 block">
-              Campaign Language Focus:
+              Language
             </span>
             <div className="flex items-center gap-1.5">
               {[
-                { id: 'all', label: 'Bilingual (EN + ZH)' },
-                { id: 'EN', label: 'English Only' },
-                { id: 'ZH', label: 'Chinese (中文)' },
+                { id: 'all', label: 'English and Chinese' },
+                { id: 'EN', label: 'English only' },
+                { id: 'ZH', label: 'Chinese only' },
               ].map((lang) => (
                 <button
                   key={lang.id}
@@ -941,39 +897,43 @@ export const InputStudio: React.FC<Props> = ({
           <span className="w-6 h-6 rounded-full bg-[#002d62] text-white flex items-center justify-center text-xs font-bold">
             3
           </span>
-          <span className="text-xs text-slate-600">
-            Generating for <strong>{STAGE_CONFIGS[currentStageNormalized].name}</strong> ·{' '}
-            {selectedChannels.search && selectedChannels.display
-              ? 'Search & Display'
-              : selectedChannels.search
-              ? 'Search Only'
-              : 'Display Only'}
-            {' · Weibo post and WeChat ad'}
-          </span>
+          <div>
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-800 block">Write the ads</span>
+            <span className="text-xs text-slate-600">
+              {STAGE_CONFIGS[currentStageNormalized].shortLabel} · {channelSummary}
+              {' · Weibo post and WeChat ad'}
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {!landingPageUrl.trim() && (
+            <span className="text-xs text-slate-500">Paste a journal page first.</span>
+          )}
+          {noChannelSelected && landingPageUrl.trim() && (
+            <span className="text-xs font-medium text-amber-700">Choose search ads, display ads, or both.</span>
+          )}
           {isMissingMetrics && (
             <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
-              Please complete journal metrics to continue.
+              Enter the journal figures before generating.
             </span>
           )}
 
           <button
             type="button"
             onClick={onGenerate}
-            disabled={isLoading || !landingPageUrl.trim() || isMissingMetrics}
+            disabled={isLoading || !landingPageUrl.trim() || isMissingMetrics || noChannelSelected}
             className="w-full sm:w-auto px-6 py-2.5 bg-[#002d62] hover:bg-[#00224a] text-white text-xs font-bold rounded-xl shadow transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoading ? (
               <>
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                <span>Generating Campaign Copy...</span>
+                <span>Writing the ads…</span>
               </>
             ) : (
               <>
                 <Sparkles className="w-4 h-4 text-sky-300" />
-                <span>Generate {STAGE_CONFIGS[currentStageNormalized].shortLabel} Campaign</span>
+                <span>Generate campaign</span>
               </>
             )}
           </button>

@@ -25,7 +25,29 @@ export const ValidationReportModal: React.FC<Props> = ({
   report,
   onAutoFix,
 }) => {
-  if (!isOpen || !report) return null;
+  if (!isOpen) return null;
+
+  if (!report) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+        <div className="bg-white rounded-2xl max-w-md w-full border border-slate-200 shadow-2xl p-5 space-y-3">
+          <h3 className="text-base font-bold text-slate-900">Ad policy check</h3>
+          <p className="text-sm text-slate-600 leading-relaxed">
+            Generate a campaign first. This check runs on the ads you wrote. A China advertising-law note stays a warning and does not change the copy.
+          </p>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const isClean = report.status === 'clean';
   const hasErrors = report.errorsCount > 0;
@@ -56,10 +78,10 @@ export const ValidationReportModal: React.FC<Props> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900">
-                Google Ads Policy &amp; Academic Integrity Audit
+                Ad policy check
               </h3>
               <p className="text-xs text-slate-500">
-                Pre-flight validation for trademark usage, superlatives, and claim veracity. China Advertising Law notices do not change copy.
+                Flags competitor names, claims that cannot be checked, and lines that are too long. A China advertising-law note stays a warning and does not change the copy.
               </p>
             </div>
           </div>
@@ -85,14 +107,14 @@ export const ValidationReportModal: React.FC<Props> = ({
           >
             <div>
               <div className="font-bold text-sm flex items-center gap-2">
-                {isClean && 'All Google Ads Policies Passed'}
-                {hasErrors && `${report.errorsCount} Policy Violation(s) Found`}
-                {!hasErrors && hasWarnings && `${report.warningsCount} Policy Advisory Warning(s)`}
+                {isClean && 'No problems found'}
+                {hasErrors && `${report.errorsCount} problem${report.errorsCount === 1 ? '' : 's'} to fix`}
+                {!hasErrors && hasWarnings && `${report.warningsCount} warning${report.warningsCount === 1 ? '' : 's'} to review`}
               </div>
               <p className="text-xs opacity-80 mt-0.5">
-                {isClean && 'Zero competitor trademarks, unverifiable superlatives, or misleading claims detected.'}
-                {hasErrors && 'Action required: Prohibited claims or character limits must be resolved before publishing.'}
-                {!hasErrors && hasWarnings && 'Advisory: Review competitor keywords and funding claim specifics before launch.'}
+                {isClean && 'No competitor names, unchecked claims, or lines that are too long.'}
+                {hasErrors && 'Fix the problems below before you export the ads.'}
+                {!hasErrors && hasWarnings && 'Read the warnings before you export. They are not rewritten for you.'}
               </p>
             </div>
 
@@ -102,7 +124,7 @@ export const ValidationReportModal: React.FC<Props> = ({
                 className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-xs transition flex items-center gap-1.5 shrink-0"
               >
                 <Wand2 className="w-3.5 h-3.5" />
-                <span>Auto-Fix All</span>
+                <span>Apply the suggested wording</span>
               </button>
             )}
           </div>
@@ -111,9 +133,9 @@ export const ValidationReportModal: React.FC<Props> = ({
           {report.issues.length === 0 ? (
             <div className="py-8 text-center space-y-2">
               <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
-              <div className="text-sm font-bold text-slate-800">Clean Campaign Compliance</div>
+              <div className="text-sm font-bold text-slate-800">These ads look clear to export</div>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                Headlines, descriptions, and keywords adhere to Google Ads character widths, scholarly honesty, and trademark rules.
+                The lines fit Google’s length limits, and the check did not find a competitor name or a claim that cannot be checked.
               </p>
             </div>
           ) : (
@@ -154,7 +176,7 @@ export const ValidationReportModal: React.FC<Props> = ({
                     <span className="text-rose-700 font-medium">{issue.targetText}</span>
                   </div>
 
-                  {issue.suggestedFix && (
+                  {issue.suggestedFix && issue.category !== 'china_ad_law' && (
                     <div className="flex items-center justify-between text-[11px] pt-1">
                       <div className="text-emerald-700 flex items-center gap-1">
                         <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
@@ -180,7 +202,7 @@ export const ValidationReportModal: React.FC<Props> = ({
                 className="px-3.5 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5"
               >
                 <Wand2 className="w-3.5 h-3.5" />
-                <span>Apply Auto-Fix</span>
+                <span>Apply the suggested wording</span>
               </button>
             )}
             <button

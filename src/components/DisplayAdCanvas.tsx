@@ -92,7 +92,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
         <div>
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
             <Layout className="w-4 h-4 text-blue-600" />
-            <span>Responsive Display Ad (RDA) Standard IAB Unit Suite</span>
+            <span>Banner sizes</span>
           </h3>
           <p className="text-[11px] text-slate-500">
             Real-time layout simulation across desktop leaderboards, mobile units, rectangles &amp; native cards
@@ -105,7 +105,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
             onChange={(e) => setSelectedFormat(e.target.value)}
             className="px-3 py-1.5 text-xs font-medium bg-white border border-slate-300 rounded-lg shadow-2xs focus:outline-none"
           >
-            <option value="all">View All IAB Sizes (6 Units)</option>
+            <option value="all">All banner sizes</option>
             <option value="300x250">Medium Rectangle (300×250)</option>
             <option value="728x90">Leaderboard (728×90)</option>
             <option value="300x600">Half Page (300×600)</option>
@@ -120,7 +120,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-lg shadow-2xs transition"
           >
             {copiedBrief ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>Copy Creative Brief</span>
+            <span>Copy the design note</span>
           </button>
         </div>
       </div>
@@ -154,7 +154,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
                   <span>Medium Rectangle (300 × 250)</span>
-                  <span>IAB Standard</span>
+                  <span>Common banner sizes</span>
                 </div>
                 <div className="w-[300px] h-[250px] mx-auto bg-slate-900 text-white rounded-lg p-4 flex flex-col justify-between border border-slate-700 shadow-md relative overflow-hidden">
                   {/* Top Header */}
@@ -377,7 +377,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
               <div className="lg:col-span-4 space-y-2">
                 <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
                   <span>Half Page (300 × 600)</span>
-                  <span>High Impact IAB</span>
+                  <span>Tall and wide banners</span>
                 </div>
                 <div className="w-[300px] h-[480px] mx-auto bg-slate-950 text-white rounded-xl p-5 flex flex-col justify-between border border-slate-800 shadow-lg relative overflow-hidden">
                   <div className="space-y-3">
@@ -476,7 +476,7 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
         <div className="flex items-center justify-between font-bold text-slate-800">
           <div className="flex items-center gap-1.5">
             <Sparkles className="w-4 h-4 text-indigo-600" />
-            <span>Creative Design Concept Brief for Production Team</span>
+            <span>Note for the person making the pictures</span>
           </div>
           <span className="text-[11px] font-mono text-slate-500">Targeting Academic Researchers</span>
         </div>

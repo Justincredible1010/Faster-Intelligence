@@ -99,13 +99,13 @@ export const StageComparisonModal: React.FC<Props> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <span>Side-by-Side Funnel Stage Comparison</span>
+                <span>Compare the three stages</span>
                 <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-200">
                   {clarivateFacts?.journalName || 'Target Journal'}
                 </span>
               </h2>
               <p className="text-xs text-slate-500">
-                Review how author mindsets, messaging priorities, CTAs, and recommended destinations adapt across AWA, CON, and DEC
+                The message, the button, and the page the ad opens change with the stage. Choosing a stage here does not write the ads until you generate them.
               </p>
             </div>
           </div>
@@ -146,7 +146,7 @@ export const StageComparisonModal: React.FC<Props> = ({
                           <span className="text-sm font-bold">{cfg.name}</span>
                           {isCurrent && (
                             <span className="text-[10px] font-extrabold px-2 py-0.5 rounded bg-blue-700 text-white">
-                              ACTIVE
+                              Chosen
                             </span>
                           )}
                         </div>
@@ -164,7 +164,7 @@ export const StageComparisonModal: React.FC<Props> = ({
                             : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-300'
                         }`}
                       >
-                        {isCurrent ? 'Selected' : 'Use Stage'}
+                        {isCurrent ? 'Chosen' : 'Choose this stage'}
                       </button>
                     </div>
 
@@ -172,7 +172,7 @@ export const StageComparisonModal: React.FC<Props> = ({
                       {/* Author Mindset */}
                       <div className="space-y-1">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                          Author Mindset:
+                          What the author is asking
                         </span>
                         <blockquote className="p-2.5 bg-slate-50 border-l-2 border-slate-300 rounded-r-lg text-slate-800 italic leading-relaxed text-[11px]">
                           {cfg.authorMindset}
@@ -182,7 +182,7 @@ export const StageComparisonModal: React.FC<Props> = ({
                       {/* Campaign Objective */}
                       <div className="space-y-1">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                          Campaign Objective:
+                          What the ads should do
                         </span>
                         <p className="text-slate-700 text-[11px] leading-relaxed">
                           {cfg.campaignObjective}
@@ -192,14 +192,14 @@ export const StageComparisonModal: React.FC<Props> = ({
                       {/* Primary CTA & Recommended Destination */}
                       <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
                         <div>
-                          <span className="text-[10px] font-bold uppercase text-slate-400 block">Primary Action / CTA:</span>
+                          <span className="text-[10px] font-bold uppercase text-slate-400 block">Button in the ad</span>
                           <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5 mt-0.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
                             <span>"{campaign?.primaryCta || cfg.primaryCta}"</span>
                           </span>
                         </div>
                         <div>
-                          <span className="text-[10px] font-bold uppercase text-slate-400 block">Recommended Destination:</span>
+                          <span className="text-[10px] font-bold uppercase text-slate-400 block">Page the ad opens</span>
                           <span className="text-[11px] font-medium text-blue-900 block truncate">
                             {cfg.recommendedDestination.label}
                           </span>
@@ -211,7 +211,7 @@ export const StageComparisonModal: React.FC<Props> = ({
                         <div className="space-y-1.5">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
                             <Search className="w-3 h-3 text-blue-600" />
-                            <span>Sample Google RSA Headlines (max 30 chars):</span>
+                            <span>Sample search headlines</span>
                           </span>
                           <div className="space-y-1">
                             {campaign.searchAds.headlines.slice(0, 3).map((h, i) => (
@@ -231,7 +231,7 @@ export const StageComparisonModal: React.FC<Props> = ({
                       {campaign?.searchAds?.descriptions && (
                         <div className="space-y-1">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                            Key Ad Description (max 90 chars):
+                            Sample description
                           </span>
                           <p className="p-2 bg-slate-50 border border-slate-200 rounded-md text-[11px] text-slate-700 leading-snug">
                             {campaign.searchAds.descriptions[0]?.text}
@@ -244,7 +244,7 @@ export const StageComparisonModal: React.FC<Props> = ({
                         <div className="space-y-1">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
                             <Layout className="w-3 h-3 text-blue-600" />
-                            <span>Google Display Ad Hook:</span>
+                            <span>Sample display headline</span>
                           </span>
                           <div className="p-2 bg-blue-50/50 border border-blue-100 rounded-md text-[11px] text-blue-950 font-medium">
                             <div>"{campaign.displayAds.shortHeadline}"</div>
@@ -269,11 +269,11 @@ export const StageComparisonModal: React.FC<Props> = ({
                         {isCurrent ? (
                           <>
                             <CheckCircle className="w-3.5 h-3.5 text-blue-600" />
-                            <span>Current Active Stage</span>
+                            <span>This stage is chosen</span>
                           </>
                         ) : (
                           <>
-                            <span>Select &amp; Apply {cfg.shortLabel} Stage</span>
+                            <span>Choose {cfg.shortLabel}</span>
                             <ArrowRight className="w-3.5 h-3.5" />
                           </>
                         )}
@@ -288,12 +288,12 @@ export const StageComparisonModal: React.FC<Props> = ({
 
         {/* Modal Footer */}
         <div className="sticky bottom-0 px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
-          <span>All 3 stages use the same journal record and change the message for the author's stage.</span>
+          <span>The three stages use the same journal figures. The message, the button, and the page the ad opens are different.</span>
           <button
             onClick={onClose}
             className="px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 rounded-lg transition"
           >
-            Close Comparison
+            Close
           </button>
         </div>
       </div>

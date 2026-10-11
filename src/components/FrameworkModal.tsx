@@ -32,10 +32,10 @@ export const FrameworkModal: React.FC<Props> = ({ isOpen, onClose }) => {
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900">
-                Academic Author Campaign Strategy Framework
+                How the three stages differ
               </h2>
               <p className="text-xs text-slate-500">
-                Funnel Differentiation, Source-Grounded Facts, and Author Decision-Making
+                Awareness, consideration, and decision use different messages. An impact factor in the ads comes only from Clarivate and includes the JCR year.
               </p>
             </div>
           </div>

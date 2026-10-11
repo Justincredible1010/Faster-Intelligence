@@ -12,6 +12,7 @@ import { loadMetricsCacheFromDisk } from '../src/utils/metricsCache';
 import { runComplianceAudit, autoFixComplianceIssues } from '../src/utils/complianceValidator';
 import { generateGoogleAdsEditorCsv, deriveDisplayUrl } from '../src/utils/csvExporter';
 import { GeneratedAdCampaign, ClarivateJournalMetrics } from '../src/types';
+import { factSourceCopy, factSourceKind, impactPanel, metricCaption, otherFactCaption } from '../src/utils/factSourceLabel';
 import { runLandingPageTests } from './landing-page';
 
 console.log('--- RUNNING ADENGINE UNIT TEST SUITE ---');
@@ -671,6 +672,87 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert(!/clarivate/i.test(snapshotCsv));
 
   console.log('✓ Test Suite 6 Passed: URLs stay canonical and untrusted figures stay out of copy.');
+}
+
+console.log('\n[Test Suite 7] Plain labels for where journal figures came from...');
+{
+  const sample = factSourceCopy(factSourceKind({ verificationStatus: 'catalog_snapshot', provenanceSource: 'catalog_snapshot' }));
+  assert.strictEqual(sample.badge, 'Sample figures');
+  assert.strictEqual(sample.usedInAds, false);
+  assert.strictEqual(sample.impactFactorIsClarivate, false);
+  assert.match(metricCaption('sample', 'impact'), /Not used in the ads/);
+  assert.match(metricCaption('sample', 'other'), /Left out of the ads/);
+
+  const clarivate = factSourceCopy(factSourceKind({
+    verificationStatus: 'clarivate_api',
+    provenanceSource: 'clarivate_wos_journals_api',
+  }));
+  assert.strictEqual(clarivate.badge, 'From Clarivate');
+  assert.strictEqual(clarivate.usedInAds, true);
+  assert.strictEqual(clarivate.impactFactorIsClarivate, true);
+  assert.match(clarivate.detail, /JIF 56\.1 \(Clarivate JCR 2025\)/);
+
+  const clarivatePanel = impactPanel({
+    verificationStatus: 'clarivate_api',
+    provenanceSource: 'clarivate_wos_journals_api',
+    impactFactor: 56.1,
+    jcrYear: 2025,
+    provenanceMap: {
+      impactFactor: { source: 'clarivate_wos_journals_api', confidence: 1, year: 2025 },
+    },
+  });
+  assert.strictEqual(clarivatePanel.valueText, 'JIF 56.1 (Clarivate JCR 2025)');
+  assert.strictEqual(clarivatePanel.fromClarivate, true);
+  assert.match(clarivatePanel.caption, /JCR year/);
+
+  const website = factSourceCopy(factSourceKind({ verificationStatus: 'page_sourced', provenanceSource: 'page_sourced' }));
+  assert.strictEqual(website.badge, 'From the journal website');
+  assert.strictEqual(website.usedInAds, true);
+  assert.strictEqual(website.impactFactorIsClarivate, false);
+  assert.match(website.detail, /not used in the ads/i);
+  assert.doesNotMatch(website.detail, /impact factor from the website can appear/i);
+  assert.match(metricCaption('website', 'impact'), /Not used in the ads/);
+  assert.doesNotMatch(metricCaption('website', 'impact'), /can appear|Can be used/i);
+  assert.match(metricCaption('website', 'other'), /journal website/);
+  assert.match(metricCaption('website', 'other'), /Can be used/);
+
+  const pagePanel = impactPanel({
+    verificationStatus: 'page_sourced',
+    provenanceSource: 'page_sourced',
+    impactFactor: 14.7,
+    provenanceMap: {
+      impactFactor: { source: 'page_sourced', confidence: 0.8 },
+    },
+  });
+  assert.strictEqual(pagePanel.valueText, '14.7');
+  assert.match(pagePanel.caption, /From the journal website/);
+  assert.match(pagePanel.caption, /Not used in the ads/);
+  assert.doesNotMatch(pagePanel.valueText, /Clarivate/);
+  assert.doesNotMatch(pagePanel.caption, /can appear|Can be used/i);
+
+  assert.match(otherFactCaption({
+    verificationStatus: 'page_sourced',
+    provenanceSource: 'page_sourced',
+    apcUsd: 4790,
+    provenanceMap: { apcUsd: { source: 'page_sourced', confidence: 0.8 } },
+  }, 'apcUsd'), /From the journal website/);
+  assert.match(otherFactCaption({
+    verificationStatus: 'page_sourced',
+    provenanceSource: 'page_sourced',
+    apcUsd: 4790,
+    provenanceMap: { apcUsd: { source: 'page_sourced', confidence: 0.8 } },
+  }, 'apcUsd'), /Can be used/);
+
+  const entered = factSourceCopy(factSourceKind({ verificationStatus: 'user_provided' }));
+  assert.strictEqual(entered.badge, 'You entered these');
+  assert.strictEqual(entered.impactFactorIsClarivate, false);
+  assert.match(metricCaption('entered', 'impact'), /Not used in the ads/);
+
+  const missing = factSourceCopy(factSourceKind({ verificationStatus: 'missing' }));
+  assert.strictEqual(missing.badge, 'Figures missing');
+  assert.strictEqual(missing.usedInAds, false);
+
+  console.log('✓ Test Suite 7 Passed: Sample, website, and Clarivate figures stay distinct.');
 }
 
 const landingPageKey = process.env.CLARIVATE_API_KEY;

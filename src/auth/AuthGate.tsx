@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { BookOpen, Mail } from 'lucide-react';
+import { AppSidebar } from '../components/AppSidebar';
 import {
   devLogin,
   loadSession,
@@ -142,7 +143,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     };
 
     return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center px-4 py-12">
+      <div className="min-h-screen bg-slate-100">
+        <AppSidebar mode="sign-in" activeId="sign-in" onSelect={() => undefined} />
+        <div className="lg:pl-64 min-h-screen flex items-center justify-center px-4 py-12 pt-20 lg:pt-12">
         <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-sm p-8">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-10 h-10 rounded-xl bg-[#002d62] text-white flex items-center justify-center">
@@ -207,22 +210,28 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               href="/api/auth/login"
               className="w-full inline-flex items-center justify-center rounded-lg bg-[#002d62] text-white text-sm font-semibold py-2.5 hover:bg-[#00224a]"
             >
-              {session.provider === 'google' ? 'Sign in with Google' : 'Sign in with company SSO'}
+              {session.provider === 'google' ? 'Sign in with Google' : 'Sign in with your Springer Nature account'}
             </a>
           )}
           {!magicToken && !session.provider && (
             <p className="text-sm text-slate-600">Sign-in is not configured. Set AUTH_PROVIDER on the server.</p>
           )}
           {session.devBypass && (
-            <button
-              type="button"
-              onClick={continueAsDev}
-              disabled={pending || !session.csrfToken}
-              className="mt-4 w-full rounded-lg border border-slate-300 bg-slate-50 text-slate-800 text-sm font-semibold py-2.5 hover:bg-slate-100 disabled:opacity-60"
-            >
-              Continue as development user
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={continueAsDev}
+                disabled={pending || !session.csrfToken}
+                className="mt-4 w-full rounded-lg border border-slate-300 bg-slate-50 text-slate-800 text-sm font-semibold py-2.5 hover:bg-slate-100 disabled:opacity-60"
+              >
+                Continue as a test user
+              </button>
+              <p className="mt-2 text-xs text-slate-500 text-center">
+                Local development only. This is not a Springer Nature sign-in.
+              </p>
+            </>
           )}
+        </div>
         </div>
       </div>
     );
