@@ -8,11 +8,14 @@ import { GoogleDisplayPreview } from './GoogleDisplayPreview';
 import { TargetingViewer } from './TargetingViewer';
 import { WeiboPreview } from './WeiboPreview';
 import { WeChatAdPreview } from './WeChatAdPreview';
+import type { PreviewTab } from './AppSidebar';
 
 interface Props {
   campaign: GeneratedAdCampaign;
   landingPageUrl: string;
   selectedChannels: { search: boolean; display: boolean };
+  previewTab: PreviewTab;
+  onPreviewTabChange: (tab: PreviewTab) => void;
   onEditHeadline?: (index: number, text: string) => void;
   onEditDescription?: (index: number, text: string) => void;
   onOpenCompliance?: () => void;
@@ -22,13 +25,14 @@ export const ChannelSuite: React.FC<Props> = ({
   campaign,
   landingPageUrl,
   selectedChannels,
+  previewTab,
+  onPreviewTabChange,
   onEditHeadline,
   onEditDescription,
   onOpenCompliance,
 }) => {
-  const [activeTab, setActiveTab] = useState<'search' | 'display' | 'keywords' | 'weibo' | 'wechat'>(
-    selectedChannels.search ? 'search' : 'display'
-  );
+  const activeTab = previewTab;
+  const setActiveTab = onPreviewTabChange;
   const [displayMode, setDisplayMode] = useState<'iab_canvas' | 'custom_generator'>('iab_canvas');
 
   const stage = normalizeStage(campaign.funnelStage);

@@ -225,7 +225,7 @@ export const InputStudio: React.FC<Props> = ({
       {/* ─────────────────────────────────────────────────────────────
           STEP 1: JOURNAL & SOURCE-VERIFIED FACTS
          ───────────────────────────────────────────────────────────── */}
-      <section className="space-y-4">
+      <section id="campaign-studio" className="space-y-4 scroll-mt-20">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="w-6 h-6 rounded-full bg-[#002d62] text-white flex items-center justify-center text-xs font-bold">
@@ -335,6 +335,12 @@ export const InputStudio: React.FC<Props> = ({
           ))}
         </div>
 
+        <div id="journal-facts" className="scroll-mt-20 space-y-3">
+          {!clarivateFacts && (
+            <p className="text-xs text-slate-500 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3">
+              Journal figures show up here after you look up a page.
+            </p>
+          )}
         {/* BLOCKING ALERT: MISSING METRICS DETECTED */}
         {isMissingMetrics && clarivateFacts && (
           <div className="p-4 rounded-xl bg-amber-50/80 border border-amber-300 text-amber-950 space-y-3 text-xs">
@@ -668,12 +674,13 @@ export const InputStudio: React.FC<Props> = ({
             )}
           </div>
         )}
+        </div>
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
           STEP 2: AUDIENCE STAGE, CHANNELS & LANGUAGE
          ───────────────────────────────────────────────────────────── */}
-      <section className="space-y-4 pt-2 border-t border-slate-200">
+      <section id="stage-and-url" className="space-y-4 pt-2 border-t border-slate-200 scroll-mt-20">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="w-6 h-6 rounded-full bg-[#002d62] text-white flex items-center justify-center text-xs font-bold">

@@ -25,7 +25,29 @@ export const ValidationReportModal: React.FC<Props> = ({
   report,
   onAutoFix,
 }) => {
-  if (!isOpen || !report) return null;
+  if (!isOpen) return null;
+
+  if (!report) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+        <div className="bg-white rounded-2xl max-w-md w-full border border-slate-200 shadow-2xl p-5 space-y-3">
+          <h3 className="text-base font-bold text-slate-900">Ad policy check</h3>
+          <p className="text-sm text-slate-600 leading-relaxed">
+            Generate a campaign first. This check runs on the ads you wrote. A China advertising-law note stays a warning and does not change the copy.
+          </p>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const isClean = report.status === 'clean';
   const hasErrors = report.errorsCount > 0;

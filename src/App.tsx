@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from './auth/AuthGate';
-import { Navbar } from './components/Navbar';
+import { AppSidebar, type AppNavId, type PreviewTab } from './components/AppSidebar';
 import { StageUrlRulesModal } from './components/StageUrlRulesModal';
 import { InputStudio } from './components/InputStudio';
 import { ChannelSuite } from './components/ChannelSuite';
@@ -38,7 +38,7 @@ interface GeneratedFor {
 }
 
 export default function App() {
-  const { admin } = useAuth();
+  const { admin, user, logout } = useAuth();
   const [landingPageUrl, setLandingPageUrl] = useState<string>('');
   const [selectedChannels, setSelectedChannels] = useState<{ search: boolean; display: boolean }>({
     search: true,
@@ -63,6 +63,13 @@ export default function App() {
   const [stageUrlRules, setStageUrlRules] = useState<StageUrlRules | null>(null);
   const [stageUrlRulesSaved, setStageUrlRulesSaved] = useState(false);
   const [isStageUrlRulesOpen, setIsStageUrlRulesOpen] = useState(false);
+  const [previewTab, setPreviewTab] = useState<PreviewTab>('search');
+  const [observedNav, setObservedNav] = useState<AppNavId>('studio');
+  const [pinnedNav, setPinnedNav] = useState<AppNavId | null>(null);
+  const previewTabRef = useRef(previewTab);
+  const pinnedNavRef = useRef(pinnedNav);
+  previewTabRef.current = previewTab;
+  pinnedNavRef.current = pinnedNav;
 
   // Request race-condition safeguard
   const latestRequestIdRef = useRef<number>(0);
@@ -87,6 +94,49 @@ export default function App() {
   useEffect(() => {
     loadStageUrlRules();
   }, []);
+
+  useEffect(() => {
+    const order = ['campaign-studio', 'journal-facts', 'stage-and-url', 'campaign-preview', 'exports', 'account'];
+    const sectionNav: Record<string, AppNavId> = {
+      'campaign-studio': 'studio',
+      'journal-facts': 'facts',
+      'stage-and-url': 'stage',
+      exports: 'exports',
+      account: 'account',
+    };
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      if (pinnedNavRef.current) return;
+      let current: AppNavId = 'studio';
+      for (const id of order) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        if (el.getBoundingClientRect().top <= 140) {
+          current = id === 'campaign-preview' ? previewTabRef.current : sectionNav[id];
+        }
+      }
+      setObservedNav(current);
+    };
+    const onScroll = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(update);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    update();
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (pinnedNav === 'policy' && !isComplianceModalOpen) setPinnedNav(null);
+    if (pinnedNav === 'patterns' && !isStageUrlRulesOpen) setPinnedNav(null);
+    if (pinnedNav === 'guide' && !isGuideOpen) setPinnedNav(null);
+    if (pinnedNav === 'compare' && !isCompareOpen) setPinnedNav(null);
+    if (pinnedNav === 'rules' && !isPlaybookOpen) setPinnedNav(null);
+  }, [pinnedNav, isComplianceModalOpen, isStageUrlRulesOpen, isGuideOpen, isCompareOpen, isPlaybookOpen]);
 
   useEffect(() => {
     if (!shouldScrollRef.current) return;
@@ -415,11 +465,62 @@ ${chinaChannelsExportSection(campaign)}
     handleGenerateCampaign();
   };
 
-  const hasPolicyWarnings =
-    campaign?.complianceReport?.status === 'has_warnings' ||
-    campaign?.complianceReport?.status === 'has_errors';
-
   const playbookIsCustom = customPlaybook.trim() !== PRESET_SKILLS.default.trim();
+
+  const scrollToSection = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const handlePreviewTab = (tab: PreviewTab) => {
+    setPreviewTab(tab);
+    if (!pinnedNavRef.current) setObservedNav(tab);
+  };
+
+  const handleNav = (id: AppNavId) => {
+    if (id === 'search' || id === 'display' || id === 'weibo' || id === 'wechat' || id === 'keywords') {
+      setPreviewTab(id);
+      setPinnedNav(null);
+      setObservedNav(id);
+      scrollToSection('campaign-preview');
+      return;
+    }
+    if (id === 'policy') {
+      setPinnedNav('policy');
+      setIsComplianceModalOpen(true);
+      return;
+    }
+    if (id === 'patterns') {
+      setPinnedNav('patterns');
+      setIsStageUrlRulesOpen(true);
+      return;
+    }
+    if (id === 'guide') {
+      setPinnedNav('guide');
+      setIsGuideOpen(true);
+      return;
+    }
+    if (id === 'compare') {
+      setPinnedNav('compare');
+      setIsCompareOpen(true);
+      return;
+    }
+    if (id === 'rules') {
+      setPinnedNav('rules');
+      setIsPlaybookOpen(true);
+      return;
+    }
+    const target: Partial<Record<AppNavId, string>> = {
+      studio: 'campaign-studio',
+      facts: 'journal-facts',
+      stage: 'stage-and-url',
+      exports: 'exports',
+      account: 'account',
+    };
+    setPinnedNav(null);
+    setObservedNav(id);
+    const sectionId = target[id];
+    if (sectionId) scrollToSection(sectionId);
+  };
 
   const previewIsStale = !!(
     campaign &&
@@ -434,21 +535,19 @@ ${chinaChannelsExportSection(campaign)}
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
-      {/* Top Navbar */}
-      <Navbar
-        onOpenGuide={() => setIsGuideOpen(true)}
-        onOpenPlaybook={() => setIsPlaybookOpen(true)}
-        onOpenCompareStages={() => setIsCompareOpen(true)}
-        onOpenCompliance={() => setIsComplianceModalOpen(true)}
-        onExportMarkdown={handleExportBrief}
-        onExportCsv={handleExportCsv}
-        hasCampaign={!!campaign}
-        hasCustomPlaybook={playbookIsCustom}
-        hasPolicyWarnings={hasPolicyWarnings}
-        onOpenStageUrlRules={admin ? () => setIsStageUrlRulesOpen(true) : undefined}
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-blue-100 selection:text-blue-900">
+      <AppSidebar
+        mode="app"
+        activeId={pinnedNav ?? observedNav}
+        onSelect={handleNav}
+        admin={admin}
+        email={user.email}
+        onSignOut={() => {
+          logout().catch(() => undefined);
+        }}
       />
 
+      <div className="lg:pl-64 min-h-screen flex flex-col pt-14 lg:pt-0">
       {/* Main Content */}
       <main className="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-6 space-y-6">
         {/* Error notification */}
@@ -522,7 +621,7 @@ ${chinaChannelsExportSection(campaign)}
           />
         </section>
 
-        <section id="campaign-results" ref={resultsRef} className="scroll-mt-24 space-y-6">
+        <section id="campaign-preview" ref={resultsRef} className="scroll-mt-20 space-y-6">
           <div>
             <h2 className="text-sm font-bold text-slate-900">Campaign preview</h2>
             <p className="text-xs text-slate-500 mt-0.5">
@@ -569,12 +668,64 @@ ${chinaChannelsExportSection(campaign)}
                 campaign={campaign}
                 landingPageUrl={landingPageUrl}
                 selectedChannels={selectedChannels}
+                previewTab={previewTab}
+                onPreviewTabChange={handlePreviewTab}
                 onEditHeadline={handleEditHeadline}
                 onEditDescription={handleEditDescription}
-                onOpenCompliance={() => setIsComplianceModalOpen(true)}
+                onOpenCompliance={() => {
+                  setPinnedNav('policy');
+                  setIsComplianceModalOpen(true);
+                }}
               />
             </>
           )}
+        </section>
+
+        <section id="exports" className="scroll-mt-20 bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-xs space-y-3">
+          <h2 className="text-sm font-bold text-slate-900">Exports</h2>
+          <p className="text-xs text-slate-500 leading-relaxed max-w-xl">
+            Download a spreadsheet you can import into Google Ads Editor, or a brief you can share. Weibo and WeChat are in the note.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={!campaign}
+              className="px-4 py-2 bg-[#002d62] hover:bg-[#00224a] text-white text-xs font-semibold rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Spreadsheet
+            </button>
+            <button
+              type="button"
+              onClick={handleExportBrief}
+              disabled={!campaign}
+              className="px-4 py-2 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 text-xs font-semibold rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Campaign brief
+            </button>
+          </div>
+          {!campaign && (
+            <p className="text-[11px] text-slate-500">Generate a campaign before you export.</p>
+          )}
+        </section>
+
+        <section id="account" className="scroll-mt-20 bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-xs space-y-3">
+          <h2 className="text-sm font-bold text-slate-900">Your account</h2>
+          <p className="text-sm text-slate-800 font-medium">{user.email}</p>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            {admin
+              ? 'You are signed in. Open Page patterns in the menu to edit which pages each stage prefers.'
+              : 'You are signed in with this email.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              logout().catch(() => undefined);
+            }}
+            className="px-4 py-2 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 text-xs font-semibold rounded-lg"
+          >
+            Sign out
+          </button>
         </section>
       </main>
 
@@ -665,6 +816,7 @@ ${chinaChannelsExportSection(campaign)}
         report={campaign?.complianceReport || (campaign ? runComplianceAudit(campaign) : null)}
         onAutoFix={handleAutoFixCompliance}
       />
+      </div>
     </div>
   );
 }
