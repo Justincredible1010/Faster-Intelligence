@@ -80,7 +80,7 @@ export function loadPlaybookFile(filePath: string): AdminPlaybookConfig {
       const base = defaultPlaybook();
       const merged = applyPlaybookUpdate(base, raw, typeof raw?.modifiedBy === 'string' ? raw.modifiedBy : '');
       merged.lastModified = typeof raw?.lastModified === 'string' ? raw.lastModified : '';
-      return merged;
+      return withLearned(merged, raw);
     }
   } catch (err) {
     console.warn('[playbook] could not read playbook file:', err instanceof Error ? err.message : err);
@@ -92,4 +92,22 @@ export function savePlaybookFile(filePath: string, playbook: AdminPlaybookConfig
   const tmp = `${filePath}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(playbook, null, 2), 'utf-8');
   fs.renameSync(tmp, filePath);
+}
+
+/** Keep learned rules and corrections, which the normal admin update cannot set. */
+export function withLearned(playbook: AdminPlaybookConfig, raw: any): AdminPlaybookConfig {
+  const rules = Array.isArray(raw?.learnedRules)
+    ? raw.learnedRules.filter((r: unknown) => typeof r === 'string' && r.trim()).slice(0, 200).map((r: string) => r.slice(0, PLAYBOOK_LIMITS.listItem))
+    : [];
+  const corrections = Array.isArray(raw?.copyCorrections)
+    ? raw.copyCorrections
+        .filter((c: any) => c && typeof c.before === 'string' && typeof c.after === 'string' && c.before.trim())
+        .slice(0, 200)
+        .map((c: any) => ({
+          before: c.before.slice(0, PLAYBOOK_LIMITS.listItem),
+          after: c.after.slice(0, PLAYBOOK_LIMITS.listItem),
+          ...(['EN', 'ZH', 'JA'].includes(c.language) ? { language: c.language } : {}),
+        }))
+    : [];
+  return { ...playbook, learnedRules: rules, copyCorrections: corrections };
 }

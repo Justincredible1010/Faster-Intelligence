@@ -27,20 +27,32 @@ import {
   japaneseKeywords,
   localizedCallouts,
   localizedPeerReviewed,
+  buildStructuredSnippet,
   localizedSnippetHeader,
   type AdLanguage,
 } from './src/server/localizedCopy';
 import {
   MetricsDatabaseError,
   applyDatabaseUpdate,
-  loadMetricsDatabaseFile,
-  saveMetricsDatabaseFile,
   withClarivateMetrics,
 } from './src/server/metricsDatabase';
-import { PlaybookValidationError, applyPlaybookUpdate, loadPlaybookFile, savePlaybookFile } from './src/server/playbook';
+import { PlaybookValidationError, applyPlaybookUpdate, defaultPlaybook } from './src/server/playbook';
 import { loadJournalMetrics } from './src/utils/metricsRefresh';
 import { DEFAULT_STAGE_URL_RULES, parseStageUrlRules } from './src/utils/stageUrlRules';
 import { normalizeIssn } from './src/utils/issn';
+import { safeShorten, shortenName } from './src/utils/textUtils';
+import { qaCampaignCopy } from './src/utils/adCopyQa';
+import type { AdminPlaybookConfig } from './src/types';
+import { sanitizeVerifiedKinds } from './src/utils/verifiedPageFacts';
+import { getPlaybookStore, newProposalId } from './src/server/playbookStore';
+import {
+  ProposalValidationError,
+  applyApprovedProposal,
+  applyCopyCorrections,
+  buildProposal,
+  isDuplicateProposal,
+  playbookPromptSection,
+} from './src/server/playbookLearning';
 import { formatUsageCount } from './src/utils/usageCounts';
 import {
   LandingPageError,
@@ -273,27 +285,9 @@ export function countCharacterWidth(text: string): number {
 }
 
 // Smart clamp function respecting Google Ads visual width (30 max for headlines, 90 for descriptions)
+/** Word- and bracket-safe shortening (see safeShorten). */
 export function smartClamp(text: string, maxWidth: number): string {
-  if (!text) return '';
-  const trimmed = text.trim();
-  if (countCharacterWidth(trimmed) <= maxWidth) return trimmed;
-
-  let slice = trimmed;
-  while (countCharacterWidth(slice) > maxWidth && slice.length > 0) {
-    slice = slice.slice(0, -1);
-  }
-
-  // Avoid cutting mid-word for Latin letters
-  const lastChar = slice.slice(-1);
-  const nextChar = trimmed.charAt(slice.length);
-  if (/[a-zA-Z0-9]/.test(lastChar) && /[a-zA-Z0-9]/.test(nextChar)) {
-    const lastSpace = slice.lastIndexOf(' ');
-    if (lastSpace > 4) {
-      slice = slice.slice(0, lastSpace);
-    }
-  }
-
-  return slice.replace(/[,;:\-\s·/|]+$/, '').trim();
+  return safeShorten(text, maxWidth);
 }
 
 // Shared Stage Strategy Configuration
@@ -1349,8 +1343,8 @@ export function generateStageHeadlines(
   if (outputLanguage === 'JA') {
     return japaneseHeadlines(facts, stage, { jifClaim, firstDecisionDays: facts.firstDecisionDays ?? null });
   }
-  const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
-  const disciplineShort = (facts.primaryDiscipline || 'Scientific').split('(')[0].trim().slice(0, 14);
+  const shortName = (shortenName(facts.journalName, 18) || facts.journalName);
+  const disciplineShort = (shortenName((facts.primaryDiscipline || 'Scientific').split('(')[0].trim(), 14) || 'Scientific');
   const publishedBy = facts.publisher ? smartClamp(`Published by ${facts.publisher}`, 30) : '';
   const articleTypeHeadline = pageFeatureText(facts, 'article_types')?.split(',')[0]?.trim() || '';
   const publishingHeadline = pageFeatureText(facts, 'publishing_model') || '';
@@ -1428,7 +1422,7 @@ export function generateStageHeadlines(
     ];
 
     const zh: HeadlineSeed[] = [
-      ...(facts.casZone ? [{ text: smartClamp(`${facts.casZone.slice(0, 11)}评议标准`, 30), sourceFact: facts.casZone, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 1' }] : []),
+      ...(facts.casZone ? [{ text: smartClamp(`${safeShorten(facts.casZone, 22)}评议标准`, 30), sourceFact: facts.casZone, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 1' }] : []),
       { text: smartClamp(`查阅期刊范围与收稿类型`, 30), sourceFact: 'Scope Check', language: 'ZH', category: 'Scope & Community', positionRecommendation: 'Position 1' },
       ...(facts.firstDecisionDays ? [{ text: smartClamp(`平均初审周期约${facts.firstDecisionDays}天`, 30), sourceFact: `${facts.firstDecisionDays}天初审`, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       ...(facts.articleDownloads ? [{ text: smartClamp(`文章下载量${formatUsageCount(facts.articleDownloads)}`, 30), sourceFact: 'Article downloads', language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
@@ -1560,7 +1554,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
   if (stage === 'CON') {
     const daysText = facts.firstDecisionDays ? `First decision in ${facts.firstDecisionDays} days.` : 'Editorial criteria are listed on the journal site.';
     const feeText = facts.apcUsd ? `APC ($${facts.apcUsd})` : 'publishing options';
-    const casText = facts.casZone ? `（${facts.casZone.slice(0, 10)}）` : '';
+    const casText = facts.casZone ? `（${safeShorten(facts.casZone, 20)}）` : '';
     const downloadsText = facts.articleDownloads
       ? `${formatUsageCount(facts.articleDownloads)} article downloads.`
       : facts.fullTextViews
@@ -1682,7 +1676,7 @@ export function generateStageDisplayAd(facts: any, stage: StageCode, outputLangu
   if (outputLanguage === 'JA') {
     return japaneseDisplayAd(facts, stage, { jifClaim, firstDecisionDays: facts.firstDecisionDays ?? null });
   }
-  const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
+  const shortName = (shortenName(facts.journalName, 18) || facts.journalName);
 
   if (stage === 'AWA') {
     return {
@@ -1740,7 +1734,7 @@ export function generateStageDisplayAd(facts: any, stage: StageCode, outputLangu
     ctaText: 'View Checklist',
     visualConceptPrompt: `A streamlined author guidance banner showcasing a manuscript submission checklist icon, clear typography, verified portal badge, and Springer Nature integrity crest.`,
     imageAccentColor: '#064e3b',
-    targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'nature.com', 'springerlink.com'],
+    targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'nature.com', 'link.springer.com'],
     bannerHeadlineZh: `${facts.journalName} 作者投稿须知`,
     bannerSubtextZh: `获取官方投稿清单与格式指南 · 在线投递学术稿件`,
   };
@@ -1797,7 +1791,7 @@ export function generateDeterministicCampaign(
           'Peer-Reviewed Science',
         ]
       : stage === 'CON'
-      ? [formatJifClaim(copyFacts) || impactCallout, copyFacts.casZone ? copyFacts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', copyFacts.firstDecisionDays ? `1st Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
+      ? [formatJifClaim(copyFacts) || impactCallout, copyFacts.casZone ? safeShorten(copyFacts.casZone, 25) : 'Peer-Reviewed Quality', copyFacts.firstDecisionDays ? `1st Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
       : ['Author Guidelines Ready', 'Standard Preparation Checklist', copyFacts.firstDecisionDays ? `First Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Official Submission Portal'];
   const localizedCalloutList =
     outputLanguage === 'ZH' || outputLanguage === 'JA'
@@ -1808,7 +1802,7 @@ export function generateDeterministicCampaign(
         })
       : null;
 
-  return withChinaChannels(guardAdCopy({
+  return qaCampaignCopy(withChinaChannels(guardAdCopy({
     funnelStage: stage,
     legacyStage: stage === 'AWA' ? 'TOFU' : stage === 'CON' ? 'MOFU' : 'BOFU',
     clarivateFacts: facts,
@@ -1826,14 +1820,7 @@ export function generateDeterministicCampaign(
       descriptions,
       sitelinks,
       callouts: localizedCalloutList || callouts,
-      structuredSnippet: {
-        header: localizedSnippetHeader(outputLanguage),
-        values: [
-          ...(outputLanguage === 'ZH' || outputLanguage === 'JA' ? [] : [(facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim()]),
-          ...(outputLanguage === 'ZH' || outputLanguage === 'JA' ? [] : [facts.publisher]),
-          localizedPeerReviewed(outputLanguage),
-        ].filter(Boolean),
-      },
+      structuredSnippet: buildStructuredSnippet(facts, outputLanguage),
       recommendedFinalUrl: destinationUrl,
     },
     displayAds: {
@@ -1841,7 +1828,7 @@ export function generateDeterministicCampaign(
       recommendedFinalUrl: destinationUrl,
     },
     keywords,
-  }, facts));
+  }, facts)));
 }
 
 export function parseOutputLanguage(raw: unknown): AdLanguage {
@@ -1858,10 +1845,12 @@ app.post('/api/generate-campaign', async (req, res) => {
       outputLanguage: rawOutputLanguage = 'all',
       customPlaybook = '',
       userProvidedFacts = null,
+      verifiedPageFacts = [],
       issn,
       eIssn,
     } = req.body;
     const outputLanguage = parseOutputLanguage(rawOutputLanguage);
+    const serverPlaybook = await loadServerPlaybook();
 
     const normalizedStage = normalizeStage(funnelStage);
     const stageConfig = STAGE_CONFIGS[normalizedStage];
@@ -1950,7 +1939,9 @@ JOURNAL:
 
 ${metricPromptSection(facts)}
 
-${formatLandingPagePromptSection(facts)}
+${formatLandingPagePromptSection(facts, sanitizeVerifiedKinds(verifiedPageFacts))}
+
+${playbookPromptSection(serverPlaybook)}
 
 ${customPlaybook ? `PLAYBOOK RULES:\n${customPlaybook}\n` : ''}
 
@@ -2059,7 +2050,7 @@ GOOGLE ADS REQUIREMENTS:
 
     const destinationUrl = stageDestinationUrl(facts, normalizedStage);
 
-    const campaign = withChinaChannels(guardAdCopy({
+    const campaign = qaCampaignCopy(applyCopyCorrections(withChinaChannels(guardAdCopy({
       funnelStage: normalizedStage,
       legacyStage: normalizedStage === 'AWA' ? 'TOFU' : normalizedStage === 'CON' ? 'MOFU' : 'BOFU',
       clarivateFacts: facts,
@@ -2074,7 +2065,7 @@ GOOGLE ADS REQUIREMENTS:
         url: destinationUrl,
         description: stageConfig.recommendedDestination.description,
       },
-    }, facts));
+    }, facts)), serverPlaybook, outputLanguage), { fallback, prohibitedTerms: serverPlaybook.prohibitedTerms });
 
     res.json({ success: true, campaign });
   } catch (error: any) {
@@ -2122,20 +2113,41 @@ app.post('/api/compare-stages', async (req, res) => {
 
 const PLAYBOOK_PATH = process.env.PLAYBOOK_PATH || path.resolve(__dirname, 'admin-playbook.json');
 const METRICS_DATABASE_PATH = process.env.METRICS_DATABASE_PATH || path.resolve(__dirname, 'metrics-database.json');
+const PLAYBOOK_PROPOSALS_PATH = process.env.PLAYBOOK_PROPOSALS_PATH || path.resolve(__dirname, 'playbook-proposals.json');
 export const BULK_MAX_URLS = 25;
+
+function playbookStore() {
+  return getPlaybookStore({ playbook: PLAYBOOK_PATH, metrics: METRICS_DATABASE_PATH, proposals: PLAYBOOK_PROPOSALS_PATH });
+}
+
+/** Playbook used by generation. A storage outage falls back to the defaults rather than failing generation. */
+async function loadServerPlaybook(): Promise<AdminPlaybookConfig> {
+  try {
+    return await (await playbookStore()).getPlaybook();
+  } catch (err) {
+    console.warn('[Playbook Store] read failed, using defaults:', err instanceof Error ? err.message : err);
+    return defaultPlaybook();
+  }
+}
 
 function editorEmail(res: express.Response): string {
   return getRequestSession(res)?.user?.email || 'unknown';
 }
 
-app.get('/api/playbook', (_req, res) => {
-  res.json({ playbook: loadPlaybookFile(PLAYBOOK_PATH) });
+app.get('/api/playbook', async (_req, res) => {
+  try {
+    res.json({ playbook: await (await playbookStore()).getPlaybook() });
+  } catch (err) {
+    console.error('Playbook read failed:', err);
+    res.status(500).json({ error: 'Could not read playbook' });
+  }
 });
 
-app.post('/api/playbook', requireAdmin, (req, res) => {
+app.post('/api/playbook', requireAdmin, async (req, res) => {
   try {
-    const next = applyPlaybookUpdate(loadPlaybookFile(PLAYBOOK_PATH), req.body, editorEmail(res));
-    savePlaybookFile(PLAYBOOK_PATH, next);
+    const store = await playbookStore();
+    const next = applyPlaybookUpdate(await store.getPlaybook(), req.body, editorEmail(res));
+    await store.savePlaybook(next);
     res.json({ success: true, playbook: next });
   } catch (err) {
     if (err instanceof PlaybookValidationError) return res.status(400).json({ error: err.message });
@@ -2144,10 +2156,60 @@ app.post('/api/playbook', requireAdmin, (req, res) => {
   }
 });
 
-/** One metrics model: supplementary fields from the file, IF/5-year IF/quartile only from the Clarivate store. */
+/** Any signed-in user can propose a copy edit or rule. Nothing changes until an admin approves. */
+app.post('/api/playbook/proposals', async (req, res) => {
+  try {
+    const store = await playbookStore();
+    const proposal = buildProposal(req.body, editorEmail(res), newProposalId());
+    const existing = await store.listProposals();
+    if (isDuplicateProposal(proposal, existing)) return res.json({ success: true, duplicate: true });
+    await store.saveProposal(proposal);
+    res.json({ success: true, proposal });
+  } catch (err) {
+    if (err instanceof ProposalValidationError) return res.status(400).json({ error: err.message });
+    console.error('Proposal save failed:', err);
+    res.status(500).json({ error: 'Could not save the proposal' });
+  }
+});
+
+app.get('/api/playbook/proposals', requireAdmin, async (req, res) => {
+  try {
+    const status = ['pending', 'approved', 'rejected'].includes(String(req.query.status)) ? (String(req.query.status) as any) : undefined;
+    res.json({ proposals: await (await playbookStore()).listProposals(status) });
+  } catch (err) {
+    console.error('Proposal list failed:', err);
+    res.status(500).json({ error: 'Could not read proposals' });
+  }
+});
+
+app.post('/api/playbook/proposals/:id/decision', requireAdmin, async (req, res) => {
+  try {
+    const decision = req.body?.decision;
+    if (decision !== 'approve' && decision !== 'reject') return res.status(400).json({ error: 'decision must be approve or reject' });
+    const store = await playbookStore();
+    const proposal = await store.getProposal(String(req.params.id));
+    if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+    if (proposal.status !== 'pending') return res.status(409).json({ error: `Proposal is already ${proposal.status}` });
+    const editor = editorEmail(res);
+    const now = new Date();
+    let playbook = await store.getPlaybook();
+    if (decision === 'approve') {
+      playbook = applyApprovedProposal(playbook, proposal, editor, now);
+      await store.savePlaybook(playbook);
+    }
+    const decided = { ...proposal, status: decision === 'approve' ? 'approved' : 'rejected', decidedBy: editor, decidedAt: now.toISOString() } as const;
+    await store.saveProposal(decided);
+    res.json({ success: true, proposal: decided, playbook });
+  } catch (err) {
+    console.error('Proposal decision failed:', err);
+    res.status(500).json({ error: 'Could not save the decision' });
+  }
+});
+
+/** One metrics model: supplementary fields from the store, IF/5-year IF/quartile only from the Clarivate store. */
 app.get('/api/database/journals', async (_req, res) => {
   try {
-    const records = loadMetricsDatabaseFile(METRICS_DATABASE_PATH);
+    const records = await (await playbookStore()).listMetricsRecords();
     const store = await getMetricsStore();
     const journals = await Promise.all(
       records.map(async (record) => {
@@ -2169,18 +2231,17 @@ app.get('/api/database/journals', async (_req, res) => {
   }
 });
 
-app.post('/api/database/journal', requireAdmin, (req, res) => {
+app.post('/api/database/journal', requireAdmin, async (req, res) => {
   try {
     const journal = req.body?.journal ?? req.body;
     const key = normalizeJournalUrl(String(journal?.canonicalUrl || '')).canonical;
     if (!key) return res.status(400).json({ error: 'A journal canonicalUrl is required' });
     if (rejectedJournalHost(res, key)) return;
-    const records = loadMetricsDatabaseFile(METRICS_DATABASE_PATH);
-    const idx = records.findIndex((r) => normalizeJournalUrl(r.canonicalUrl).canonical === key);
-    const updated = applyDatabaseUpdate(idx >= 0 ? records[idx] : null, { ...journal, canonicalUrl: key }, editorEmail(res));
-    if (idx >= 0) records[idx] = updated;
-    else records.push(updated);
-    saveMetricsDatabaseFile(METRICS_DATABASE_PATH, records);
+    const store = await playbookStore();
+    const records = await store.listMetricsRecords();
+    const existing = records.find((r) => normalizeJournalUrl(r.canonicalUrl).canonical === key) || null;
+    const updated = applyDatabaseUpdate(existing, { ...journal, canonicalUrl: key }, editorEmail(res));
+    await store.saveMetricsRecord(updated);
     res.json({ success: true, journal: updated });
   } catch (err) {
     if (err instanceof MetricsDatabaseError) return res.status(err.status).json({ error: err.message });

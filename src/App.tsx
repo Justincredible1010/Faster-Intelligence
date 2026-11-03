@@ -27,6 +27,10 @@ import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
 import { chinaChannelsExportSection } from './china/exportText';
 import { AlertCircle, AlertTriangle } from 'lucide-react';
 import { apiFetch } from './auth/api';
+import { getVerifiedPageFacts } from './utils/verifiedPageFacts';
+import { createCopyEditQueue } from './utils/playbookProposals';
+
+const copyEditQueue = createCopyEditQueue();
 import { pickEditableJournalFacts } from './utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from './utils/journalUrl';
 import { formatJifClaim, trustedApcUsd, trustedCasZone, trustedQuartile } from './utils/metricClaims';
@@ -256,6 +260,7 @@ export default function App() {
           customPlaybook: playbook,
           issn: (manualFacts || clarivateFacts)?.issn || (manualFacts || clarivateFacts)?.eIssn,
           userProvidedFacts: browserFacts ? pickEditableJournalFacts(browserFacts) : null,
+          verifiedPageFacts: getVerifiedPageFacts(url.trim()),
         }),
       });
 
@@ -342,6 +347,17 @@ export default function App() {
   const handleEditHeadline = (index: number, newText: string) => {
     if (!campaign || !campaign.searchAds) return;
     const updatedHeadlines = [...campaign.searchAds.headlines];
+    const originalHeadline = campaign.searchAds.headlines[index];
+    if (originalHeadline) {
+      copyEditQueue.edit({
+        field: `searchAds.headlines.${index}`,
+        language: originalHeadline.language,
+        before: originalHeadline.text,
+        after: newText,
+        journalName: campaign.clarivateFacts?.journalName,
+        stage: campaign.funnelStage,
+      });
+    }
     updatedHeadlines[index] = {
       ...updatedHeadlines[index],
       text: newText,
@@ -362,6 +378,17 @@ export default function App() {
   const handleEditDescription = (index: number, newText: string) => {
     if (!campaign || !campaign.searchAds) return;
     const updatedDescs = [...campaign.searchAds.descriptions];
+    const originalDescription = campaign.searchAds.descriptions[index];
+    if (originalDescription) {
+      copyEditQueue.edit({
+        field: `searchAds.descriptions.${index}`,
+        language: originalDescription.language,
+        before: originalDescription.text,
+        after: newText,
+        journalName: campaign.clarivateFacts?.journalName,
+        stage: campaign.funnelStage,
+      });
+    }
     updatedDescs[index] = {
       ...updatedDescs[index],
       text: newText,
@@ -710,6 +737,17 @@ ${chinaChannelsExportSection(campaign)}
 
           {campaign && !isLoading && (
             <>
+              {campaign.copyQa && !campaign.copyQa.ready && (
+                <div role="alert" className="mb-3 p-3 rounded-lg border border-rose-300 bg-rose-50 text-xs text-rose-900">
+                  <strong>Not ready to publish:</strong> {campaign.copyQa.issues.length} line(s) failed the final copy check
+                  (half brackets, cut-off text, over length or tone). Edit the flagged lines before you export.
+                  <ul className="mt-1 list-disc pl-4">
+                    {campaign.copyQa.issues.slice(0, 5).map((i, n) => (
+                      <li key={n}>{i.field}: {i.issues.join(', ')}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <StrategySummaryBanner
                 campaign={campaign}
                 onOpenCompareStages={() => setIsCompareOpen(true)}

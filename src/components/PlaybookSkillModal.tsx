@@ -15,6 +15,9 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { apiFetch } from '../auth/api';
+import { useAuth } from '../auth/AuthGate';
+import { newRuleLines, proposeRules } from '../utils/playbookProposals';
+import { PlaybookProposalsPanel } from './PlaybookProposalsPanel';
 
 interface Props {
   isOpen: boolean;
@@ -101,6 +104,7 @@ export const PlaybookSkillModal: React.FC<Props> = ({
   const [activePreset, setActivePreset] = useState<'default' | 'chinaStrategy' | 'displayVisuals'>('default');
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const { admin } = useAuth();
 
   if (!isOpen) return null;
 
@@ -135,6 +139,18 @@ export const PlaybookSkillModal: React.FC<Props> = ({
 
   const handleSave = async () => {
     onSavePlaybook(playbookText);
+    // Non-admins cannot change the shared playbook; their new lines become proposals for an admin.
+    if (!admin) {
+      void proposeRules(newRuleLines(customPlaybook || PRESET_SKILLS.default, playbookText));
+    }
+    if (!admin) {
+      setSavedSuccess(true);
+      setTimeout(() => {
+        setSavedSuccess(false);
+        onClose();
+      }, 1000);
+      return;
+    }
     try {
       await apiFetch('/api/playbook', {
         method: 'POST',
@@ -297,6 +313,12 @@ export const PlaybookSkillModal: React.FC<Props> = ({
               placeholder="Paste custom guidelines, PPT rules, or tone of voice specifications here..."
             />
           </div>
+
+          {admin ? <PlaybookProposalsPanel /> : (
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-700">
+              New rules you add here apply to your ads now and are sent to an admin, who can add them to the shared rules.
+            </div>
+          )}
 
           <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl text-[11px] text-blue-900 flex items-start gap-2">
             <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
