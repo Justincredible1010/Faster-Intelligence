@@ -158,6 +158,8 @@ export function localizedPeerReviewed(language: AdLanguage): string {
 interface TrustedClaims {
   jifClaim: string | null;
   firstDecisionDays: number | null;
+  /** Only page-sourced decision days are a reported median; others get neutral "about" wording. */
+  decisionDaysIsMedian?: boolean;
   casZone?: string | null;
 }
 
@@ -168,8 +170,8 @@ export function localizedCallouts(stage: StageCode, language: 'ZH' | 'JA', facts
       ? stage === 'AWA'
         ? [...(facts.publisher ? [`${facts.publisher} 刊行`] : []), '国際的な読者層', '査読付き学術誌', '最新の研究成果']
         : stage === 'CON'
-          ? [...(claims.jifClaim ? [claims.jifClaim] : []), '国際ピアレビュー', ...(days ? [`初回判定: 平均${days}日`] : []), '投稿方針を公開']
-          : ['投稿規程を確認', '提出前チェックリスト', ...(days ? [`初回判定: 平均${days}日`] : []), '公式オンライン投稿']
+          ? [...(claims.jifClaim ? [claims.jifClaim] : []), '国際ピアレビュー', ...(days ? [`初回判定: ${claims.decisionDaysIsMedian ? '中央値' : '約'}${days}日`] : []), '投稿方針を公開']
+          : ['投稿規程を確認', '提出前チェックリスト', ...(days ? [`初回判定: ${claims.decisionDaysIsMedian ? '中央値' : '約'}${days}日`] : []), '公式オンライン投稿']
       : stage === 'AWA'
         ? [...(facts.publisher ? [`${facts.publisher} 出版`] : []), '国际学术读者', '同行评议期刊', '学科前沿成果']
         : stage === 'CON'
@@ -212,7 +214,7 @@ export function japaneseHeadlines(facts: any, stage: StageCode, claims: TrustedC
       h(`${name} 投稿基準と掲載方針`, 'Scope Check', 'Scope & Community', 'Position 1'),
       ...(claims.jifClaim ? [h(claims.jifClaim, claims.jifClaim, 'Evaluation & Metrics', 'Position 1')] : []),
       h('研究テーマの適合性を確認', 'Fit Evaluation', 'Scope & Community', 'Position 1'),
-      ...(days ? [h(`初回判定まで平均${days}日`, `${days}日`, 'Evaluation & Metrics', 'Position 2')] : []),
+      ...(days ? [h(`初回判定まで${claims.decisionDaysIsMedian ? '中央値' : '約'}${days}日`, `${days}日`, 'Evaluation & Metrics', 'Position 2')] : []),
       h('国際ピアレビューを実施', 'Editorial Standards', 'Evaluation & Metrics', 'Position 2'),
       h('同分野ジャーナルと比較', 'Comparison Evaluation', 'Evaluation & Metrics', 'Position 2'),
       h('収載情報を確認', 'Indexing', 'Evaluation & Metrics', 'Position 3'),
@@ -235,7 +237,7 @@ export function japaneseHeadlines(facts: any, stage: StageCode, claims: TrustedC
       h('公式オンライン投稿窓口', 'Portal', 'Author Guidance', 'Position 1'),
       h('原稿執筆要領とフォーマット', 'Preparation', 'Author Guidance', 'Position 2'),
       h('提出前セルフチェック', 'Checklist', 'Author Guidance', 'Position 2'),
-      ...(days ? [h(`初回判定まで平均${days}日`, `${days}日`, 'Author Guidance', 'Position 3')] : []),
+      ...(days ? [h(`初回判定まで${claims.decisionDaysIsMedian ? '中央値' : '約'}${days}日`, `${days}日`, 'Author Guidance', 'Position 3')] : []),
       h('投稿後の流れを確認', 'Peer Review Workflow', 'Author Guidance', 'Position 3'),
       h('原稿提出を開始', 'CTA', 'Call to Action'),
       h('公式投稿システムはこちら', 'Portal', 'Author Guidance'),
@@ -266,7 +268,7 @@ export function japaneseDescriptions(facts: any, stage: StageCode, claims: Trust
       : stage === 'CON'
         ? [
             d(`${facts.journalName}への投稿を検討中の方へ。${claims.jifClaim ? `${claims.jifClaim}。` : ''}掲載方針を確認。`, claims.jifClaim || 'Evaluation', 'Evaluation & Peer Review'),
-            d(`${claims.firstDecisionDays ? `初回判定まで平均${claims.firstDecisionDays}日。` : ''}投稿前に研究テーマの適合性をご確認ください。`, claims.firstDecisionDays ? `${claims.firstDecisionDays}日` : 'Scope Check', 'Evaluation & Peer Review'),
+            d(`${claims.firstDecisionDays ? `初回判定まで${claims.decisionDaysIsMedian ? '中央値' : '約'}${claims.firstDecisionDays}日。` : ''}投稿前に研究テーマの適合性をご確認ください。`, claims.firstDecisionDays ? `${claims.firstDecisionDays}日` : 'Scope Check', 'Evaluation & Peer Review'),
             d('受付可能な原稿形式、出版モデル、査読プロセスを確認して投稿先を選択。', 'Publishing Options', 'Publishing Options'),
             d('同分野のジャーナルと掲載方針や出版モデルを比較して検討できます。', 'Comparison Evaluation', 'Comparison & Fit'),
           ]

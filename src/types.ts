@@ -27,6 +27,10 @@ export interface ExtractedFactField<T> {
   confidence: number; // 0.0 - 1.0 (0.9 = verified/exact, 0.6 = heuristic, 0.0 = missing)
   extractedAt?: string;
   provenanceLabel?: string;
+  /** Final page URL the value was read from (session query params removed). */
+  sourceUrl?: string;
+  /** Short verbatim text from the page that supports the value. */
+  evidence?: string;
 }
 
 /** A concrete feature the journal page or the metrics record states. Not an impact factor or a ranking. */
@@ -83,10 +87,10 @@ export interface ExtractedPageFacts {
   peerReviewModel: ExtractedFactField<string | null>;
   openAccessPolicy: ExtractedFactField<string | null>;
   specialIssuesAvailable: ExtractedFactField<boolean>;
+  /** "Abstracted and indexed in" list on the journal page. */
+  indexedIn?: ExtractedFactField<string[]>;
   /** Metrics the page itself states. Each item is labelled page-sourced. */
   pageMetrics: PageSourcedMetric[];
-  /** Normalized names from an "Abstracted/indexed in" list on the page. */
-  indexedIn?: string[];
   /** Features the visible page or its real links state. Each item is page-sourced. */
   pageFeatures: PageSourcedFeature[];
   layout: 'nature_portfolio' | 'springer_link' | 'unknown';

@@ -124,7 +124,10 @@ describe('final ad-copy QA gate', () => {
   it('passes clean ZH/JA copy untouched', () => {
     const out = qaCampaignCopy({
       outputLanguage: 'ZH',
-      searchAds: { headlines: [{ text: 'Nature Communications 投稿指南', language: 'ZH' }], descriptions: [{ text: '同行评议，开放获取。', language: 'ZH' }] },
+      searchAds: {
+        headlines: [{ text: 'Nature Communications 投稿指南', language: 'ZH' }, { text: '同行评议学术期刊', language: 'ZH' }, { text: '在线投稿通道', language: 'ZH' }],
+        descriptions: [{ text: '同行评议，开放获取。', language: 'ZH' }, { text: '投稿前请查看作者指南。', language: 'ZH' }],
+      },
     });
     assert.equal(out.copyQa.ready, true);
     assert.equal(out.searchAds.headlines[0].text, 'Nature Communications 投稿指南');

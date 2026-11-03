@@ -1,6 +1,8 @@
 import { ClarivateJournalMetrics, FactVerificationStatus, PageSourcedFeature } from '../types';
 import { CLARIVATE_WOS_JOURNALS_SOURCE } from './metricSources';
 import { formatUsageCount, parseUsageCount } from './usageCounts';
+import { checkFaithfulness } from './faithfulness';
+import { checkAdText, detectLanguage } from './adCopyQa';
 
 /** Numbers in ads may come only from these. A catalog snapshot is not one of them. */
 export const TRUSTED_METRIC_STATUSES: readonly FactVerificationStatus[] = [
@@ -500,57 +502,204 @@ interface GuardableCampaign {
   metricClaimFlags?: string[];
 }
 
-/** Strip untrusted claims from generated search and display copy. Empty lines are dropped. */
+/**
+ * True when the first-decision days figure is the page's own number. Springer/BMC pages report a
+ * median, so "median" wording is only accurate then; other sources get neutral wording.
+ */
+export function decisionDaysFromLandingPage(facts: MetricCarrier): boolean {
+  const days = facts?.firstDecisionDays;
+  if (days == null) return false;
+  const source = fieldProvenance(facts, 'firstDecisionDays');
+  if (source) return /page/i.test(source);
+  const pageMetrics = ((facts as any)?.extractedFacts?.pageMetrics || []) as Array<{ kind?: string; numericValue?: number | null }>;
+  return pageMetrics.some((m) => m.kind === 'first_decision_days' && Number(m.numericValue) === Number(days));
+}
+
+type GuardLang = 'EN' | 'ZH' | 'JA';
+type LineKind = 'headline' | 'description' | 'callout' | 'shortHeadline' | 'longHeadline' | 'displayDescription' | 'bannerHeadline' | 'bannerSubtext';
+
+const LINE_LIMITS: Record<LineKind, number | undefined> = {
+  headline: 30, description: 90, callout: 25, shortHeadline: 30, longHeadline: 90, displayDescription: 90,
+  bannerHeadline: undefined, bannerSubtext: undefined,
+};
+
+function guardLanguage(text: string | undefined, fallback: unknown): GuardLang {
+  if (text && /[\u3040-\u30ff]/.test(text)) return 'JA';
+  if (text && /[\u4e00-\u9fa5]/.test(text)) return 'ZH';
+  if (text && /[A-Za-z]/.test(text)) return 'EN';
+  return fallback === 'ZH' || fallback === 'JA' ? fallback : 'EN';
+}
+
+/** Complete, claim-free lines built only from verified facts. Used when a drifting line is dropped. */
+function replacementPool(kind: LineKind, lang: GuardLang, facts: MetricCarrier): string[] {
+  const name = (facts?.journalName || '').trim();
+  const publisher = (facts?.publisher || '').trim();
+  const jif = formatJifClaim(facts);
+  const short = kind === 'headline' || kind === 'shortHeadline' || kind === 'callout' || kind === 'bannerHeadline';
+  if (lang === 'ZH') {
+    return short
+      ? [...(name ? [`${name} 官方网站`, name] : []), ...(jif ? [jif] : []), '同行评议学术期刊', '查看期刊目标与范围', '在线投稿通道', '阅读最新研究成果', '作者投稿指南']
+      : [`${name ? `${name}：` : ''}投稿前请查看期刊目标与范围及作者指南。`, '阅读最新同行评议研究，确认您的研究是否符合期刊范围。', '通过官方投稿系统在线提交稿件，投稿要求请见作者指南。'];
+  }
+  if (lang === 'JA') {
+    return short
+      ? [...(name ? [`${name} 公式サイト`, name] : []), ...(jif ? [jif] : []), '査読付き学術誌', '目的と範囲を確認', 'オンライン投稿', '最新の研究論文', '投稿規程を確認']
+      : [`${name ? `${name}：` : ''}投稿前に目的と範囲、投稿規程をご確認ください。`, '最新の査読付き論文を読み、研究テーマの適合性をご確認ください。', '公式投稿システムからオンラインで原稿を提出できます。'];
+  }
+  return short
+    ? [...(name ? [name, `${name} Journal Site`] : []), ...(jif ? [jif] : []), ...(publisher ? [`Published by ${publisher}`] : []), 'Peer-Reviewed Research', 'Explore Aims and Scope', 'Submit Your Manuscript', 'Read the Latest Articles', 'Author Guidelines']
+    : [`Read the aims and scope${name ? ` of ${name}` : ''} and the author guidelines before you submit.`, 'Explore recent peer-reviewed articles and check whether your research fits the journal scope.', 'Submit your manuscript online through the official journal submission system.'];
+}
+
+const SITELINK_POOL: Record<GuardLang, Array<{ title: string; desc: string }>> = {
+  EN: [
+    { title: 'Aims and Scope', desc: 'See the topics the journal covers' },
+    { title: 'Author Guidelines', desc: 'Prepare your manuscript' },
+    { title: 'Submit Manuscript', desc: 'Use the official online portal' },
+    { title: 'Latest Articles', desc: 'Read recent peer-reviewed research' },
+  ],
+  ZH: [
+    { title: '期刊目标与范围', desc: '了解期刊收稿主题' },
+    { title: '作者指南', desc: '投稿前准备稿件' },
+    { title: '在线投稿', desc: '官方投稿系统' },
+    { title: '最新文章', desc: '阅读最新同行评议研究' },
+  ],
+  JA: [
+    { title: '目的と範囲', desc: '掲載テーマを確認' },
+    { title: '投稿規程', desc: '原稿の準備方法' },
+    { title: 'オンライン投稿', desc: '公式投稿システム' },
+    { title: '最新論文', desc: '最新の査読付き研究' },
+  ],
+};
+
+/** Google responsive search ads need at least this many assets. */
+export const GOOGLE_RSA_MIN = { headlines: 3, descriptions: 2 } as const;
+
+/**
+ * Strip untrusted claims from generated search and display copy.
+ * A line the guard would cut mid-claim (leaving "First Decision in") is dropped whole and replaced
+ * with another complete, faithful line in the same language; lists are backfilled to Google minimums.
+ */
 export function guardAdCopy<T extends GuardableCampaign>(campaign: T, facts: MetricCarrier): T {
   const flags: string[] = [];
+  const outputLanguage = (campaign as { outputLanguage?: unknown }).outputLanguage;
 
-  const guardLine = (value: string | undefined): string => {
-    const result = guardMetricClaims(value || '', facts);
+  /** Returns the line unchanged if it is clean, otherwise '' (never a half-stripped fragment). */
+  const cleanLine = (value: string | undefined, keyword = false): string => {
+    const original = (value || '').trim();
+    if (!original) return '';
+    const result = guardMetricClaims(original, facts);
     flags.push(...result.flags);
+    if (result.flags.some((f) => /^Stripped/.test(f))) {
+      flags.push(`Dropped "${original}": a claim was removed, the rest would be an unfinished line`);
+      return '';
+    }
+    const check = checkFaithfulness(result.text, facts, { keyword });
+    if (!check.ok) {
+      flags.push(...check.problems.map((problem) => `Dropped "${result.text}": ${problem}`));
+      return '';
+    }
     return result.text;
   };
 
+  /** A replacement that passes the same guards, fits the limit and is not already used. */
+  const quietlyClean = (text: string): boolean =>
+    guardMetricClaims(text, facts).flags.length === 0 && checkFaithfulness(text, facts).ok;
+  const fits = (text: string, max: number | undefined) =>
+    checkAdText(text, { maxWidth: max, language: detectLanguage(text) }).length === 0;
+  const replacement = (kind: LineKind, lang: GuardLang, used: Set<string>): string => {
+    for (const candidate of replacementPool(kind, lang, facts)) {
+      if (used.has(candidate) || !fits(candidate, LINE_LIMITS[kind]) || !quietlyClean(candidate)) continue;
+      return candidate;
+    }
+    return '';
+  };
+
+  const guardList = <I extends CopyText>(items: I[], kind: LineKind, min: number): I[] => {
+    const used = new Set(items.map((i) => (i.text || '').trim()));
+    const out: I[] = [];
+    for (const item of items) {
+      const text = cleanLine(item.text);
+      if (text) { out.push({ ...item, text }); continue; }
+      const lang = guardLanguage(item.text, outputLanguage);
+      const alt = replacement(kind, lang, used);
+      if (alt) {
+        used.add(alt);
+        flags.push(`Replaced with "${alt}"`);
+        out.push({ ...item, text: alt, sourceFact: 'Verified journal facts' } as I);
+      }
+    }
+    const lang = guardLanguage(items[0]?.text, outputLanguage);
+    while (out.length < min) {
+      const alt = replacement(kind, lang, used);
+      if (!alt) break;
+      used.add(alt);
+      out.push({ text: alt, sourceFact: 'Verified journal facts', language: lang, category: 'Backfill', positionRecommendation: 'Any Position' } as unknown as I);
+    }
+    return out;
+  };
+
   if (campaign.searchAds?.headlines) {
-    campaign.searchAds.headlines = campaign.searchAds.headlines
-      .map((headline) => ({ ...headline, text: guardLine(headline.text) }))
-      .filter((headline) => headline.text);
+    campaign.searchAds.headlines = guardList(campaign.searchAds.headlines, 'headline', GOOGLE_RSA_MIN.headlines);
   }
   if (campaign.searchAds?.descriptions) {
-    campaign.searchAds.descriptions = campaign.searchAds.descriptions
-      .map((description) => ({ ...description, text: guardLine(description.text) }))
-      .filter((description) => description.text);
+    campaign.searchAds.descriptions = guardList(campaign.searchAds.descriptions, 'description', GOOGLE_RSA_MIN.descriptions);
   }
   if (campaign.searchAds?.callouts) {
+    const used = new Set(campaign.searchAds.callouts);
     campaign.searchAds.callouts = campaign.searchAds.callouts
-      .map((callout) => guardLine(callout))
+      .map((callout) => {
+        const text = cleanLine(callout);
+        if (text) return text;
+        const alt = replacement('callout', guardLanguage(callout, outputLanguage), used);
+        if (alt) used.add(alt);
+        return alt;
+      })
       .filter(Boolean);
   }
   if (campaign.searchAds?.sitelinks) {
+    const usedTitles = new Set(campaign.searchAds.sitelinks.map((l) => l.title || ''));
     campaign.searchAds.sitelinks = campaign.searchAds.sitelinks
-      .map((sitelink) => ({
-        ...sitelink,
-        title: guardLine(sitelink.title),
-        desc: guardLine(sitelink.desc),
-      }))
-      .filter((sitelink) => sitelink.title || sitelink.desc);
+      .map((sitelink): GuardableSitelink | null => {
+        const title = cleanLine(sitelink.title);
+        const desc = cleanLine(sitelink.desc);
+        if (title && desc) return { ...sitelink, title, desc };
+        // A sitelink needs both lines: replace the pair from verified templates, or drop it.
+        const lang = guardLanguage(sitelink.title || sitelink.desc, outputLanguage);
+        const alt = SITELINK_POOL[lang].find((p) => !usedTitles.has(p.title));
+        if (!alt) return null;
+        usedTitles.add(alt.title);
+        flags.push(`Replaced sitelink "${sitelink.title}" with "${alt.title}"`);
+        return { ...sitelink, title: alt.title, desc: alt.desc };
+      })
+      .filter((s): s is GuardableSitelink => !!s);
   }
   if (campaign.keywords?.englishSearchKeywords) {
     campaign.keywords.englishSearchKeywords = campaign.keywords.englishSearchKeywords
-      .map((item) => ({ ...item, keyword: guardLine(item.keyword) }))
+      .map((item) => ({ ...item, keyword: cleanLine(item.keyword, true) }))
       .filter((item) => item.keyword);
   }
   if (campaign.keywords?.chineseAuthorKeywords) {
     campaign.keywords.chineseAuthorKeywords = campaign.keywords.chineseAuthorKeywords
-      .map((item) => ({ ...item, keywordZh: guardLine(item.keywordZh) }))
+      .map((item) => ({ ...item, keywordZh: cleanLine(item.keywordZh, true) }))
       .filter((item) => item.keywordZh);
   }
   if (campaign.displayAds) {
     const display = campaign.displayAds;
-    display.shortHeadline = guardLine(display.shortHeadline);
-    display.longHeadline = guardLine(display.longHeadline);
-    display.description = guardLine(display.description);
-    display.bannerHeadlineZh = guardLine(display.bannerHeadlineZh);
-    display.bannerSubtextZh = guardLine(display.bannerSubtextZh);
+    const used = new Set<string>();
+    const field = (value: string | undefined, kind: LineKind, langHint?: GuardLang): string | undefined => {
+      if (value === undefined) return value;
+      const text = cleanLine(value);
+      if (text || !value.trim()) return text;
+      const alt = replacement(kind, langHint || guardLanguage(value, outputLanguage), used);
+      if (alt) used.add(alt);
+      return alt;
+    };
+    display.shortHeadline = field(display.shortHeadline, 'shortHeadline');
+    display.longHeadline = field(display.longHeadline, 'longHeadline');
+    display.description = field(display.description, 'displayDescription');
+    display.bannerHeadlineZh = field(display.bannerHeadlineZh, 'bannerHeadline', 'ZH');
+    display.bannerSubtextZh = field(display.bannerSubtextZh, 'bannerSubtext', 'ZH');
   }
 
   campaign.metricClaimFlags = flags;

@@ -50,7 +50,7 @@ export interface HttpExchange {
 
 export interface FetchLandingPageDeps {
   /** Test double. Production connects to each vetted public address with the original Host / SNI. */
-  httpGet?: (url: URL, timeoutMs: number, pinnedIp?: string, signal?: AbortSignal) => Promise<HttpExchange>;
+  httpGet?: (url: URL, timeoutMs: number, pinnedIp?: string, signal?: AbortSignal, cookie?: string) => Promise<HttpExchange>;
   /** Test double. Production uses DNS and refuses private or reserved answers. */
   resolveHost?: (hostname: string, signal?: AbortSignal) => Promise<string[]>;
   /** Hard deadline for the whole fetch, including redirects. Defaults to FETCH_TIMEOUT_MS. */
@@ -341,7 +341,7 @@ function headerValue(headers: Record<string, string | string[] | undefined>, nam
   return direct;
 }
 
-function nodeHttpGet(url: URL, pinnedIp: string, timeoutMs: number, signal: AbortSignal): Promise<HttpExchange> {
+function nodeHttpGet(url: URL, pinnedIp: string, timeoutMs: number, signal: AbortSignal, cookie?: string): Promise<HttpExchange> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const fail = (err: Error) => {
@@ -378,6 +378,7 @@ function nodeHttpGet(url: URL, pinnedIp: string, timeoutMs: number, signal: Abor
           'User-Agent': USER_AGENT,
           Accept: 'text/html,application/xhtml+xml;q=0.9',
           'Accept-Language': 'en',
+          ...(cookie ? { Cookie: cookie } : {}),
         },
         timeout: timeoutMs,
         signal,
@@ -444,14 +445,15 @@ async function requestVettedAddress(
   url: URL,
   addresses: string[],
   deps: FetchLandingPageDeps,
-  signal: AbortSignal
+  signal: AbortSignal,
+  cookie?: string
 ): Promise<HttpExchange> {
   let lastError: Error | null = null;
   for (const address of addresses) {
     if (signal.aborted) throw new LandingPageError('Landing page request timed out.', 'timeout');
     try {
-      if (deps.httpGet) return await deps.httpGet(url, FETCH_TIMEOUT_MS, address, signal);
-      return await nodeHttpGet(url, address, FETCH_TIMEOUT_MS, signal);
+      if (deps.httpGet) return await deps.httpGet(url, FETCH_TIMEOUT_MS, address, signal, cookie);
+      return await nodeHttpGet(url, address, FETCH_TIMEOUT_MS, signal, cookie);
     } catch (err) {
       if (signal.aborted) throw new LandingPageError('Landing page request timed out.', 'timeout');
       if (err instanceof LandingPageError && err.code !== 'timeout' && err.code !== 'http') throw err;
@@ -461,19 +463,85 @@ async function requestVettedAddress(
   throw lastError ?? new LandingPageError('Landing page request failed.', 'http');
 }
 
+/** Query params the Springer idp cookie handshake appends. They are session noise, not part of the page. */
+const SESSION_PARAMS = ['error', 'code', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+
+/** Final URL with idp/session params removed, e.g. link.springer.com/journal/12916?error=cookies_not_supported&code=… */
+export function cleanFinalUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    const isSessionError = url.searchParams.get('error') === 'cookies_not_supported';
+    for (const key of SESSION_PARAMS) {
+      if ((key === 'error' || key === 'code') && !isSessionError) continue;
+      url.searchParams.delete(key);
+    }
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return raw;
+  }
+}
+
+const MULTI_LABEL_PUBLIC_SUFFIXES = new Set([
+  'co.uk', 'ac.uk', 'org.uk', 'gov.uk', 'com.cn', 'edu.cn', 'org.cn', 'net.cn', 'gov.cn', 'ac.cn',
+  'co.jp', 'ac.jp', 'or.jp', 'ne.jp', 'go.jp', 'com.au', 'edu.au', 'org.au', 'co.nz', 'com.hk', 'com.tw',
+  'co.in', 'com.br', 'com.sg', 'co.kr', 'github.io', 'vercel.app', 'appspot.com', 'web.app',
+]);
+
+/** True when a Set-Cookie Domain is a bare TLD or a public suffix (e.g. "com", "co.uk"). */
+export function isPublicSuffixDomain(domain: string): boolean {
+  const d = domain.replace(/^\./, '').toLowerCase();
+  if (!d.includes('.')) return true;
+  return MULTI_LABEL_PUBLIC_SUFFIXES.has(d);
+}
+
+/** Minimal per-fetch cookie jar keyed by registrable host suffix. Cookies never leave the allowed hosts. */
+export class CookieJar {
+  private cookies = new Map<string, { domain: string; value: string }>();
+
+  store(url: URL, header: string | string[] | undefined) {
+    const lines = Array.isArray(header) ? header : header ? [header] : [];
+    for (const line of lines) {
+      const [pair, ...attrs] = line.split(';');
+      const eq = pair.indexOf('=');
+      if (eq <= 0) continue;
+      const name = pair.slice(0, eq).trim();
+      const value = pair.slice(eq + 1).trim();
+      const domainAttr = attrs.map((a) => a.trim()).find((a) => /^domain=/i.test(a));
+      const domain = (domainAttr ? domainAttr.slice(7) : url.hostname).replace(/^\./, '').toLowerCase();
+      const host = url.hostname.toLowerCase();
+      if (host !== domain && !host.endsWith(`.${domain}`)) continue;
+      // Domain=com / Domain=co.uk would send the cookie to every site under that suffix.
+      if (domainAttr && domain !== host && isPublicSuffixDomain(domain)) continue;
+      this.cookies.set(`${domain}|${name}`, { domain, value: `${name}=${value}` });
+    }
+  }
+
+  header(url: URL): string | undefined {
+    const host = url.hostname.toLowerCase();
+    const values = [...this.cookies.values()]
+      .filter((c) => host === c.domain || host.endsWith(`.${c.domain}`))
+      .map((c) => c.value);
+    return values.length ? values.join('; ') : undefined;
+  }
+}
+
 async function readLandingPage(rawUrl: string, deps: FetchLandingPageDeps, signal: AbortSignal): Promise<FetchedLandingPage> {
   let current = parseAllowedJournalUrl(rawUrl);
   const seen = new Set<string>();
+  const jar = new CookieJar();
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
     if (signal.aborted) throw new LandingPageError('Landing page request timed out.', 'timeout');
     current.hash = '';
-    const fingerprint = current.toString();
+    // The idp handshake sends the browser back to the same URL once a cookie is set, so cookie state is part of the identity.
+    const fingerprint = `${current.toString()}|${jar.header(current) || ''}`;
     if (seen.has(fingerprint)) throw new LandingPageError('Landing page redirected to itself.', 'http');
     seen.add(fingerprint);
 
     const addresses = await assertPublicResolution(current.hostname, deps.resolveHost, signal);
-    const response = await requestVettedAddress(current, addresses, deps, signal);
+    const response = await requestVettedAddress(current, addresses, deps, signal, jar.header(current));
+    jar.store(current, response.headers['set-cookie']);
 
     if (response.status >= 300 && response.status < 400) {
       const location = headerValue(response.headers, 'location');
@@ -494,7 +562,7 @@ async function readLandingPage(rawUrl: string, deps: FetchLandingPageDeps, signa
     if (Buffer.byteLength(response.body || '') > MAX_HTML_BYTES) {
       throw new LandingPageError('Landing page exceeded the size limit.', 'size');
     }
-    return { html: response.body || '', finalUrl: current.toString() };
+    return { html: response.body || '', finalUrl: cleanFinalUrl(current.toString()) };
   }
 
   throw new LandingPageError('Landing page redirected too many times.', 'http');
@@ -509,8 +577,8 @@ export async function fetchLandingPage(
 ): Promise<FetchedLandingPage> {
   if (fetchPage) {
     const provided = await fetchPage(rawUrl);
-    if (typeof provided === 'string') return { html: provided, finalUrl: rawUrl };
-    return { html: provided.html, finalUrl: provided.finalUrl || rawUrl };
+    if (typeof provided === 'string') return { html: provided, finalUrl: cleanFinalUrl(rawUrl) };
+    return { html: provided.html, finalUrl: cleanFinalUrl(provided.finalUrl || rawUrl) };
   }
   const timeoutMs = deps.timeoutMs ?? FETCH_TIMEOUT_MS;
   const controller = new AbortController();
@@ -826,7 +894,8 @@ function articleTypes(pageAnchors: Anchor[], html: string): string[] {
       const slug = path.split('/').filter(Boolean).pop() || '';
       if (!ARTICLE_TYPE_SLUGS.has(slug)) continue;
       if (/^\/subjects\//.test(path)) continue;
-      if (anchor.text && !labels.includes(anchor.text)) labels.push(anchor.text);
+      if (!anchor.text || /^(?:view\s+all\b|all\s+articles?$|articles?$|browse\b|see\s+all\b)/i.test(anchor.text.trim())) continue;
+      if (!labels.includes(anchor.text)) labels.push(anchor.text);
     } catch {
       continue;
     }
@@ -837,6 +906,38 @@ function articleTypes(pageAnchors: Anchor[], html: string): string[] {
     if (extra && !labels.includes(extra)) labels.push(extra);
   }
   return labels;
+}
+
+/** Databases listed under "Abstracted and indexed in" on Springer Link / BMC journal pages. */
+export function indexedIn(html: string): string[] {
+  const block = html.match(/>\s*(?:Abstracted\s+and\s+indexed\s+in|Indexed\s+in|Indexing)\s*<\/(?:dt|h2|h3|h4|p|span)>([\s\S]{0,6000}?)<\/(?:ul|dd)>/i);
+  if (!block) return [];
+  const out: string[] = [];
+  for (const item of block[1].matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)) {
+    const name = decodeHtml(item[1]);
+    if (name && name.length <= 80 && !out.includes(name)) out.push(name);
+  }
+  return prioritiseIndexing(out);
+}
+
+/** Databases searchers and authors recognise, first. Order: citation indexes, then major A&I, then the rest as listed. */
+const KEY_INDEXES: RegExp[] = [
+  /Science Citation Index Expanded|\bSCIE\b/i,
+  /Social Science Citation Index|\bSSCI\b/i,
+  /^SCOPUS$/i,
+  /^Medline$|^PubMed$/i,
+  /PubMed Central/i,
+  /^DOAJ$/i,
+  /EI Compendex/i,
+  /^EMBASE$/i,
+];
+
+export function prioritiseIndexing(names: string[]): string[] {
+  const rank = (name: string) => {
+    const i = KEY_INDEXES.findIndex((re) => re.test(name));
+    return i === -1 ? KEY_INDEXES.length : i;
+  };
+  return names.map((name, i) => ({ name, i })).sort((a, b) => rank(a.name) - rank(b.name) || a.i - b.i).map((x) => x.name);
 }
 
 function editors(html: string): string | null {
@@ -1213,6 +1314,9 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
   const specialIssue = /calls for papers|data-test=["']submission-status["'][^>]*>\s*Open for submissions/i.test(html);
   const aims = chooseAims(html, jsonLd);
   const decision = metrics.find((metric) => metric.kind === 'first_decision_days');
+  const listed = indexedIn(html);
+  // nature.com /journal-information uses a <br>/<p> list instead of <li> items.
+  const indexing = listed.length ? listed : prioritiseIndexing(indexedInList(html));
 
   const facts: ExtractedPageFacts = {
     journalTitle: field(journalTitle, journalTitle ? 0.9 : 0),
@@ -1238,8 +1342,8 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
     peerReviewModel: field(null, 0),
     openAccessPolicy: field(openAccess(html), 0.75),
     specialIssuesAvailable: field(specialIssue, specialIssue ? 0.7 : 0),
+    indexedIn: field(indexing, indexing.length ? 0.85 : 0),
     pageMetrics: metrics,
-    indexedIn: indexedInList(html),
     pageFeatures: [
       ...collectPageFeatures(html, pageAnchors, aims, types, decision?.numericValue ?? null),
       ...usageDateFeatures(downloadRaw, viewsRaw, html),
@@ -1248,6 +1352,16 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
     rawConfidenceAverage: 0,
     extractedDate: new Date().toISOString(),
   };
+
+  attachProvenance(facts, cleanFinalUrl(pageUrl), {
+    aimsAndScopeSummary: aims ? aims.slice(0, 200) : null,
+    firstDecisionDays: decision ? decision.value : null,
+    indexedIn: indexing.length ? `Abstracted and indexed in: ${indexing.join(', ')}` : null,
+    articleProcessingChargeUsd: apc !== null ? `$${apc}` : null,
+    editorInChief: facts.editorInChief.value,
+    openAccessPolicy: facts.openAccessPolicy.value,
+    journalTitle: journalTitle,
+  });
 
   const confidences = [
     facts.journalTitle,
@@ -1261,6 +1375,18 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
   ].map((item) => item.confidence);
   facts.rawConfidenceAverage = confidences.reduce((sum, value) => sum + value, 0) / confidences.length;
   return facts;
+}
+
+/** Every filled field records the page it came from; key fields also keep the page text that supports them. */
+function attachProvenance(facts: ExtractedPageFacts, sourceUrl: string, evidence: Record<string, string | null | undefined>) {
+  for (const [key, value] of Object.entries(facts)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !('confidence' in value)) continue;
+    const item = value as ExtractedFactField<unknown>;
+    if (item.confidence <= 0) continue;
+    item.sourceUrl = sourceUrl;
+    const quote = evidence[key];
+    if (quote) item.evidence = quote;
+  }
 }
 
 const INDEX_NAMES: Array<[RegExp, string]> = [
@@ -1303,7 +1429,6 @@ export function combineExtractedPages(primary: ExtractedPageFacts, secondary: Ex
   }
   const kinds = new Set(primary.pageMetrics.map((item) => item.kind));
   out.pageMetrics = [...primary.pageMetrics, ...secondary.pageMetrics.filter((item) => !kinds.has(item.kind))];
-  out.indexedIn = (primary.indexedIn && primary.indexedIn.length ? primary.indexedIn : secondary.indexedIn) || [];
   const featureKinds = new Set(primary.pageFeatures.map((item) => item.kind));
   out.pageFeatures = [...primary.pageFeatures, ...secondary.pageFeatures.filter((item) => !featureKinds.has(item.kind))];
   return out;
@@ -1453,6 +1578,12 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
     provenance.openAccessType = { source: 'page_sourced', confidence: page.openAccessPolicy.confidence, note: 'page-sourced' };
   }
 
+  const pageIndexing = page.indexedIn?.value || [];
+  if (pageIndexing.length && (!base.indexing?.length || catalogSnapshot)) {
+    result.indexing = pageIndexing;
+    provenance.indexing = { source: 'page_sourced', confidence: page.indexedIn!.confidence, note: 'Abstracted and indexed in (journal page)' };
+  }
+
   const applyNumber = (factKey: NumberFactKey, value: number | null | undefined, year?: number | null, note?: string) => {
     if (value === null || value === undefined || Number.isNaN(value)) return;
     const existing = base[factKey];
@@ -1510,10 +1641,6 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
       year: fiveYear.year ?? undefined,
       note: `Journal page states ${fiveYear.numericValue}${fiveYear.year ? ` (${fiveYear.year})` : ''}. Reference only, not Clarivate-verified.`,
     };
-  }
-  if (page.indexedIn && page.indexedIn.length && !userProvided && !verifiedLive) {
-    result.indexing = page.indexedIn;
-    provenance.indexing = { source: 'page_sourced', confidence: 0.8, note: 'page-sourced' };
   }
   applyNumber('firstDecisionDays', decision?.numericValue, decision?.year, 'page-sourced');
   applyNumber('apcUsd', apc?.numericValue, apc?.year, 'page-sourced');

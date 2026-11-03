@@ -37,7 +37,7 @@ OmniFact turns a journal's own landing page and verified metrics into ready-to-p
 
 ## 1. Executive Summary & Vision
 
-**Marketing Content Generation Engine** is an enterprise-grade campaign creation, ad compliance, and targeting studio built specifically for scientific journals across **Springer Nature**, **Nature Portfolio**, **BioMed Central (BMC)**, and **SpringerLink**.
+**OmniFact** is an enterprise-grade campaign creation, ad compliance, and targeting studio built specifically for scientific journals across **Springer Nature**, **Nature Portfolio**, **BioMed Central (BMC)**, and **SpringerLink**.
 
 Scholarly author marketing operates under strict institutional and regulatory constraints:
 - **Zero Hallucination Tolerance:** Fabricating journal impact metrics (e.g., Impact Factor, CAS Chinese Academy of Sciences quartile zones, review turnaround times) damages publisher credibility and violates advertising standards.
@@ -45,7 +45,7 @@ Scholarly author marketing operates under strict institutional and regulatory co
 - **Cross-Border Bilingual Constraints:** Academic marketing targeting Chinese researchers must handle Google Ads' unique CJK character width calculations (2 visual width per Chinese character vs. 1 per Latin character) while preventing awkward language mixing.
 - **Advertising Policy & Trademark Compliance:** Academic search ads must prevent competitor trademark infringement (Elsevier, Science, Cell, The Lancet, PNAS), avoid ungrounded superlatives ("fastest peer review", "guaranteed acceptance"), and maintain an **Academic Integrity Negative Keyword Firewall** against paper mills and ghostwriting agencies.
 
-Marketing Content Generation Engine combines **Gemini 3.8 Flash** with deterministic domain-specific validation engines, a persistent metrics cache, interactive Google SERP & IAB display previews, and 1-click **Google Ads Editor import-ready CSV** exports.
+OmniFact combines **Gemini 3.8 Flash** with deterministic domain-specific validation engines, a persistent metrics cache, interactive Google SERP & IAB display previews, and 1-click **Google Ads Editor import-ready CSV** exports.
 
 ---
 
@@ -128,8 +128,8 @@ Scientific advertising demands rigorous data verification. Metric numbers in ads
 │                            │ Stored by ISSN and JCR year. The key      │
 │                            │ stays on the server (CLARIVATE_API_KEY).  │
 ├────────────────────────────┼───────────────────────────────────────────┤
-│ page_sourced               │ Read from the journal page. The page      │
-│                            │ client is unwired in this build.          │
+│ page_sourced               │ Read from the journal page, with source   │
+│                            │ URL and evidence snippet per field.       │
 ├────────────────────────────┼───────────────────────────────────────────┤
 │ user_provided              │ Typed and saved by the user.              │
 ├────────────────────────────┼───────────────────────────────────────────┤
@@ -627,4 +627,4 @@ NODE_ENV=production npm start
 
 ## 12. Ethical & Academic Integrity Statement
 
-Marketing Content Generation Engine is designed to uphold the highest standards of scientific publishing ethics. It does not support or generate deceptive claims, artificial review acceleration guarantees, or ungrounded promotional hype. All campaigns generated through this engine are grounded in verified journal indexing criteria and adhere to the **Committee on Publication Ethics (COPE)** guidelines and **Google Ads Advertising Policies**.
+OmniFact is designed to uphold the highest standards of scientific publishing ethics. It does not support or generate deceptive claims, artificial review acceleration guarantees, or ungrounded promotional hype. All campaigns generated through this engine are grounded in verified journal indexing criteria and adhere to the **Committee on Publication Ethics (COPE)** guidelines and **Google Ads Advertising Policies**.

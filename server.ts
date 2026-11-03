@@ -15,7 +15,7 @@ import { JOURNAL_CATALOG } from './src/data/journalCatalog';
 import { NATURE_HOMEPAGE_URL, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
 import { CLARIVATE_WOS_JOURNALS_SOURCE, installClarivateClient, pageFacts } from './src/utils/metricSources';
 import { clarivateWosJournals as clarivateHttpClient } from './src/utils/clarivateHttp';
-import { factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection } from './src/utils/metricClaims';
+import { decisionDaysFromLandingPage, factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection } from './src/utils/metricClaims';
 import { withChinaChannels } from './src/china/withChinaChannels';
 import type { ClarivateJournalMetrics, ExtractedPageFacts, PageSourcedFeature } from './src/types';
 import { getMetricsStore } from './src/utils/metricsStore';
@@ -1361,7 +1361,7 @@ export function generateStageHeadlines(
   facts = withAdIdentity(factsForCopy(facts));
   const jifClaim = formatJifClaim(facts);
   if (outputLanguage === 'JA') {
-    return japaneseHeadlines(facts, stage, { jifClaim, firstDecisionDays: facts.firstDecisionDays ?? null });
+    return japaneseHeadlines(facts, stage, { jifClaim, firstDecisionDays: facts.firstDecisionDays ?? null, decisionDaysIsMedian: decisionDaysFromLandingPage(facts) });
   }
   const shortName = (shortenName(facts.journalName, 18) || facts.journalName);
   const disciplineShort = (shortenName((facts.primaryDiscipline || 'Scientific').split('(')[0].trim(), 14) || 'Scientific');
@@ -1430,7 +1430,7 @@ export function generateStageHeadlines(
       ...(facts.articleDownloads ? [{ text: smartClamp(`${formatUsageCount(facts.articleDownloads)} Article Downloads`, 30), sourceFact: 'Article downloads', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       ...(facts.fullTextViews ? [{ text: smartClamp(`${formatUsageCount(facts.fullTextViews)} Full-Text Views`, 30), sourceFact: 'Full-text views', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       { text: smartClamp(`Rigorous Peer Review Standards`, 30), sourceFact: 'Editorial Standards', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' },
-      ...(facts.firstDecisionDays ? [{ text: smartClamp(`Avg ${facts.firstDecisionDays} Days to 1st Decision`, 30), sourceFact: `${facts.firstDecisionDays} Days Decision`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' }] : []),
+      ...(facts.firstDecisionDays ? [{ text: smartClamp(`${decisionDaysFromLandingPage(facts) ? 'Median ' : ''}${facts.firstDecisionDays} Days to 1st Decision`, 30), sourceFact: `${facts.firstDecisionDays} Days Decision`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' }] : []),
       { text: smartClamp(`Compare Publishing Options`, 30), sourceFact: 'Comparison Evaluation', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' },
       { text: smartClamp(`Transparent APC & OA Options`, 30), sourceFact: facts.openAccessType || 'Open Access', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' },
       { text: smartClamp(`Accepted Article Types`, 30), sourceFact: 'Article Formats', language: 'EN', category: 'Scope & Community', positionRecommendation: 'Position 3' },
@@ -1444,7 +1444,7 @@ export function generateStageHeadlines(
     const zh: HeadlineSeed[] = [
       ...(facts.casZone ? [{ text: smartClamp(`${safeShorten(facts.casZone, 22)}评议标准`, 30), sourceFact: facts.casZone, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 1' }] : []),
       { text: smartClamp(`查阅期刊范围与收稿类型`, 30), sourceFact: 'Scope Check', language: 'ZH', category: 'Scope & Community', positionRecommendation: 'Position 1' },
-      ...(facts.firstDecisionDays ? [{ text: smartClamp(`平均初审周期约${facts.firstDecisionDays}天`, 30), sourceFact: `${facts.firstDecisionDays}天初审`, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(facts.firstDecisionDays ? [{ text: smartClamp(decisionDaysFromLandingPage(facts) ? `初审周期中位数${facts.firstDecisionDays}天` : `初审周期约${facts.firstDecisionDays}天`, 30), sourceFact: `${facts.firstDecisionDays}天初审`, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       ...(facts.articleDownloads ? [{ text: smartClamp(`文章下载量${formatUsageCount(facts.articleDownloads)}`, 30), sourceFact: 'Article downloads', language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       ...(facts.fullTextViews ? [{ text: smartClamp(`全文浏览量${formatUsageCount(facts.fullTextViews)}`, 30), sourceFact: 'Full-text views', language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       { text: smartClamp(`评估稿件学术契合度`, 30), sourceFact: 'Fit CTA', language: 'ZH', category: 'Call to Action', positionRecommendation: 'Position 2' },
@@ -1513,7 +1513,7 @@ export function generateStageHeadlines(
 export function generateStageDescriptions(facts: any, stage: StageCode, outputLanguage: AdLanguage = 'all') {
   if (outputLanguage === 'JA') {
     const f = withAdIdentity(factsForCopy(facts));
-    return japaneseDescriptions(f, stage, { jifClaim: formatJifClaim(f), firstDecisionDays: f.firstDecisionDays ?? null });
+    return japaneseDescriptions(f, stage, { jifClaim: formatJifClaim(f), firstDecisionDays: f.firstDecisionDays ?? null, decisionDaysIsMedian: decisionDaysFromLandingPage(f) });
   }
   facts = withAdIdentity(factsForCopy(facts));
   const jifClaim = formatJifClaim(facts);
@@ -1694,7 +1694,7 @@ export function generateStageDisplayAd(facts: any, stage: StageCode, outputLangu
   facts = withAdIdentity(factsForCopy(facts));
   const jifClaim = formatJifClaim(facts);
   if (outputLanguage === 'JA') {
-    return japaneseDisplayAd(facts, stage, { jifClaim, firstDecisionDays: facts.firstDecisionDays ?? null });
+    return japaneseDisplayAd(facts, stage, { jifClaim, firstDecisionDays: facts.firstDecisionDays ?? null, decisionDaysIsMedian: decisionDaysFromLandingPage(facts) });
   }
   const shortName = (shortenName(facts.journalName, 18) || facts.journalName);
 
@@ -1818,6 +1818,7 @@ export function generateDeterministicCampaign(
       ? localizedCallouts(stage, outputLanguage, facts, {
           jifClaim: formatJifClaim(copyFacts),
           firstDecisionDays: copyFacts.firstDecisionDays ?? null,
+          decisionDaysIsMedian: decisionDaysFromLandingPage(copyFacts),
           casZone: copyFacts.casZone ?? null,
         })
       : null;

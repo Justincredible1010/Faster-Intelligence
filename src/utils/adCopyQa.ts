@@ -24,7 +24,7 @@ export const PLATFORM_LIMITS = {
   google: { headline: 30, description: 90, sitelinkText: 25, sitelinkDescription: 35, callout: 25, snippetValue: 25, displayShortHeadline: 30, displayLongHeadline: 90, displayDescription: 90, businessName: 25 },
 } as const;
 
-export type QaIssue = 'empty' | 'unbalanced_brackets' | 'truncated' | 'trailing_fragment' | 'over_length' | 'tone' | 'prohibited_term';
+export type QaIssue = 'empty' | 'unbalanced_brackets' | 'truncated' | 'trailing_fragment' | 'over_length' | 'tone' | 'prohibited_term' | 'too_few_assets';
 export type QaLanguage = 'EN' | 'ZH' | 'JA' | undefined;
 
 export interface QaOptions {
@@ -185,6 +185,16 @@ export function qaCampaignCopy<T extends AnyCampaign>(
         .map((r: QaResult) => r.text);
       // Google needs at least 3 values; otherwise the snippet is omitted.
       search.structuredSnippet = values.length >= 3 ? { ...s.structuredSnippet, values } : undefined;
+    }
+    // Google responsive search ads need at least 3 headlines and 2 descriptions.
+    const readyCount = (list: any[] | undefined) => (list || []).filter((x: any) => x.qaReady && x.text).length;
+    if (Array.isArray(s.headlines) && readyCount(search.headlines) < 3) {
+      report.ready = false;
+      report.issues.push({ field: 'searchAds.headlines', text: `${readyCount(search.headlines)} ready headlines (Google needs at least 3)`, issues: ['too_few_assets'] });
+    }
+    if (Array.isArray(s.descriptions) && readyCount(search.descriptions) < 2) {
+      report.ready = false;
+      report.issues.push({ field: 'searchAds.descriptions', text: `${readyCount(search.descriptions)} ready descriptions (Google needs at least 2)`, issues: ['too_few_assets'] });
     }
     out.searchAds = search;
   }
