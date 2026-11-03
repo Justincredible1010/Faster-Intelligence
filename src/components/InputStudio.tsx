@@ -47,6 +47,7 @@ import {
   shownFigure,
 } from '../utils/factSourceLabel';
 import { metricFieldIsTrusted } from '../utils/metricClaims';
+import { displayCategory, quartileCategory } from '../utils/jcrQuartile';
 import { editedStageUrlToApply, suggestStageUrl } from '../utils/stageUrlSuggestion';
 import type { StageUrlRules } from '../utils/stageUrlRules';
 import { formatUsageCount } from '../utils/usageCounts';
@@ -472,6 +473,18 @@ export const InputStudio: React.FC<Props> = ({
                       </span>
                     )}
                   </div>
+                  {(clarivateFacts.jifRanks || []).some((r) => r?.category && r?.quartile) && (
+                    <ul className="mt-1 space-y-0.5" aria-label="JCR categories and quartiles">
+                      {(clarivateFacts.jifRanks || []).filter((r) => r?.category && r?.quartile).map((r, i) => {
+                        const used = r.category === quartileCategory(clarivateFacts) && r.quartile === clarivateFacts.jcrQuartile;
+                        return (
+                          <li key={`${r.category}-${i}`} className={`text-[10px] leading-snug ${used ? 'text-emerald-700 font-semibold' : 'text-slate-500'}`}>
+                            {r.quartile} in {displayCategory(r.category || '')}{r.rank ? ` (${r.rank})` : ''}{used ? ' · used in ads' : ''}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                   <span className="text-[10px] text-slate-400 block">
                     5-year: {fiveYearCopy.valueText}
                   </span>

@@ -2,6 +2,7 @@ import { ClarivateJournalMetrics, FactVerificationStatus, PageSourcedFeature } f
 import { CLARIVATE_WOS_JOURNALS_SOURCE } from './metricSources';
 import { formatUsageCount, parseUsageCount } from './usageCounts';
 import { checkFaithfulness } from './faithfulness';
+import { displayCategory, formatQuartileClaim, quartileCategory, textNamesQuartileCategory } from './jcrQuartile';
 import { checkAdText, detectLanguage } from './adCopyQa';
 
 /** Numbers in ads may come only from these. A catalog snapshot is not one of them. */
@@ -153,6 +154,12 @@ export function trustedQuartile(facts: MetricCarrier): string | null {
   return trustedText(facts, 'jcrQuartile', facts?.jcrQuartile);
 }
 
+/** Quartile claim with its category, or null when the quartile is untrusted or has no category. */
+export function trustedQuartileClaim(facts: MetricCarrier): string | null {
+  if (!trustedQuartile(facts)) return null;
+  return formatQuartileClaim(facts as any, { clarivate: metricsFromClarivateWos(facts) });
+}
+
 export function trustedCasZone(facts: MetricCarrier): string | null {
   return trustedText(facts, 'casZone', facts?.casZone);
 }
@@ -219,7 +226,15 @@ export function metricPromptSection(facts: MetricCarrier): string {
   } else {
     lines.push('- Do not state a 5-year impact factor. A journal-website or catalog figure is reference only.');
   }
-  if (quartile) lines.push(`- JCR quartile: ${quartile}`);
+  if (quartile) {
+    const claim = trustedQuartileClaim(facts);
+    if (claim) {
+      lines.push(`- JCR quartile: ${quartile} in the category ${displayCategory(quartileCategory(facts as any) || '')} (best of the journal's JCR categories)`);
+      lines.push(`- Cite the quartile exactly as: ${claim}. Never write ${quartile} without naming this category. Keep the category name in English as written. If it does not fit a short line, leave the quartile out of that line.`);
+    } else {
+      lines.push('- Do not state a JCR quartile: its subject category is not on the record.');
+    }
+  }
   if (casZone) lines.push(`- CAS zone: ${casZone}`);
   if (days != null) lines.push(`- First decision days: ${days}`);
   if (apc != null) lines.push(`- APC USD: ${apc}`);
@@ -381,15 +396,20 @@ export function guardMetricClaims(text: string, facts: MetricCarrier): MetricCla
     return '';
   });
 
+  const namesCategory = textNamesQuartileCategory(out, facts as any);
   out = out.replace(/\bQ([1-4])\b/gi, (full) => {
-    if (quartile && quartile.toLowerCase() === full.toLowerCase()) return full;
+    if (quartile && quartile.toLowerCase() === full.toLowerCase()) {
+      if (namesCategory) return full;
+      flags.push(`Stripped quartile "${full}" without its JCR category`);
+      return '';
+    }
     flags.push(`Stripped untrusted quartile "${full}"`);
     return '';
   });
 
   out = out.replace(/\b(?:zone|quartile)\s*([1-4])\b/gi, (full) => {
     const q = `q${full.match(/[1-4]/)?.[0] || ''}`;
-    if (quartile && quartile.toLowerCase() === q) return full;
+    if (quartile && quartile.toLowerCase() === q && namesCategory) return full;
     flags.push(`Stripped untrusted ranking "${full.trim()}"`);
     return '';
   });

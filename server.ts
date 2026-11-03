@@ -15,7 +15,16 @@ import { JOURNAL_CATALOG } from './src/data/journalCatalog';
 import { NATURE_HOMEPAGE_URL, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
 import { CLARIVATE_WOS_JOURNALS_SOURCE, installClarivateClient, pageFacts } from './src/utils/metricSources';
 import { clarivateWosJournals as clarivateHttpClient } from './src/utils/clarivateHttp';
-import { decisionDaysFromLandingPage, factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection } from './src/utils/metricClaims';
+import { decisionDaysFromLandingPage, factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection, trustedQuartileClaim } from './src/utils/metricClaims';
+import { formatQuartileClaim } from './src/utils/jcrQuartile';
+
+/** Quartile line that names its JCR category and fits, or null. Never a bare "Q1". */
+function quartileLine(facts: any, maxWidth: number): string | null {
+  const full = trustedQuartileClaim(facts);
+  if (full && full.length <= maxWidth) return full;
+  const short = formatQuartileClaim(facts, { clarivate: false });
+  return short && short.length <= maxWidth ? short : null;
+}
 import { withChinaChannels } from './src/china/withChinaChannels';
 import type { ClarivateJournalMetrics, ExtractedPageFacts, PageSourcedFeature } from './src/types';
 import { getMetricsStore } from './src/utils/metricsStore';
@@ -128,6 +137,7 @@ export interface JCRJournalEntry {
   impactFactor: number | null;
   fiveYearImpactFactor?: number | null;
   jcrQuartile?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | string | null;
+  jcrQuartileCategory?: string | null;
   casZone?: string | null;
   firstDecisionDays?: number | null;
   indexing?: string[];
@@ -1252,6 +1262,7 @@ app.post('/api/update-journal-metrics', (req, res) => {
       impactFactor: facts.impactFactor,
       fiveYearImpactFactor: facts.fiveYearImpactFactor,
       jcrQuartile: facts.jcrQuartile,
+      jcrQuartileCategory: facts.jcrQuartileCategory,
       casZone: facts.casZone,
       firstDecisionDays: facts.firstDecisionDays,
       indexing: facts.indexing,
@@ -1423,7 +1434,7 @@ export function generateStageHeadlines(
       { text: smartClamp(`Evaluate ${shortName}`, 30), sourceFact: facts.journalName, language: 'EN', category: 'Journal Identity', positionRecommendation: 'Position 1' },
       // Conditional metrics (NO nulls)
       ...(jifClaim ? [{ text: smartClamp(jifClaim, 30), sourceFact: jifClaim, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
-      ...(facts.jcrQuartile ? [{ text: smartClamp(`Quartile ${facts.jcrQuartile}`, 30), sourceFact: 'JCR quartile', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(quartileLine(facts, 30) ? [{ text: quartileLine(facts, 30)!, sourceFact: 'JCR quartile', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       ...(articleTypeHeadline ? [{ text: smartClamp(articleTypeHeadline, 30), sourceFact: 'Article types', language: 'EN' as const, category: 'Scope & Community', positionRecommendation: 'Position 2' }] : []),
       ...(publishingHeadline ? [{ text: smartClamp(publishingHeadline, 30), sourceFact: 'Publishing model', language: 'EN' as const, category: 'Publishing Options', positionRecommendation: 'Position 2' }] : []),
       ...(facts.indexing?.length ? [{ text: smartClamp(`Indexed in ${facts.indexing.slice(0, 2).join(' & ')}`, 30), sourceFact: 'Indexing', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
@@ -1588,7 +1599,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
       ...datedLines.map((text) => featureDescription(text, 'Dated usage', 'Evaluation & Metrics')),
       ...(jifClaim ? [featureDescription(jifClaim, 'Clarivate impact factor', 'Evaluation & Peer Review')] : []),
       ...(impactDescription ? [{ text: smartClamp(impactDescription, 90), sourceFact: 'Clarivate impact factor', language: 'EN' as const, theme: 'Evaluation & Peer Review' }] : []),
-      ...(facts.jcrQuartile ? [featureDescription(`Quartile ${facts.jcrQuartile}`, 'JCR quartile', 'Evaluation & Peer Review')] : []),
+      ...(quartileLine(facts, 90) ? [featureDescription(quartileLine(facts, 90)!, 'JCR quartile', 'Evaluation & Peer Review')] : []),
       { text: smartClamp(`Evaluate ${facts.journalName} for your paper. ${facts.indexing?.length ? `indexed in ${facts.indexing.slice(0, 2).join(' & ')}.` : 'Review the aims and scope.'}`, 90), sourceFact: 'Evaluation', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
       ...(downloadsText ? [{ text: smartClamp(downloadsText, 90), sourceFact: facts.articleDownloads ? 'Article downloads' : 'Full-text views', language: 'EN' as const, theme: 'Readership' }] : []),
       { text: smartClamp(`Transparent publishing options and editorial criteria. ${daysText}`, 90), sourceFact: 'Turnaround', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
