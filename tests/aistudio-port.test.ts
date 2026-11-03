@@ -46,10 +46,10 @@ describe('AI Studio port: Japanese and Chinese copy', () => {
 
   it('cites an impact factor or decision time only when a trusted value is passed', () => {
     const none = japaneseHeadlines(facts, 'CON', { jifClaim: null, firstDecisionDays: null }).map((h) => h.text).join('|');
-    assert.doesNotMatch(none, /平均\d+日/);
+    assert.doesNotMatch(none, /(?:平均|中央値)\d+日/);
     const some = japaneseHeadlines(facts, 'CON', { jifClaim: 'JCR 2024 IF 15.7', firstDecisionDays: 9 }).map((h) => h.text).join('|');
     assert.match(some, /JCR 2024 IF 15\.7/);
-    assert.match(some, /平均9日/);
+    assert.match(some, /中央値9日/);
   });
 
   it('keeps localized callouts within 25 width and adds no fallback claims', () => {

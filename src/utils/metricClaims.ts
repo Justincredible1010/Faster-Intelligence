@@ -1,6 +1,7 @@
 import { ClarivateJournalMetrics, FactVerificationStatus, PageSourcedFeature } from '../types';
 import { CLARIVATE_WOS_JOURNALS_SOURCE } from './metricSources';
 import { formatUsageCount, parseUsageCount } from './usageCounts';
+import { checkFaithfulness } from './faithfulness';
 
 /** Numbers in ads may come only from these. A catalog snapshot is not one of them. */
 export const TRUSTED_METRIC_STATUSES: readonly FactVerificationStatus[] = [
@@ -507,6 +508,13 @@ export function guardAdCopy<T extends GuardableCampaign>(campaign: T, facts: Met
   const guardLine = (value: string | undefined): string => {
     const result = guardMetricClaims(value || '', facts);
     flags.push(...result.flags);
+    // Backstop: anything the pattern guard did not catch (other numbers, superlatives,
+    // unsupported indexing, other publishers) rejects the whole line instead of shipping drift.
+    const check = checkFaithfulness(result.text, facts);
+    if (!check.ok) {
+      flags.push(...check.problems.map((problem) => `Dropped "${result.text}": ${problem}`));
+      return '';
+    }
     return result.text;
   };
 
