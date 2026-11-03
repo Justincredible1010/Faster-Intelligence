@@ -383,14 +383,15 @@ The dev bypass is not a fourth production option. It is registered only when `NO
 
 ### AI Studio preview sign-in (temporary — remove before publishing)
 
-The AI Studio preview runs inside a cross-site iframe, so the browser drops the `SameSite=Lax` session cookie and every POST fails the CSRF check. For preview testing only, set two secrets:
+The AI Studio preview runs inside a cross-site iframe, so the browser drops the `SameSite=Lax` session cookie and every POST fails the CSRF check. For preview testing only, set three secrets:
 
 | Secret | Value |
 |---|---|
 | `AUTH_PREVIEW_BYPASS` | `true` (exactly) |
 | `AUTH_PREVIEW_ALLOWED_EMAIL` | one `@springernature.com` address; only this address can sign in |
+| `AUTH_PREVIEW_PASSCODE` | at least 12 characters; typed on the sign-in screen. Without it the bypass stays off, and production startup fails if `AUTH_PREVIEW_BYPASS=true` |
 
-While both are set, "Continue as a test user" signs in that one address, the cookie is sent as `SameSite=None; Secure`, and the SPA also carries the session in an in-memory `X-Session-Token` header so it works even when third-party cookies are blocked. This works under any `NODE_ENV`, and the server logs a warning when it is on in production. **Delete both secrets before publishing or deploying.** With either one missing, the header is ignored and `/api/auth/dev-login` keeps its old development-only behaviour.
+While both are set, "Continue as a test user" signs in that one address, the cookie is sent as `SameSite=None; Secure`, and the SPA also carries the session in an in-memory `X-Session-Token` header so it works even when third-party cookies are blocked. This works under any `NODE_ENV`, and the server logs a warning when it is on in production. Preview-bypass sessions are never admins (playbook, cache and database edits stay locked). Framing is not checked from `Sec-Fetch-Dest`/`Referer`: the API calls are same-origin `fetch` requests from inside the preview, so those headers say `empty` and the preview's own host, which can't tell framed from direct use. The passcode is the control instead. **Delete all `AUTH_PREVIEW_*` secrets before publishing or deploying.** With either one missing, the header is ignored and `/api/auth/dev-login` keeps its old development-only behaviour.
 
 Redirect URI for both OAuth providers: `{APP_URL}/api/auth/callback`.
 

@@ -1,8 +1,9 @@
 import type { Express, Request } from 'express';
-import { isAnyBypassEnabled, isDevBypassEnabled, isPreviewBypassEnabled, loadAuthConfig, previewBypassEmail, providerSettings } from './config';
+import { isAnyBypassEnabled, isDevBypassEnabled, isPreviewBypassEnabled, loadAuthConfig, previewBypassEmail, previewPasscode, providerSettings } from './config';
 import { isEmailDomainAllowed, normalizeEmail } from './domain';
 import { AUTH_ERROR_CODES, AuthFlowError, mapIdentityProviderError, safeAuthError, type AuthErrorCode } from './errors';
 import { getRequestSession } from './guard';
+import { isPreviewBypassUser, PREVIEW_BYPASS_SUB } from './session';
 import { evaluateIdentity } from './identity';
 import { consumeMagicLink, MagicLinkRejected, requestMagicLink } from './magicLink';
 import { buildAuthorizationUrl, createOauthTransaction, exchangeAuthorizationCode } from './oidc';
@@ -62,7 +63,8 @@ function sessionPayload(session: SessionRecord) {
     provider: config.provider,
     allowedDomains: config.allowedDomains,
     devBypass: isAnyBypassEnabled(),
-    admin: user ? isAdminEmail(user.email, config) : false,
+    admin: user ? isAdminEmail(user.email, config) && !isPreviewBypassUser(user) : false,
+    previewPasscodeRequired: !isDevBypassEnabled() && isPreviewBypassEnabled(),
     // Preview only: lets the framed AI Studio preview work without third-party cookies.
     ...(isPreviewBypassEnabled() ? { sessionToken: sealSessionId(session.id, config.sessionSecret) } : {}),
   };
@@ -205,21 +207,32 @@ export function registerAuthRoutes(app: Express): void {
       res.status(404).json({ error: 'Not found' });
       return;
     }
-    if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && Object.keys(req.body).length > 0) {
+    const devMode = isDevBypassEnabled();
+    const body = onlyKeys(req.body ?? {}, devMode ? [] : ['passcode']);
+    if (!body) {
       res.status(400).json({ error: 'Unexpected fields in request' });
       return;
     }
     const config = loadAuthConfig();
+    if (!devMode) {
+      const expected = previewPasscode() || '';
+      const given = typeof body.passcode === 'string' ? body.passcode : '';
+      if (!expected || !given || !safeEqual(given, expected)) {
+        console.warn('[auth] preview bypass sign-in rejected: wrong passcode');
+        res.status(401).json({ error: 'Wrong preview passcode' });
+        return;
+      }
+    }
     // The preview bypass signs in only the one listed address; the dev bypass keeps its old behaviour.
-    const email = isDevBypassEnabled() ? normalizeEmail(config.devUserEmail) : previewBypassEmail();
+    const email = devMode ? normalizeEmail(config.devUserEmail) : previewBypassEmail();
     if (!email || !isEmailDomainAllowed(email, config.allowedDomains, config.allowedSubdomains)) {
-      res.status(400).json({ error: 'AUTH_DEV_USER_EMAIL is not an allowed email domain' });
+      res.status(400).json({ error: devMode ? 'AUTH_DEV_USER_EMAIL is not an allowed email domain' : 'AUTH_PREVIEW_ALLOWED_EMAIL is not an allowed email domain' });
       return;
     }
     const session = rotateSession(
       res,
       {
-        sub: isDevBypassEnabled() ? 'dev-bypass' : 'preview-bypass',
+        sub: devMode ? 'dev-bypass' : PREVIEW_BYPASS_SUB,
         email,
         name: config.devUserName,
         emailVerified: true,

@@ -41,8 +41,17 @@ export function isDevBypassEnabled(env: NodeJS.ProcessEnv = process.env): boolea
  * NODE_ENV because AI Studio may not run the server in development mode.
  * REMOVE BOTH SECRETS BEFORE PUBLISHING.
  */
+export const PREVIEW_PASSCODE_MIN = 12;
+
+/** Passcode the test sign-in must present. Required for the preview bypass in every environment. */
+export function previewPasscode(env: NodeJS.ProcessEnv = process.env): string | null {
+  const value = (env.AUTH_PREVIEW_PASSCODE || '').trim();
+  return value.length >= PREVIEW_PASSCODE_MIN ? value : null;
+}
+
 export function previewBypassEmail(env: NodeJS.ProcessEnv = process.env): string | null {
   if (env.AUTH_PREVIEW_BYPASS !== 'true') return null;
+  if (!previewPasscode(env)) return null;
   const email = normalizeEmail(env.AUTH_PREVIEW_ALLOWED_EMAIL || '');
   if (!email) return null;
   const domains = hostList(env.AUTH_ALLOWED_EMAIL_DOMAINS, [DEFAULT_DOMAIN]);
@@ -204,8 +213,11 @@ export function assertProductionAuthConfig(env: NodeJS.ProcessEnv = process.env)
   if (config.provider === 'oidc' && !providerSettings(config)) {
     throw new Error('OIDC_ISSUER, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET are required when AUTH_PROVIDER=oidc');
   }
+  if (env.AUTH_PREVIEW_BYPASS === 'true' && !isPreviewBypassEnabled(env)) {
+    throw new Error(`AUTH_PREVIEW_BYPASS=true in production requires AUTH_PREVIEW_ALLOWED_EMAIL (allowed domain) and AUTH_PREVIEW_PASSCODE (at least ${PREVIEW_PASSCODE_MIN} characters)`);
+  }
   if (isPreviewBypassEnabled(env)) {
-    console.warn('[auth] AUTH_PREVIEW_BYPASS is ON in production. Remove AUTH_PREVIEW_BYPASS and AUTH_PREVIEW_ALLOWED_EMAIL before publishing.');
+    console.warn('[auth] AUTH_PREVIEW_BYPASS is ON in production. Remove the AUTH_PREVIEW_* secrets before publishing.');
   }
   if (env.AUTH_DEV_BYPASS === 'true') {
     console.warn('[auth] AUTH_DEV_BYPASS is set but ignored because NODE_ENV is production');

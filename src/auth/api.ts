@@ -15,6 +15,7 @@ export interface SessionResponse {
   admin: boolean;
   /** Present only while the server's AI Studio preview bypass is on. */
   sessionToken?: string;
+  previewPasscodeRequired?: boolean;
 }
 
 let csrfToken: string | null = null;
@@ -89,12 +90,20 @@ export async function verifyMagicLink(token: string): Promise<SessionResponse & 
   return data;
 }
 
-export async function devLogin(): Promise<SessionResponse & { error?: string }> {
+export async function devLogin(passcode?: string): Promise<SessionResponse & { error?: string }> {
   let res: Response;
   try {
-    res = await apiFetch('/api/auth/dev-login', { method: 'POST', body: '{}', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-  } catch {
-    return { authenticated: false, error: 'Test sign-in timed out. Reload the preview and try again.' } as SessionResponse & { error: string };
+    res = await apiFetch('/api/auth/dev-login', {
+      method: 'POST',
+      body: JSON.stringify(passcode ? { passcode } : {}),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const name = err instanceof Error ? err.name : '';
+    const error = name === 'TimeoutError' || name === 'AbortError'
+      ? 'Test sign-in timed out after 15 seconds. Reload the preview and try again.'
+      : 'Network error: could not reach the server. Check your connection and reload the preview.';
+    return { authenticated: false, error } as SessionResponse & { error: string };
   }
   if (!res.ok) {
     const error = await failureMessage(res, 'Development sign-in is unavailable');

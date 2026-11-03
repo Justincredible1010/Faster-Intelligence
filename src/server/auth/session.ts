@@ -194,6 +194,13 @@ export function clearAllSessions(): void {
   getOauthStateStore().clear();
 }
 
+export const PREVIEW_BYPASS_SUB = 'preview-bypass';
+
+/** Preview-bypass sessions are never admins, whatever AUTH_ADMIN_EMAILS says. */
+export function isPreviewBypassUser(user: AuthUser | null | undefined): boolean {
+  return !!user && user.provider === 'dev' && user.sub === PREVIEW_BYPASS_SUB;
+}
+
 export function isAdminEmail(email: string, config: AuthConfig = loadAuthConfig()): boolean {
   return config.adminEmails.includes(email.trim().toLowerCase());
 }
