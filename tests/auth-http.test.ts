@@ -839,7 +839,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(fetched.status, 200);
     const catalog = (await fetched.json()).facts;
     assert.equal(catalog.verificationStatus, 'catalog_snapshot');
-    assert.equal(catalog.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+    assert.equal(catalog.jcrQuartile ?? null, null, 'A catalog quartile is never served');
     assert.equal(catalog.provenanceMap?.casZone?.source, 'catalog_snapshot');
     assert.equal(catalog.provenanceMap?.indexing?.source, 'catalog_snapshot');
 
@@ -880,8 +880,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     const facts = generatedBody.campaign.clarivateFacts;
     assert.equal(facts.impactFactor, 15.1);
     assert.equal(facts.provenanceMap?.impactFactor?.source, 'user_provided');
-    assert.equal(facts.jcrQuartile, 'Q1');
-    assert.equal(facts.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+    assert.equal(facts.jcrQuartile ?? null, null);
     assert.equal(facts.provenanceMap?.casZone?.source, 'catalog_snapshot');
     assert.equal(facts.provenanceMap?.indexing?.source, 'catalog_snapshot');
     const copy = campaignText(generatedBody.campaign);
@@ -899,7 +898,6 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     const savedBody = await saved.json();
     assert.equal(saved.status, 200, savedBody.error || 'edited catalog journal should save');
     assert.equal(savedBody.facts.provenanceMap?.impactFactor?.source, 'user_provided');
-    assert.equal(savedBody.facts.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
     assert.equal(savedBody.facts.provenanceMap?.casZone?.source, 'catalog_snapshot');
     assert.equal(savedBody.facts.provenanceMap?.indexing?.source, 'catalog_snapshot');
 
@@ -921,7 +919,6 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.doesNotMatch(savedCopy, /Q1/);
     assert.doesNotMatch(savedCopy, /1区/);
     assert.doesNotMatch(savedCopy, /SCIE/);
-    assert.equal(afterSaveBody.campaign.clarivateFacts.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
 
     const changedQuartile = await api('/api/generate-campaign', {
       jar,
@@ -962,7 +959,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(catalog.articleDownloads, 349945839);
     assert.equal(catalog.provenanceMap?.articleDownloads?.source, 'page_sourced');
     assert.equal(catalog.provenanceMap?.articleDownloads?.year, undefined);
-    assert.equal(catalog.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+    assert.equal(catalog.jcrQuartile ?? null, null);
     assert.equal('downloadDate' in catalog, false);
     const usageYear = catalog.pageFeatures?.find((feature: { kind: string }) => feature.kind === 'usage_date');
     assert.equal(usageYear?.text, '2025');
@@ -1007,7 +1004,6 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(facts.provenanceMap?.articleDownloads?.source, 'page_sourced');
     assert.equal(facts.impactFactor, 15.1);
     assert.equal(facts.provenanceMap?.impactFactor?.source, 'user_provided');
-    assert.equal(facts.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
     const copy = campaignText(generatedBody.campaign);
     assert.match(copy, /349,945,839/);
     assert.match(copy, /Article downloads data year: 2025 \(journal website\)/);

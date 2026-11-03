@@ -469,7 +469,7 @@ export async function runLandingPageTests() {
         return { html: natureHtml, finalUrl: 'https://www.nature.com/nature' };
       },
     });
-    assert.equal(natureFetches, 2, 'A different path is not served from the homepage catalog snapshot');
+    assert.equal(natureFetches, 3, 'A different path is not served from the homepage catalog snapshot (home page plus journal-information)');
     assert.equal(inventedPath.url, 'https://www.nature.com/nature');
     assert.notEqual(inventedPath.verificationStatus, 'catalog_snapshot');
     assert.equal(inventedPath.impactFactor, null);
@@ -495,17 +495,15 @@ export async function runLandingPageTests() {
       cache: ncommsCache,
       fetchPage: async () => ({ html: ncommsHtml, finalUrl: 'https://www.nature.com/ncomms' }),
     });
-    assert.equal(ncomms.impactFactor, 18.1, 'The page-sourced impact factor is the displayed value');
+    assert.equal(ncomms.impactFactor, null, 'Only Clarivate supplies an impact factor; the page figure is reference only');
+    assert.match(ncomms.provenanceMap?.impactFactorPageStated?.note || '', /18\.1/);
     assert.equal(ncomms.verificationStatus, 'page_sourced');
     assert.equal(ncomms.provenanceSource, 'page_sourced');
-    assert.equal(ncomms.provenanceMap?.impactFactor?.source, 'page_sourced');
-    assert.equal(ncomms.provenanceMap?.impactFactorCatalogSnapshot?.source, 'catalog_snapshot');
-    assert.match(ncomms.provenanceMap?.impactFactorCatalogSnapshot?.note || '', /14\.7/);
+
     assert.equal(ncomms.firstDecisionDays, 9);
     assert.equal(ncomms.provenanceMap?.firstDecisionDays?.source, 'page_sourced');
     assert.match(ncomms.provenanceMap?.firstDecisionDaysCatalogSnapshot?.note || '', /28/);
-    assert.equal(ncomms.fiveYearImpactFactor, 16.2);
-    assert.equal(ncomms.provenanceMap?.fiveYearImpactFactor?.source, 'catalog_snapshot');
+    assert.equal(ncomms.fiveYearImpactFactor, null, 'The catalog never serves a 5-year IF');
     assert.equal(ncomms.apcUsd, 6790);
     assert.equal(ncomms.provenanceMap?.apcUsd?.source, 'catalog_snapshot');
     assert.equal(ncomms.articleDownloads, 349_945_839);
@@ -549,7 +547,7 @@ export async function runLandingPageTests() {
     assert.equal(aliasFetches, 2, 'The first request for a new URL still reads the page to learn the ISSN');
     assert.equal(aliased.isFromCache, true);
     assert.equal(aliased.url, 'https://www.nature.com/ncomms/about');
-    assert.equal(aliased.impactFactor, 18.1);
+    assert.equal(aliased.impactFactor, null);
     assert.equal(aliasCache.has('host:nature.com/ncomms/about'), true);
     const aliasAgain = await lookupClarivateFacts('https://www.nature.com/ncomms/about', false, {
       ...quiet,
@@ -569,7 +567,7 @@ export async function runLandingPageTests() {
       ...ncommsCopy.searchAds.callouts,
       ncommsCopy.displayAds.longHeadline,
     ].join('\n');
-    assert.equal(ncomms.impactFactor, 18.1);
+    assert.equal(ncomms.impactFactor, null);
     assert.equal(factsForCopy(ncomms).impactFactor, null);
     assert.equal(factsForCopy(ncomms).fiveYearImpactFactor, null);
     assert.equal(factsForCopy(ncomms).firstDecisionDays, 9);
@@ -891,7 +889,7 @@ export async function runLandingPageTests() {
         'https://www.nature.com/example'
       )
     );
-    assert.equal(catalogRankings.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+    assert.equal(catalogRankings.jcrQuartile, null, 'A catalog quartile is never served');
     assert.equal(catalogRankings.provenanceMap?.casZone?.source, 'catalog_snapshot');
     assert.equal(catalogRankings.provenanceMap?.indexing?.source, 'catalog_snapshot');
     assert.equal(catalogRankings.firstDecisionDays, 9);
@@ -933,7 +931,7 @@ export async function runLandingPageTests() {
     assert.equal(catalogWithGaps.firstDecisionDays, 9);
     assert.equal(catalogWithGaps.verificationStatus, 'page_sourced');
     assert.equal(catalogWithGaps.provenanceMap?.firstDecisionDays?.source, 'page_sourced');
-    assert.equal(catalogWithGaps.impactFactor, 18.1);
+    assert.equal(catalogWithGaps.impactFactor, null, 'Neither the catalog nor the page supplies an IF');
     assert.equal(catalogWithGaps.provenanceMap?.impactFactorCatalogSnapshot?.source, 'catalog_snapshot');
     assert.equal(catalogWithGaps.provenanceMap?.impactFactorCatalogSnapshot?.confidence, 0.5);
     assert.equal(catalogWithGaps.provenanceMap?.impactFactorCatalogSnapshot?.year, undefined);
@@ -959,8 +957,8 @@ export async function runLandingPageTests() {
     assert.equal(catalogMissingApc.apcUsd, 7350);
     assert.equal(catalogMissingApc.verificationStatus, 'page_sourced');
     assert.equal(catalogMissingApc.provenanceMap?.apcUsd?.source, 'page_sourced');
-    assert.equal(catalogMissingApc.impactFactor, 14.7);
-    assert.equal(catalogMissingApc.provenanceMap?.impactFactor?.source, 'catalog_snapshot');
+    assert.equal(catalogMissingApc.impactFactor, null);
+    assert.equal(catalogMissingApc.provenanceMap?.impactFactorCatalogSnapshot?.source, 'catalog_snapshot');
 
     const userKept = mergeLandingPageFacts(
       {
@@ -977,7 +975,7 @@ export async function runLandingPageTests() {
     );
     assert.equal(userKept.impactFactor, 15);
     assert.equal(userKept.provenanceMap?.impactFactor?.source, 'user_provided');
-    assert.match(userKept.provenanceMap?.impactFactor?.note || '', /18\.1/);
+    assert.match(userKept.provenanceMap?.impactFactorPageStated?.note || '', /18\.1/);
     assert.equal(userKept.firstDecisionDays, 9);
     assert.equal(userKept.provenanceMap?.firstDecisionDays?.source, 'page_sourced');
 
@@ -988,14 +986,14 @@ export async function runLandingPageTests() {
       fetchPage: async () => ({ html: jbeHtml, finalUrl: 'https://link.springer.com/journal/10551' }),
     });
     assert.equal(jbe.journalName, 'Journal of Business Ethics');
-    assert.equal(jbe.impactFactor, 6.3);
-    assert.equal(jbe.fiveYearImpactFactor, 9.7);
+    assert.equal(jbe.impactFactor, null);
+    assert.equal(jbe.fiveYearImpactFactor, null);
+    assert.match(jbe.provenanceMap?.impactFactorPageStated?.note || '', /6\.3/);
     assert.equal(jbe.firstDecisionDays, 19);
     assert.match(jbe.aimsAndScopeSummary || '', /ethical issues/);
     assert.equal(jbe.verificationStatus, 'page_sourced');
     assert.equal(jbe.provenanceSource, 'page_sourced');
     assert.equal(jbe.isVerifiedClarivate, false);
-    assert.equal(jbe.provenanceMap?.impactFactor?.source, 'page_sourced');
     assert.match(jbe.sourceAttribution, /Not Clarivate-verified/);
     assert.equal(jbeCache.has('10551'), false);
     assert.equal(jbeCache.has('issn:0167-4544'), true);
@@ -1077,6 +1075,36 @@ export async function runLandingPageTests() {
       }
     } finally {
       await new Promise<void>((resolve, reject) => httpServer.close((err) => (err ? reject(err) : resolve())));
+    }
+
+    {
+      const saved = process.env.CLARIVATE_API_KEY;
+      delete process.env.CLARIVATE_API_KEY;
+      const fetched: string[] = [];
+      const onc = (await lookupClarivateFacts('https://www.nature.com/onc', true, {
+        persist: false,
+        cache: new Map(),
+        fetchPage: async (u: string) => {
+          fetched.push(u);
+          return {
+            html: fixture(u.endsWith('journal-information') ? 'nature-portfolio-oncogene-journal-information.html' : 'nature-portfolio-oncogene.html'),
+            finalUrl: u,
+          };
+        },
+      } as unknown as JournalLookupOptions)) as unknown as Record<string, any>;
+      if (saved !== undefined) process.env.CLARIVATE_API_KEY = saved;
+      assert.ok(fetched.some((u) => u.endsWith('/onc/journal-information')), 'Oncogene metrics come from /journal-information');
+      assert.equal(onc.impactFactor, null, 'No Clarivate key: no impact factor is shown');
+      assert.equal(onc.fiveYearImpactFactor, null);
+      assert.equal(onc.jcrQuartile ?? null, null);
+      assert.match(onc.provenanceMap?.impactFactorPageStated?.note ?? '', /9\.1/);
+      assert.match(onc.provenanceMap?.fiveYearImpactFactorPageStated?.note ?? '', /8\.1/);
+      assert.equal(onc.firstDecisionDays, 3);
+      assert.ok((onc.indexing as string[]).includes('SCIE'));
+      assert.equal(onc.articleDownloads, 6211000);
+      assert.match(String(onc.aimsAndScopeSummary), /[.!?]$/);
+      const oncCopy = JSON.stringify(generateDeterministicCampaign(onc as any, 'CON', 'EN').searchAds);
+      assert.doesNotMatch(oncCopy, /6\.9|7\.7|9\.1|8\.1/);
     }
 
     console.log('✓ Test Suite 8 Passed: ISSN or canonical URL is the cache key, and page facts beat guesses.');

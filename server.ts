@@ -57,6 +57,8 @@ import { formatUsageCount } from './src/utils/usageCounts';
 import {
   LandingPageError,
   extractLandingPageFacts,
+  combineExtractedPages,
+  natureJournalInfoUrl,
   fetchLandingPage,
   formatLandingPagePromptSection,
   isPublisherHomepage,
@@ -579,8 +581,8 @@ const CLARIVATE_OVERLAY_SKIP = new Set([
   'pageFeatures',
 ]);
 
-/** Catalog quartile, CAS zone, and indexing stay catalog snapshots when that is how they arrived. */
-const CATALOG_LOCKED_FIELDS = new Set(['jcrQuartile', 'casZone', 'indexing']);
+/** CAS zone and indexing stay (quartile always comes from Clarivate) catalog snapshots when that is how they arrived. */
+const CATALOG_LOCKED_FIELDS = new Set(['casZone', 'indexing']);
 
 function catalogFieldLocked(landing: JCRJournalEntry, key: string): boolean {
   if (!CATALOG_LOCKED_FIELDS.has(key)) return false;
@@ -614,6 +616,12 @@ export function mergeClarivateOverLanding(landing: JCRJournalEntry, api: Clariva
     if (CLARIVATE_OVERLAY_SKIP.has(key) || catalogFieldLocked(landing, key) || !filled(value)) continue;
     (merged as unknown as Record<string, unknown>)[key] = value;
     provenance[key] = clarivateFieldProvenance(api);
+  }
+  // IF, 5-year IF and quartile come only from Clarivate. Drop any other figure the API did not confirm.
+  for (const key of ['impactFactor', 'fiveYearImpactFactor', 'jcrQuartile'] as const) {
+    if (filled((api as unknown as Record<string, unknown>)[key])) continue;
+    (merged as unknown as Record<string, unknown>)[key] = null;
+    delete provenance[key];
   }
   const previousName = labelText(landing.journalName);
   const previousPublisher = labelText(landing.publisher);
@@ -763,6 +771,16 @@ export async function lookupClarivateFacts(
     const fetchPage = options.fetchPage ?? landingPageFetchForTests ?? undefined;
     const fetched = await fetchLandingPage(norm.canonical, options.fetchDeps, fetchPage);
     page = extractLandingPageFacts(fetched.html, fetched.finalUrl);
+    const infoUrl = natureJournalInfoUrl(fetched.finalUrl || norm.canonical);
+    // Only when the home page states no metrics (true for nature.com/onc and most Nature research journals).
+    if (infoUrl && page.pageMetrics.length === 0) {
+      try {
+        const info = await fetchLandingPage(infoUrl, options.fetchDeps, fetchPage);
+        page = combineExtractedPages(page, extractLandingPageFacts(info.html, infoUrl));
+      } catch (infoErr) {
+        if (infoErr instanceof LandingPageError && infoErr.code === 'ssrf') throw infoErr;
+      }
+    }
   } catch (err) {
     if (err instanceof LandingPageError && err.code === 'ssrf') throw err;
     fetchError = err instanceof Error ? err.message : 'Landing page fetch failed';
