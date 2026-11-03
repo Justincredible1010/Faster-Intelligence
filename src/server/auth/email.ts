@@ -81,6 +81,38 @@ export class SmtpEmailSender implements EmailSender {
   }
 }
 
+/** Brevo transactional email over HTTPS (https://api.brevo.com/v3/smtp/email). Uses the normal Brevo API key. */
+export class BrevoEmailSender implements EmailSender {
+  readonly name = 'brevo';
+
+  constructor(
+    private readonly apiKey: string,
+    private readonly fromEmail: string,
+    private readonly fromName: string,
+    private readonly url = 'https://api.brevo.com/v3/smtp/email'
+  ) {}
+
+  async send(message: EmailMessage): Promise<void> {
+    const body: Record<string, unknown> = {
+      sender: this.fromName ? { email: this.fromEmail, name: this.fromName } : { email: this.fromEmail },
+      to: [{ email: message.to }],
+      subject: message.subject,
+      textContent: message.text,
+    };
+    if (message.html) body.htmlContent = message.html;
+    const response = await fetch(this.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'api-key': this.apiKey },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) {
+      // Never echo the API key; status only.
+      throw new Error(`Brevo returned ${response.status}`);
+    }
+  }
+}
+
 const customSenders = new Map<string, () => EmailSender>();
 
 /** Register another transport (SES, SendGrid, internal relay) without changing call sites. */
@@ -99,5 +131,11 @@ export function createEmailSender(transport = process.env.AUTH_EMAIL_TRANSPORT |
     return new HttpEmailSender(url, process.env.AUTH_EMAIL_WEBHOOK_BEARER || '');
   }
   if (name === 'smtp') return new SmtpEmailSender();
+  if (name === 'brevo') {
+    const apiKey = (process.env.BREVO_API_KEY || '').trim();
+    const from = (process.env.AUTH_EMAIL_FROM || process.env.SMTP_FROM || '').trim();
+    if (!apiKey || !from) throw new Error('BREVO_API_KEY and AUTH_EMAIL_FROM are required when AUTH_EMAIL_TRANSPORT=brevo');
+    return new BrevoEmailSender(apiKey, from, (process.env.AUTH_EMAIL_FROM_NAME || 'OmniFact').trim());
+  }
   throw new Error(`Unknown AUTH_EMAIL_TRANSPORT "${transport}"`);
 }
