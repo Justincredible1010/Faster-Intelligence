@@ -1,0 +1,38 @@
+{
+  "activePreset": "Academic Integrity & Truth in Advertising",
+  "brandVoice": "Evidence-backed, scholarly, welcoming, strictly non-hyperbolic",
+  "brandRules": [
+    "Always spell Nature Portfolio and Springer Nature accurately.",
+    "Do not mention competitor journals (Cell, Science, PNAS, Lancet) in copy headlines or descriptions.",
+    "Awareness stage must focus on subject scope and research community with zero submission pressure.",
+    "Consideration stage must focus on objective metrics (IF, CAS Zone, review turnaround) with explicit release year.",
+    "Decision stage must direct authors to clear checklists and manuscript preparation guidelines with no acceptance guarantees."
+  ],
+  "prohibitedTerms": [
+    "guaranteed",
+    "guarantee",
+    "fastest",
+    "world-best",
+    "#1",
+    "top-ranked",
+    "100% acceptance",
+    "instant publish",
+    "easiest",
+    "no revision",
+    "最快",
+    "世界第一",
+    "保过",
+    "100%录用",
+    "最速",
+    "世界一",
+    "確実掲載",
+    "採択保証"
+  ],
+  "requiredDisclaimers": {
+    "superlatives": "Superlative claims must be backed by official JCR quartile or CAS ranking year.",
+    "acceptance": "Peer review outcome cannot be pre-determined or guaranteed."
+  },
+  "customPromptInstructions": "Enforce strict author marketing funnel alignment. In Awareness, build journal stature and readership. In Consideration, provide factual metrics comparison. In Decision, eliminate submission friction. Never output invented metrics or unverified promises.",
+  "lastModified": "2026-11-03T03:55:00.000Z",
+  "modifiedBy": "Admin / Lead Academic Marketer"
+}

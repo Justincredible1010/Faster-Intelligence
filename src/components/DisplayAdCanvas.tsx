@@ -117,6 +117,25 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
         </div>
       </div>
 
+      {/* Google RDA Best Practices & Policy Guidance Banner */}
+      <div className="p-4 bg-sky-50 border border-sky-200 rounded-xl flex items-start gap-3 text-xs text-sky-900 shadow-2xs">
+        <Sparkles className="w-4 h-4 text-sky-600 mt-0.5 shrink-0" />
+        <div className="space-y-1">
+          <div className="font-bold text-sky-950 flex items-center gap-2">
+            <span>Google Responsive Display Ads (RDA) Best Practice Compliance</span>
+            <span className="text-[10px] bg-sky-200/70 text-sky-800 px-2 py-0.2 rounded-full font-semibold">
+              Policy Safe
+            </span>
+          </div>
+          <p className="text-sky-800 leading-relaxed">
+            Google RDA dynamically renders your ad across millions of sites.
+            <strong className="text-sky-950"> Crucial Google Policy:</strong> Never bake text overlays or fake CTA buttons into your visual concept images.
+            Visual assets must be clean photography or scientific conceptual imagery.
+            Google’s ad server automatically injects the advertiser identity, headlines, descriptions, and renders its own native UI CTA button.
+          </p>
+        </div>
+      </div>
+
       {/* Real-time Character Width Warnings if any */}
       {(shortHWidth > 30 || longHWidth > 90 || descWidth > 90) && (
         <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-1">
@@ -148,77 +167,101 @@ Target GDN Placements: ${content.targetPlacements?.join(', ')}`;
                   <span>Medium Rectangle (300 × 250)</span>
                   <span>IAB Standard</span>
                 </div>
-                <div className="w-[300px] h-[250px] mx-auto bg-slate-900 text-white rounded-lg p-4 flex flex-col justify-between border border-slate-700 shadow-md relative overflow-hidden">
-                  {/* Top Header */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-blue-300 font-bold uppercase tracking-wider">
-                      {publisher}
-                    </span>
-                    <span className="text-[9px] bg-white/20 text-slate-200 px-1 py-0.5 rounded">
-                      AdChoices
-                    </span>
-                  </div>
-
-                  {/* Body Content */}
-                  <div className="space-y-1.5 my-auto">
-                    <div className="text-xs text-amber-300 font-semibold truncate">
-                      {journalName} · IF {facts.impactFactor || 'Indexed'}
+                <div className="w-[300px] h-[250px] mx-auto bg-white text-slate-800 rounded-xl flex flex-col justify-between border border-slate-300 shadow-md relative overflow-hidden font-sans">
+                  {/* Google RDA Top Visual Asset Zone (Zero Baked Text / Zero Fake Buttons) */}
+                  <div
+                    className="h-[105px] w-full relative flex items-center justify-center p-3 overflow-hidden bg-linear-to-tr from-slate-800 via-slate-700 to-slate-900 text-white"
+                  >
+                    <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:12px_12px]" />
+                    <div className="z-10 text-center px-2">
+                      <span className="text-[10px] uppercase tracking-wider font-mono text-sky-300 bg-sky-950/60 px-2 py-0.5 rounded border border-sky-400/30">
+                        Visual Image Asset
+                      </span>
+                      <p className="text-[10px] text-slate-300 line-clamp-1 mt-1 italic">
+                        {content.visualConceptPrompt?.slice(0, 50)}...
+                      </p>
                     </div>
-                    <h4 className="text-sm font-bold leading-snug line-clamp-2 text-white">
-                      {shortH}
-                    </h4>
-                    <p className="text-[11px] text-slate-300 line-clamp-2 leading-tight">
-                      {desc}
-                    </p>
+                    {/* Native Google Ad marker */}
+                    <div className="absolute top-1.5 right-1.5 text-[9px] bg-black/60 text-white px-1.5 py-0.2 rounded font-sans flex items-center gap-1">
+                      <span>AdChoices</span>
+                    </div>
                   </div>
 
-                  {/* Bottom CTA */}
-                  <div className="flex items-center justify-between pt-2 border-t border-white/10">
-                    <span className="text-[10px] text-slate-400 font-mono truncate max-w-[120px]">
-                      {deriveDisplayUrl(facts.url || '')}
-                    </span>
-                    <button
-                      style={{ backgroundColor: theme.primary }}
-                      className="px-3 py-1.5 text-[11px] font-bold text-white rounded shadow-sm hover:opacity-90 transition truncate max-w-[140px]"
-                    >
-                      {cta}
-                    </button>
+                  {/* Google RDA Native System UI Container */}
+                  <div className="p-3 flex-1 flex flex-col justify-between bg-white text-slate-900">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-slate-600 truncate max-w-[190px]">
+                          {publisher}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {facts.impactFactor ? `IF ${facts.impactFactor}` : 'SCIE'}
+                        </span>
+                      </div>
+                      <h4 className="text-xs font-bold leading-snug line-clamp-2 text-slate-900">
+                        {shortH}
+                      </h4>
+                      <p className="text-[10px] text-slate-600 line-clamp-1">
+                        {desc}
+                      </p>
+                    </div>
+
+                    {/* Google Native System CTA Button (Rendered outside the image) */}
+                    <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 mt-1">
+                      <span className="text-[10px] text-slate-500 font-mono truncate max-w-[120px]">
+                        {deriveDisplayUrl(facts.url || '')}
+                      </span>
+                      <button
+                        style={{ backgroundColor: theme.primary }}
+                        className="px-3 py-1 text-[11px] font-bold text-white rounded-md shadow-2xs hover:opacity-90 transition truncate max-w-[130px]"
+                      >
+                        {cta}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Square: 250x250 / 300x300 */}
+            {/* Square: 250x250 */}
             {(selectedFormat === 'all' || selectedFormat === '250x250') && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
                   <span>Square (250 × 250)</span>
                   <span>1:1 Ratio</span>
                 </div>
-                <div className="w-[250px] h-[250px] mx-auto bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-lg p-3.5 flex flex-col justify-between border border-slate-700 shadow-md relative">
-                  <div className="flex items-center justify-between text-[9px]">
-                    <span className="text-sky-300 font-bold truncate max-w-[170px]">{publisher}</span>
-                    <span className="bg-white/20 px-1 py-0.5 rounded">Ad</span>
+                <div className="w-[250px] h-[250px] mx-auto bg-white text-slate-800 rounded-xl flex flex-col justify-between border border-slate-300 shadow-md relative overflow-hidden font-sans">
+                  {/* Clean Visual Asset (Top 100px) */}
+                  <div className="h-[95px] w-full bg-linear-to-br from-slate-900 to-slate-800 text-white relative flex items-center justify-center p-2">
+                    <div className="absolute top-1.5 right-1.5 text-[9px] bg-black/60 px-1 py-0.2 rounded text-slate-200">
+                      Ad
+                    </div>
+                    <span className="text-[9px] font-mono uppercase tracking-wider text-sky-300 bg-sky-950/70 px-2 py-0.5 rounded border border-sky-400/30 text-center">
+                      Clean Image (0% Text)
+                    </span>
                   </div>
 
-                  <div className="text-center space-y-2 my-auto">
-                    <div className="inline-block px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-bold">
-                      {facts.casZone ? facts.casZone.slice(0, 11) : 'Peer-Reviewed'}
+                  {/* Native UI Container (Bottom) */}
+                  <div className="p-3 flex-1 flex flex-col justify-between bg-white">
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-bold text-sky-800 truncate">
+                        {journalName} {facts.impactFactor ? `· IF ${facts.impactFactor}` : ''}
+                      </div>
+                      <div className="font-bold text-xs text-slate-900 line-clamp-2 leading-tight">
+                        {shortH}
+                      </div>
+                      <div className="text-[10px] text-slate-600 line-clamp-1">
+                        {desc}
+                      </div>
                     </div>
-                    <div className="font-bold text-xs text-white line-clamp-2">
-                      {shortH}
-                    </div>
-                    <div className="text-[10px] text-slate-300 line-clamp-2">
-                      {content.bannerHeadlineZh || desc}
-                    </div>
-                  </div>
 
-                  <button
-                    style={{ backgroundColor: theme.primary }}
-                    className="w-full py-1.5 text-xs font-bold text-white rounded hover:opacity-90 transition"
-                  >
-                    {cta}
-                  </button>
+                    <button
+                      style={{ backgroundColor: theme.primary }}
+                      className="w-full py-1 text-xs font-bold text-white rounded-md hover:opacity-90 transition mt-1 truncate"
+                    >
+                      {cta}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

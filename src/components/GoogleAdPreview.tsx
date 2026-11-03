@@ -44,14 +44,14 @@ interface Props {
 
 export const GoogleAdPreview: React.FC<Props> = ({
   content,
-  displayUrl = 'https://www.nature.com/nature',
+  displayUrl = 'https://www.nature.com',
   stage = 'CON',
   facts,
   onEditHeadline,
   onEditDescription,
 }) => {
   const [activeTab, setActiveTab] = useState<'serp' | 'assets'>('serp');
-  const [langView, setLangView] = useState<'all' | 'EN' | 'ZH'>('all');
+  const [langView, setLangView] = useState<'all' | 'EN' | 'ZH' | 'JA'>('all');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const headlines = content.headlines || [];
@@ -63,7 +63,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  const handleCleanPurity = (index: number, isHeadline: boolean, text: string, targetLang: 'EN' | 'ZH') => {
+  const handleCleanPurity = (index: number, isHeadline: boolean, text: string, targetLang: 'EN' | 'ZH' | 'JA') => {
     const cleaned = cleanStrayCharacters(text, targetLang);
     if (isHeadline && onEditHeadline) {
       onEditHeadline(index, cleaned);
@@ -152,7 +152,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
           <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
             <div className="flex items-center gap-1.5">
               <span className="text-slate-500 font-medium">Filter Language:</span>
-              {(['all', 'EN', 'ZH'] as const).map((l) => (
+              {(['all', 'EN', 'ZH', 'JA'] as const).map((l) => (
                 <button
                   key={l}
                   onClick={() => setLangView(l)}
@@ -162,7 +162,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
                       : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
                   }`}
                 >
-                  {l === 'all' ? 'All (Bilingual)' : l === 'EN' ? 'English Only' : 'Chinese (中文)'}
+                  {l === 'all' ? 'All Languages' : l === 'EN' ? 'English (EN)' : l === 'ZH' ? 'Chinese (中文)' : 'Japanese (日本語)'}
                 </button>
               ))}
             </div>

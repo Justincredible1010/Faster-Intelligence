@@ -95,7 +95,7 @@ type BannerFormat = 'landscape' | 'square' | 'rect300x250' | 'leaderboard728x90'
 export const GoogleDisplayPreview: React.FC<Props> = ({
   content,
   journalName = 'Nature',
-  impactFactor = 50.5,
+  impactFactor = 56.1,
   casZone = '中科院1区 Top',
   publisher = 'Nature Portfolio',
   onUpdateContent,

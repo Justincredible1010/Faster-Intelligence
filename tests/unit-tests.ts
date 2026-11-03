@@ -70,6 +70,16 @@ console.log('\n[Test Suite 2] Language Purity Verification...');
   const resContamZh = validateLanguagePurity(contaminatedZh, 'ZH');
   assert.strictEqual(resContamZh.valid, false, 'Chinese with Latin letters must fail ZH purity check');
 
+  // 6. Valid JA
+  const pureJa = '国際学術誌の査読基準と投稿規程をご確認ください。';
+  const resJa = validateLanguagePurity(pureJa, 'JA');
+  assert.strictEqual(resJa.valid, true, 'Pure Japanese should pass JA purity check');
+
+  // 7. Invalid JA (contains Latin letters)
+  const contamJa = 'NatureのScopeと投稿規程をご確認ください。';
+  const resContamJa = validateLanguagePurity(contamJa, 'JA');
+  assert.strictEqual(resContamJa.valid, false, 'Japanese with Latin letters should fail JA purity check');
+
   console.log('✓ Test Suite 2 Passed: Language purity validation functions as intended.');
 }
 
@@ -77,10 +87,11 @@ console.log('\n[Test Suite 2] Language Purity Verification...');
 console.log('\n[Test Suite 3] Policy Compliance & Trademark Audit...');
 {
   const mockFacts: ClarivateJournalMetrics = {
-    url: 'https://www.nature.com/nature',
+    url: 'https://www.nature.com',
     journalName: 'Nature',
     publisher: 'Nature Portfolio',
-    impactFactor: 50.5,
+    impactFactor: 56.1,
+    fiveYearImpactFactor: 56.7,
     casZone: '中科院1区 Top',
     firstDecisionDays: 32,
     indexing: ['SCIE'],
@@ -185,11 +196,11 @@ console.log('\n[Test Suite 4] Google Ads Editor CSV Schema...');
   const lines = csv.split('\n').filter(Boolean);
 
   // Check required headers
-  const expectedHeader = 'Campaign,Ad Group,Keyword,Match Type,Max CPC,Headline 1,Headline 2,Headline 3,Description 1,Description 2,Final URL,Display URL';
+  const expectedHeader = 'Campaign,Ad Group,Keyword,Match Type,Max CPC,Headline 1,Headline 2,Headline 3,Description 1,Description 2,Final URL,Display URL,Fact Provenance,Confidence,Quality Notes';
   assert.strictEqual(lines[0], expectedHeader, 'CSV Header must strictly match Google Ads Editor specifications');
 
-  // Check row count (2 English + 1 Chinese keywords = 3 data rows)
-  assert.strictEqual(lines.length, 4, 'CSV must contain 1 header line and 3 keyword rows');
+  // Check row count for EN language (2 English keywords = 2 data rows + 1 header = 3 lines)
+  assert.strictEqual(lines.length, 3, 'CSV must contain 1 header line and 2 keyword rows for pure EN campaign');
 
   // Check derived display URL
   const displayUrl = deriveDisplayUrl('https://www.nature.com/aps/about');

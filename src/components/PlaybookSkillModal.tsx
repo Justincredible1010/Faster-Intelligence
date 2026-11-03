@@ -146,8 +146,22 @@ File type: ${file.type || file.name.split('.').pop()?.toUpperCase()}
     setUploadedFileName(null);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     onSavePlaybook(playbookText);
+    try {
+      await fetch('/api/playbook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customPromptInstructions: playbookText,
+          activePreset,
+          lastModified: new Date().toISOString(),
+          modifiedBy: 'Admin (UI Editor)',
+        }),
+      });
+    } catch (e) {
+      console.warn('Failed to persist playbook to server:', e);
+    }
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);

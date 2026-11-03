@@ -85,72 +85,112 @@ export const TargetingViewer: React.FC<Props> = ({ keywords, journalName = 'Jour
       </div>
 
       {/* 1. English Search Keywords */}
-      <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
-            <Search className="w-3.5 h-3.5 text-blue-600" />
-            <span>High-Intent English Academic Search Queries</span>
-          </span>
-          <button
-            onClick={() =>
-              copyToClipboard(keywords.englishSearchKeywords.map((k) => k.keyword).join('\n'), 'en-kw')
-            }
-            className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800"
-          >
-            {copiedKey === 'en-kw' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-            <span>Copy All</span>
-          </button>
-        </div>
-
-        <div className="grid sm:grid-cols-3 gap-2 text-xs">
-          {keywords.englishSearchKeywords.map((k, idx) => (
-            <div
-              key={idx}
-              className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 flex flex-col justify-between gap-1"
+      {keywords.englishSearchKeywords && keywords.englishSearchKeywords.length > 0 && (
+        <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5 text-blue-600" />
+              <span>High-Intent English Academic Search Queries</span>
+            </span>
+            <button
+              onClick={() =>
+                copyToClipboard(keywords.englishSearchKeywords.map((k) => k.keyword).join('\n'), 'en-kw')
+              }
+              className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800"
             >
-              <div className="font-mono font-medium text-slate-900 truncate">{k.keyword}</div>
-              <div className="flex items-center justify-between text-[10px] text-slate-500">
-                <span className="font-semibold text-blue-700">{k.matchType}</span>
-                <span className="truncate">{k.intent}</span>
+              {copiedKey === 'en-kw' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+              <span>Copy All</span>
+            </button>
+          </div>
+
+          <div className="grid sm:grid-cols-3 gap-2 text-xs">
+            {keywords.englishSearchKeywords.map((k, idx) => (
+              <div
+                key={idx}
+                className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 flex flex-col justify-between gap-1"
+              >
+                <div className="font-mono font-medium text-slate-900 truncate">{k.keyword}</div>
+                <div className="flex items-center justify-between text-[10px] text-slate-500">
+                  <span className="font-semibold text-blue-700">{k.matchType}</span>
+                  <span className="truncate">{k.intent}</span>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* 2. Chinese Author Search Queries for Greater China Researchers */}
-      <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
-            <Search className="w-3.5 h-3.5 text-indigo-600" />
-            <span>Chinese Author High-Intent Queries (中文学术搜索意向)</span>
-          </span>
-          <button
-            onClick={() =>
-              copyToClipboard(keywords.chineseAuthorKeywords.map((k) => k.keywordZh).join('\n'), 'zh-kw')
-            }
-            className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800"
-          >
-            {copiedKey === 'zh-kw' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-            <span>Copy All</span>
-          </button>
-        </div>
-
-        <div className="grid sm:grid-cols-3 gap-2 text-xs">
-          {keywords.chineseAuthorKeywords.map((k, idx) => (
-            <div
-              key={idx}
-              className="p-2.5 rounded-lg bg-indigo-50/40 border border-indigo-100 flex flex-col justify-between gap-1"
+      {/* 2. Chinese Author Search Queries */}
+      {keywords.chineseAuthorKeywords && keywords.chineseAuthorKeywords.length > 0 && (
+        <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Chinese Author High-Intent Queries (中文学术搜索意向)</span>
+            </span>
+            <button
+              onClick={() =>
+                copyToClipboard(keywords.chineseAuthorKeywords.map((k) => k.keywordZh).join('\n'), 'zh-kw')
+              }
+              className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800"
             >
-              <div className="font-medium text-indigo-950 truncate">{k.keywordZh}</div>
-              <div className="flex items-center justify-between text-[10px] text-indigo-700">
-                <span className="font-semibold">{k.matchType}</span>
-                <span className="truncate">{k.intentZh}</span>
+              {copiedKey === 'zh-kw' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+              <span>Copy All</span>
+            </button>
+          </div>
+
+          <div className="grid sm:grid-cols-3 gap-2 text-xs">
+            {keywords.chineseAuthorKeywords.map((k, idx) => (
+              <div
+                key={idx}
+                className="p-2.5 rounded-lg bg-indigo-50/40 border border-indigo-100 flex flex-col justify-between gap-1"
+              >
+                <div className="font-medium text-indigo-950 truncate">{k.keywordZh}</div>
+                <div className="flex items-center justify-between text-[10px] text-indigo-700">
+                  <span className="font-semibold">{k.matchType}</span>
+                  <span className="truncate">{k.intentZh}</span>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* 3. Japanese Author Search Queries */}
+      {keywords.japaneseAuthorKeywords && keywords.japaneseAuthorKeywords.length > 0 && (
+        <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-emerald-900 uppercase tracking-wider flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Japanese Author High-Intent Queries (日本語学術検索キーワード)</span>
+            </span>
+            <button
+              onClick={() =>
+                copyToClipboard(keywords.japaneseAuthorKeywords!.map((k) => k.keywordJa).join('\n'), 'ja-kw')
+              }
+              className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800"
+            >
+              {copiedKey === 'ja-kw' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+              <span>Copy All</span>
+            </button>
+          </div>
+
+          <div className="grid sm:grid-cols-3 gap-2 text-xs">
+            {keywords.japaneseAuthorKeywords.map((k, idx) => (
+              <div
+                key={idx}
+                className="p-2.5 rounded-lg bg-emerald-50/40 border border-emerald-100 flex flex-col justify-between gap-1"
+              >
+                <div className="font-medium text-emerald-950 truncate">{k.keywordJa}</div>
+                <div className="flex items-center justify-between text-[10px] text-emerald-700">
+                  <span className="font-semibold">{k.matchType}</span>
+                  <span className="truncate">{k.intentJa}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 3. Academic Integrity Negative Keywords Shield */}
       <div className="p-4 rounded-xl bg-rose-50/50 border border-rose-200 space-y-3">

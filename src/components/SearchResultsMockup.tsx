@@ -40,7 +40,7 @@ export const SearchResultsMockup: React.FC<Props> = ({
   onEditHeadline,
   onEditDescription,
 }) => {
-  const [deviceMode, setDeviceMode] = useState<'desktop' | 'mobile'>('desktop');
+  const [deviceMode, setDeviceMode] = useState<'desktop' | 'iphone' | 'android' | 'compact' | 'tablet'>('desktop');
   const [activeHeadlineIndices, setActiveHeadlineIndices] = useState<number[]>([0, 1, 2]);
   const [activeDescIndices, setActiveDescIndices] = useState<number[]>([0, 1]);
   const [isEditing, setIsEditing] = useState(false);
@@ -132,30 +132,68 @@ export const SearchResultsMockup: React.FC<Props> = ({
     <div className="space-y-6">
       {/* SERP Toolbar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-100 p-3 rounded-xl border border-slate-200">
-        <div className="flex items-center gap-3">
-          {/* Device Toggle */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Device & Screen Ratio Selector */}
           <div className="flex items-center bg-white border border-slate-200 rounded-lg p-0.5 shadow-2xs">
             <button
               onClick={() => setDeviceMode('desktop')}
-              className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md transition ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md transition ${
                 deviceMode === 'desktop'
                   ? 'bg-[#002d62] text-white shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
+              title="Desktop 1200px widescreen layout"
             >
               <Monitor className="w-3.5 h-3.5" />
-              <span>Desktop SERP</span>
+              <span>Desktop</span>
             </button>
             <button
-              onClick={() => setDeviceMode('mobile')}
-              className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md transition ${
-                deviceMode === 'mobile'
+              onClick={() => setDeviceMode('iphone')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md transition ${
+                deviceMode === 'iphone'
                   ? 'bg-[#002d62] text-white shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
+              title="iPhone 15/16 Pro (390×844, 19.5:9)"
             >
               <Smartphone className="w-3.5 h-3.5" />
-              <span>Mobile SERP (375px)</span>
+              <span>iPhone 19.5:9</span>
+            </button>
+            <button
+              onClick={() => setDeviceMode('android')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md transition ${
+                deviceMode === 'android'
+                  ? 'bg-[#002d62] text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Google Pixel 8 / Android (412×915, 20:9)"
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>Pixel 20:9</span>
+            </button>
+            <button
+              onClick={() => setDeviceMode('compact')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md transition ${
+                deviceMode === 'compact'
+                  ? 'bg-[#002d62] text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Compact Mobile (360×640, 16:9)"
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>16:9</span>
+            </button>
+            <button
+              onClick={() => setDeviceMode('tablet')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md transition ${
+                deviceMode === 'tablet'
+                  ? 'bg-[#002d62] text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="iPad Mini / Foldable Tablet (768×1024, 4:3)"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span>Tablet 4:3</span>
             </button>
           </div>
 
@@ -166,7 +204,7 @@ export const SearchResultsMockup: React.FC<Props> = ({
             title="Simulate Google Ads Responsive Search Ad rotation"
           >
             <Shuffle className="w-3.5 h-3.5 text-blue-600" />
-            <span>Shuffle RSA Rotation</span>
+            <span>Shuffle RSA</span>
           </button>
         </div>
 
@@ -196,7 +234,15 @@ export const SearchResultsMockup: React.FC<Props> = ({
       {/* Simulated Google Search Results Page */}
       <div
         className={`mx-auto bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden transition-all duration-300 ${
-          deviceMode === 'mobile' ? 'max-w-[390px]' : 'w-full'
+          deviceMode === 'iphone'
+            ? 'max-w-[390px]'
+            : deviceMode === 'android'
+            ? 'max-w-[412px]'
+            : deviceMode === 'compact'
+            ? 'max-w-[360px]'
+            : deviceMode === 'tablet'
+            ? 'max-w-[768px]'
+            : 'w-full'
         }`}
       >
         {/* Google Header & Search Bar */}
@@ -267,32 +313,44 @@ export const SearchResultsMockup: React.FC<Props> = ({
               </div>
             )}
 
-            {/* Sitelink Extensions */}
+            {/* Sitelink Extensions (Sitelink Text + Description 1 & 2) */}
             {ads.sitelinks && ads.sitelinks.length > 0 && (
               <div
                 className={`pt-3 ${
-                  deviceMode === 'mobile'
-                    ? 'flex gap-2 overflow-x-auto pb-1'
-                    : 'grid grid-cols-2 gap-x-4 gap-y-2'
+                  deviceMode !== 'desktop' && deviceMode !== 'tablet'
+                    ? 'flex gap-2.5 overflow-x-auto pb-1.5 scrollbar-thin'
+                    : 'grid grid-cols-2 gap-x-6 gap-y-3'
                 }`}
               >
-                {ads.sitelinks.slice(0, 4).map((site, sIdx) => (
-                  <div
-                    key={sIdx}
-                    className={`rounded-lg p-2 transition ${
-                      deviceMode === 'mobile'
-                        ? 'min-w-[180px] bg-slate-50 border border-slate-200'
-                        : 'hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className="text-xs font-medium text-[#1a0dab] hover:underline cursor-pointer truncate">
-                      {site.title}
+                {ads.sitelinks.slice(0, 4).map((site, sIdx) => {
+                  const sitelinkTitle = site.text || site.title || 'Author Links';
+                  const desc1 = site.description1 || site.desc?.split('。')[0] || site.desc?.split('.')[0] || '';
+                  const desc2 = site.description2 || (site.desc?.includes('。') ? site.desc.split('。')[1] : site.desc?.includes('.') ? site.desc.split('.')[1] : '');
+                  return (
+                    <div
+                      key={sIdx}
+                      className={`transition ${
+                        deviceMode !== 'desktop' && deviceMode !== 'tablet'
+                          ? 'min-w-[210px] bg-slate-50 border border-slate-200 rounded-xl p-2.5 shadow-2xs'
+                          : 'p-1 hover:bg-slate-50/80 rounded-lg'
+                      }`}
+                    >
+                      <div className="text-xs font-medium text-[#1a0dab] hover:underline cursor-pointer truncate">
+                        {sitelinkTitle}
+                      </div>
+                      {desc1 && (
+                        <div className="text-[11px] text-[#4d5156] line-clamp-1 leading-snug pt-0.5">
+                          {desc1}
+                        </div>
+                      )}
+                      {desc2 && (
+                        <div className="text-[11px] text-[#4d5156] line-clamp-1 leading-snug">
+                          {desc2}
+                        </div>
+                      )}
                     </div>
-                    <div className="text-[11px] text-[#4d5156] line-clamp-1">
-                      {site.desc}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

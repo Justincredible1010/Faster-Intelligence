@@ -8,6 +8,8 @@ import { StageComparisonModal } from './components/StageComparisonModal';
 import { StrategySummaryBanner } from './components/StrategySummaryBanner';
 import { ManualJournalModal } from './components/ManualJournalModal';
 import { ValidationReportModal } from './components/ValidationReportModal';
+import { BulkCampaignStudio } from './components/BulkCampaignStudio';
+import { MetricsDatabaseModal } from './components/MetricsDatabaseModal';
 import {
   StageCode,
   OutputLanguage,
@@ -21,16 +23,17 @@ import { runComplianceAudit, autoFixComplianceIssues } from './utils/complianceV
 import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
 import { AlertCircle, AlertTriangle, Sparkles } from 'lucide-react';
 
-const DEFAULT_LANDING_URL = 'https://www.nature.com/nature';
+const DEFAULT_LANDING_URL = 'https://www.nature.com';
 
 export default function App() {
+  const [activeView, setActiveView] = useState<'single' | 'bulk'>('single');
   const [landingPageUrl, setLandingPageUrl] = useState<string>(DEFAULT_LANDING_URL);
   const [selectedChannels, setSelectedChannels] = useState<{ search: boolean; display: boolean }>({
     search: true,
     display: true,
   });
   const [funnelStage, setFunnelStage] = useState<StageCode>('CON');
-  const [outputLanguage, setOutputLanguage] = useState<OutputLanguage>('all');
+  const [outputLanguage, setOutputLanguage] = useState<OutputLanguage>('EN');
   const [clarivateFacts, setClarivateFacts] = useState<ClarivateJournalMetrics | null>(null);
   const [campaign, setCampaign] = useState<GeneratedAdCampaign | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -41,6 +44,7 @@ export default function App() {
   const [isCompareOpen, setIsCompareOpen] = useState<boolean>(false);
   const [isManualJournalOpen, setIsManualJournalOpen] = useState<boolean>(false);
   const [isComplianceModalOpen, setIsComplianceModalOpen] = useState<boolean>(false);
+  const [isDatabaseModalOpen, setIsDatabaseModalOpen] = useState<boolean>(false);
   const [customPlaybook, setCustomPlaybook] = useState<string>(PRESET_SKILLS.default);
   const [hasManualEdits, setHasManualEdits] = useState<boolean>(false);
   const [pendingStageChange, setPendingStageChange] = useState<StageCode | null>(null);
@@ -366,8 +370,11 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
       {/* Top Navbar */}
       <Navbar
+        activeView={activeView}
+        onChangeView={setActiveView}
         onOpenGuide={() => setIsGuideOpen(true)}
         onOpenPlaybook={() => setIsPlaybookOpen(true)}
+        onOpenDatabase={() => setIsDatabaseModalOpen(true)}
         onOpenCompareStages={() => setIsCompareOpen(true)}
         onOpenCompliance={() => setIsComplianceModalOpen(true)}
         onExportMarkdown={handleExportBrief}
@@ -378,7 +385,7 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
       />
 
       {/* Main Content */}
-      <main className="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-6 space-y-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
         {/* Error notification */}
         {error && (
           <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center justify-between shadow-2xs">
@@ -395,39 +402,53 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
           </div>
         )}
 
-        {/* Unsaved manual edits warning before changing stage */}
-        {pendingStageChange && (
-          <div className="p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs space-y-2">
-            <div className="flex items-center gap-2 font-bold">
-              <AlertTriangle className="w-4 h-4 text-amber-600" />
-              <span>Unsaved Manual Edits Detected</span>
-            </div>
-            <p className="text-amber-800 leading-relaxed">
-              You have made custom edits to the current campaign headlines or descriptions. Switching to{' '}
-              <strong>{STAGE_CONFIGS[pendingStageChange].name}</strong> will regenerate stage-tailored copy and discard unsaved edits.
-            </p>
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={confirmPendingStageChange}
-                className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition"
-              >
-                Proceed &amp; Switch Stage
-              </button>
-              <button
-                type="button"
-                onClick={() => setPendingStageChange(null)}
-                className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg transition"
-              >
-                Keep Current Edits
-              </button>
-            </div>
-          </div>
-        )}
+        {/* BULK BATCH VIEW */}
+        {activeView === 'bulk' ? (
+          <BulkCampaignStudio
+            onSelectCampaignForPreview={(camp) => {
+              setCampaign(camp);
+              if (camp.clarivateFacts) setClarivateFacts(camp.clarivateFacts);
+              if (camp.clarivateFacts?.url) setLandingPageUrl(camp.clarivateFacts.url);
+              setFunnelStage(normalizeStage(camp.funnelStage));
+              setActiveView('single');
+            }}
+          />
+        ) : (
+          /* SINGLE JOURNAL STUDIO VIEW */
+          <>
+            {/* Unsaved manual edits warning before changing stage */}
+            {pendingStageChange && (
+              <div className="p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs space-y-2">
+                <div className="flex items-center gap-2 font-bold">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  <span>Unsaved Manual Edits Detected</span>
+                </div>
+                <p className="text-amber-800 leading-relaxed">
+                  You have made custom edits to the current campaign headlines or descriptions. Switching to{' '}
+                  <strong>{STAGE_CONFIGS[pendingStageChange].name}</strong> will regenerate stage-tailored copy and discard unsaved edits.
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={confirmPendingStageChange}
+                    className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition"
+                  >
+                    Proceed &amp; Switch Stage
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingStageChange(null)}
+                    className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg transition"
+                  >
+                    Keep Current Edits
+                  </button>
+                </div>
+              </div>
+            )}
 
-        {/* Step 1 & 2: Input Studio with Clarivate JCR & Rich Stage Selector */}
-        <section>
-          <InputStudio
+            {/* Step 1 & 2: Input Studio with Clarivate JCR & Rich Stage Selector */}
+            <section>
+              <InputStudio
             landingPageUrl={landingPageUrl}
             onChangeUrl={(url) => setLandingPageUrl(url)}
             selectedChannels={selectedChannels}
@@ -488,82 +509,103 @@ ${campaign.keywords.negativeKeywords.map((neg) => `-${neg}`).join(', ')}
             />
           </section>
         )}
-      </main>
+      </>
+    )}
+  </main>
 
-      {/* Footer */}
-      <footer className="mt-auto border-t border-slate-200 bg-white py-4 px-6 text-center text-xs text-slate-500">
-        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>
-            Marketing Content Generation Engine · Tailored Google Campaigns across Awareness, Consideration &amp; Decision
-          </span>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setIsCompareOpen(true)}
-              className="text-blue-700 hover:underline font-medium"
-            >
-              Compare 3 Stages
-            </button>
-            <span>·</span>
-            <button
-              onClick={() => setIsPlaybookOpen(true)}
-              className="text-blue-700 hover:underline font-medium"
-            >
-              Custom Playbook
-            </button>
-            <span>·</span>
-            <button
-              onClick={() => setIsComplianceModalOpen(true)}
-              className="text-blue-700 hover:underline font-medium"
-            >
-              Policy Audit
-            </button>
-            <span>·</span>
-            <button
-              onClick={() => setIsGuideOpen(true)}
-              className="text-blue-700 hover:underline font-medium"
-            >
-              Funnel Framework
-            </button>
-          </div>
-        </div>
-      </footer>
-
-      {/* Strategy Guide Modal */}
-      <FrameworkModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
-
-      {/* Custom Playbook & Guidelines Skill Modal */}
-      <PlaybookSkillModal
-        isOpen={isPlaybookOpen}
-        onClose={() => setIsPlaybookOpen(false)}
-        customPlaybook={customPlaybook}
-        onSavePlaybook={handleSavePlaybook}
-      />
-
-      {/* Side-by-Side Stage Comparison Modal */}
-      <StageComparisonModal
-        isOpen={isCompareOpen}
-        onClose={() => setIsCompareOpen(false)}
-        landingPageUrl={landingPageUrl}
-        clarivateFacts={clarivateFacts}
-        onSelectStage={(st) => handleStageSelectRequest(st)}
-        currentStage={funnelStage}
-      />
-
-      {/* Add / Edit Journal Metrics Modal */}
-      <ManualJournalModal
-        isOpen={isManualJournalOpen}
-        onClose={() => setIsManualJournalOpen(false)}
-        initialFacts={clarivateFacts}
-        onSaveFacts={handleSaveManualJournal}
-      />
-
-      {/* Google Ads Policy Compliance Modal */}
-      <ValidationReportModal
-        isOpen={isComplianceModalOpen}
-        onClose={() => setIsComplianceModalOpen(false)}
-        report={campaign?.complianceReport || (campaign ? runComplianceAudit(campaign) : null)}
-        onAutoFix={handleAutoFixCompliance}
-      />
+  {/* Footer */}
+  <footer className="mt-auto border-t border-slate-200 bg-white py-4 px-6 text-center text-xs text-slate-500">
+    <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+      <span>
+        Marketing Content Generation Engine · Tailored Google Campaigns across Awareness, Consideration &amp; Decision
+      </span>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => setIsDatabaseModalOpen(true)}
+          className="text-emerald-700 hover:underline font-semibold"
+        >
+          Metrics DB
+        </button>
+        <span>·</span>
+        <button
+          onClick={() => setIsCompareOpen(true)}
+          className="text-blue-700 hover:underline font-medium"
+        >
+          Compare 3 Stages
+        </button>
+        <span>·</span>
+        <button
+          onClick={() => setIsPlaybookOpen(true)}
+          className="text-blue-700 hover:underline font-medium"
+        >
+          Custom Playbook
+        </button>
+        <span>·</span>
+        <button
+          onClick={() => setIsComplianceModalOpen(true)}
+          className="text-blue-700 hover:underline font-medium"
+        >
+          Policy Audit
+        </button>
+        <span>·</span>
+        <button
+          onClick={() => setIsGuideOpen(true)}
+          className="text-blue-700 hover:underline font-medium"
+        >
+          Funnel Framework
+        </button>
+      </div>
     </div>
+  </footer>
+
+  {/* Strategy Guide Modal */}
+  <FrameworkModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
+
+  {/* Custom Playbook & Guidelines Skill Modal */}
+  <PlaybookSkillModal
+    isOpen={isPlaybookOpen}
+    onClose={() => setIsPlaybookOpen(false)}
+    customPlaybook={customPlaybook}
+    onSavePlaybook={handleSavePlaybook}
+  />
+
+  {/* Side-by-Side Stage Comparison Modal */}
+  <StageComparisonModal
+    isOpen={isCompareOpen}
+    onClose={() => setIsCompareOpen(false)}
+    landingPageUrl={landingPageUrl}
+    clarivateFacts={clarivateFacts}
+    onSelectStage={(st) => handleStageSelectRequest(st)}
+    currentStage={funnelStage}
+  />
+
+  {/* Add / Edit Journal Metrics Modal */}
+  <ManualJournalModal
+    isOpen={isManualJournalOpen}
+    onClose={() => setIsManualJournalOpen(false)}
+    initialFacts={clarivateFacts}
+    onSaveFacts={handleSaveManualJournal}
+  />
+
+  {/* Google Ads Policy Compliance Modal */}
+  <ValidationReportModal
+    isOpen={isComplianceModalOpen}
+    onClose={() => setIsComplianceModalOpen(false)}
+    report={campaign?.complianceReport || (campaign ? runComplianceAudit(campaign) : null)}
+    onAutoFix={handleAutoFixCompliance}
+  />
+
+  {/* Metrics Provenance Database Modal */}
+  <MetricsDatabaseModal
+    isOpen={isDatabaseModalOpen}
+    onClose={() => setIsDatabaseModalOpen(false)}
+    onSelectJournalUrl={(url) => {
+      setLandingPageUrl(url);
+      fetchClarivateFacts(url);
+      handleGenerateCampaign(url);
+      setActiveView('single');
+    }}
+  />
+</div>
   );
 }

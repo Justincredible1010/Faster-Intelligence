@@ -39,6 +39,10 @@ export const SUPERLATIVES = [
   { term: '第一', pattern: /第一|首屈一指/i, fix: '知名' },
   { term: '包录用', pattern: /包录用|100%录用/i, fix: '严格同行评审' },
   { term: '顶级', pattern: /顶级顶刊/i, fix: '高水平' },
+  // Japanese Superlatives
+  { term: '最速', pattern: /最速/i, fix: '迅速な査読' },
+  { term: '世界一', pattern: /世界一|日本一|No\.?\s*1/i, fix: '国際的有力' },
+  { term: '確実掲載', pattern: /必ず掲載|100%採択|採択保証/i, fix: '厳正な査読' },
 ];
 
 // Misleading promises prohibited in scientific ad copy
@@ -62,6 +66,11 @@ export const MISLEADING_PATTERNS = [
     pattern: /保证录用|包发表|保过/i,
     issue: '违反学术伦理及广告合规原则，禁止承诺任何包录用结果。',
     fix: '经过国际同行评审',
+  },
+  {
+    pattern: /採択保証|必ず採択|100%掲載/i,
+    issue: '学術ピアレビューにおいて採択を事前保証することは広告ポリシーおよび出版倫理に違反します。',
+    fix: '国際水準のピアレビューを実施',
   },
 ];
 

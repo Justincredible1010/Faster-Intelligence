@@ -49,6 +49,7 @@ export interface JCRJournalEntry {
   chinaWaiverAvailable?: boolean;
   aimsAndScopeSummary?: string;
   primaryDiscipline?: string;
+  submissionPortalUrl?: string;
   verificationStatus: 'source_verified' | 'user_provided' | 'unverified' | 'missing';
   missingFields?: string[];
   isVerifiedClarivate?: boolean;
@@ -75,6 +76,85 @@ export interface CachedJournal {
   metrics: Record<string, CachedMetricEntry>;
   lastAccess: string;
   fullFacts?: JCRJournalEntry;
+}
+
+// --- STRUCTURED METRICS DATABASE (metrics-database.json) ---
+const DATABASE_FILE_PATH = path.resolve(__dirname, 'metrics-database.json');
+const metricsDatabase = new Map<string, any>();
+
+function loadDatabaseFromDisk() {
+  try {
+    if (fs.existsSync(DATABASE_FILE_PATH)) {
+      const data = fs.readFileSync(DATABASE_FILE_PATH, 'utf-8');
+      const parsed = JSON.parse(data);
+      Object.entries(parsed).forEach(([key, val]: [string, any]) => {
+        metricsDatabase.set(key, val);
+        if (val.canonicalUrl) metricsDatabase.set(val.canonicalUrl, val);
+        if (val.journalId) metricsDatabase.set(val.journalId, val);
+        if (val.slugs && Array.isArray(val.slugs)) {
+          val.slugs.forEach((slug: string) => {
+            if (slug) metricsDatabase.set(slug, val);
+          });
+        }
+      });
+      console.log(`[Metrics DB] Loaded ${metricsDatabase.size} journal records from metrics-database.json`);
+    }
+  } catch (err) {
+    console.warn('[Metrics DB] Failed to load metrics-database.json:', err);
+  }
+}
+
+function saveDatabaseToDisk() {
+  try {
+    const raw: Record<string, any> = {};
+    metricsDatabase.forEach((val, key) => {
+      // Only write canonical URL keys to keep JSON clean
+      if (key.startsWith('http://') || key.startsWith('https://')) {
+        raw[key] = val;
+      }
+    });
+    fs.writeFileSync(DATABASE_FILE_PATH, JSON.stringify(raw, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('[Metrics DB] Failed to write database to disk:', err);
+  }
+}
+
+// --- ADMIN PLAYBOOK CONFIG (admin-playbook.json) ---
+const PLAYBOOK_FILE_PATH = path.resolve(__dirname, 'admin-playbook.json');
+let adminPlaybook: any = {
+  activePreset: 'Academic Integrity & Truth in Advertising',
+  brandVoice: 'Evidence-backed, scholarly, welcoming, strictly non-hyperbolic',
+  brandRules: [
+    'Always spell Nature Portfolio and Springer Nature accurately.',
+    'Do not mention competitor journals in copy headlines or descriptions.',
+    'Awareness stage must focus on subject scope and research community with zero submission pressure.',
+    'Consideration stage must focus on objective metrics with explicit release year.',
+    'Decision stage must direct authors to clear checklists with no acceptance guarantees.',
+  ],
+  prohibitedTerms: ['guaranteed', 'fastest', 'world-best', '#1', 'top-ranked', '100% acceptance', '保过', '最速', '採択保証'],
+  requiredDisclaimers: {},
+  customPromptInstructions: 'Enforce strict author marketing funnel alignment. Never output invented metrics.',
+  lastModified: new Date().toISOString(),
+  modifiedBy: 'Admin',
+};
+
+function loadPlaybookFromDisk() {
+  try {
+    if (fs.existsSync(PLAYBOOK_FILE_PATH)) {
+      adminPlaybook = JSON.parse(fs.readFileSync(PLAYBOOK_FILE_PATH, 'utf-8'));
+      console.log(`[Admin Playbook] Loaded active preset: ${adminPlaybook.activePreset}`);
+    }
+  } catch (err) {
+    console.warn('[Admin Playbook] Failed to load admin-playbook.json:', err);
+  }
+}
+
+function savePlaybookToDisk() {
+  try {
+    fs.writeFileSync(PLAYBOOK_FILE_PATH, JSON.stringify(adminPlaybook, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('[Admin Playbook] Failed to write playbook to disk:', err);
+  }
 }
 
 // --- PERSISTENT METRICS CACHE (metrics-cache.json) ---
@@ -108,7 +188,9 @@ function saveCacheToDisk() {
   }
 }
 
-// Initialize cache on startup
+// Initialize on startup
+loadDatabaseFromDisk();
+loadPlaybookFromDisk();
 loadCacheFromDisk();
 
 function calculateMetricExpiry(metric: string): string {
@@ -151,10 +233,10 @@ function isCachedJournalExpired(cached: CachedJournal): boolean {
   return false;
 }
 
-// CJK Character Double-Width Counting (Google Ads Standard)
+// CJK & Japanese Kana Character Double-Width Counting (Google Ads Standard)
 export function countCharacterWidth(text: string): number {
   if (!text) return 0;
-  const cjkChars = (text.match(/[\u4e00-\u9fa5\u3400-\u4dbf\u3000-\u303f\uff01-\uffee]/g) || []).length;
+  const cjkChars = (text.match(/[\u4e00-\u9fa5\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\u3000-\u303f\uff01-\uffee]/g) || []).length;
   const otherChars = text.length - cjkChars;
   return (cjkChars * 2) + otherChars;
 }
@@ -237,12 +319,12 @@ export function normalizeStage(stage: string): StageCode {
 // Verified Clarivate JCR & Web of Science Index Catalog
 export const CLARIVATE_JCR_CATALOG: JCRJournalEntry[] = [
   {
-    url: 'https://www.nature.com/nature',
-    slugs: ['nature', 'flagship', 'default'],
+    url: 'https://www.nature.com',
+    slugs: ['nature', 'flagship', 'default', ''],
     journalName: 'Nature',
     publisher: 'Nature Portfolio',
-    impactFactor: 50.5,
-    fiveYearImpactFactor: 54.3,
+    impactFactor: 56.1,
+    fiveYearImpactFactor: 56.7,
     jcrQuartile: 'Q1',
     casZone: '中科院综合性期刊1区 Top',
     firstDecisionDays: 32,
@@ -253,9 +335,9 @@ export const CLARIVATE_JCR_CATALOG: JCRJournalEntry[] = [
     aimsAndScopeSummary: 'The world’s premier multidisciplinary science journal publishing the finest peer-reviewed research across all areas of science and technology.',
     primaryDiscipline: 'Multidisciplinary Sciences (综合性科学)',
     verificationStatus: 'source_verified',
-    reportingYear: 'JCR 2024 (Clarivate Journal Citation Reports)',
+    reportingYear: 'JCR 2025 (Clarivate Journal Citation Reports)',
     isVerifiedClarivate: true,
-    sourceAttribution: 'Verified via Clarivate Journal Citation Reports (JCR 2024/2025) & Web of Science Index',
+    sourceAttribution: 'Verified via Clarivate Journal Citation Reports (JCR 2025) & Web of Science Index',
   },
   {
     url: 'https://www.nature.com/ncomms',
@@ -403,12 +485,60 @@ export function normalizeUrlComponents(rawUrl: string): { host: string; slug: st
   }
 }
 
-// Lookup Clarivate facts with Persistent Cache + Fallback Safeguards
+// Lookup Clarivate facts with Persistent Database + Fallback Safeguards
 export async function lookupClarivateFacts(url: string, forceRefresh = false): Promise<JCRJournalEntry> {
   const norm = normalizeUrlComponents(url);
   const journalId = norm.journalId;
 
-  // 1. Check persistent in-memory cache first (unless forceRefresh)
+  // 1. Check structured metrics database (metrics-database.json) first
+  let dbRecord = metricsDatabase.get(norm.full) ||
+                 metricsDatabase.get(norm.journalId) ||
+                 (norm.slug ? metricsDatabase.get(norm.slug) : null);
+
+  // Fallback match for nature root
+  if (!dbRecord && (norm.full === 'https://www.nature.com' || norm.host === 'nature.com' || norm.host === 'www.nature.com') && !norm.slug) {
+    dbRecord = metricsDatabase.get('https://www.nature.com');
+  }
+
+  if (dbRecord && !forceRefresh) {
+    const ifMetric = dbRecord.metrics?.impactFactor;
+    const casMetric = dbRecord.metrics?.casZone;
+    const daysMetric = dbRecord.metrics?.firstDecisionDays;
+    const apcMetric = dbRecord.metrics?.apcUsd;
+
+    const ifExpired = ifMetric?.expireAt && new Date(ifMetric.expireAt).getTime() < Date.now();
+
+    if (!ifExpired && ifMetric?.value !== null) {
+      console.log(`[Database HIT] Found verified record for ${dbRecord.journalName} (${ifMetric.year} ${ifMetric.period})`);
+      return {
+        url: dbRecord.canonicalUrl || norm.full,
+        slugs: dbRecord.slugs || [norm.slug],
+        journalName: dbRecord.journalName,
+        publisher: dbRecord.publisher,
+        impactFactor: ifMetric?.value ?? null,
+        fiveYearImpactFactor: dbRecord.metrics?.fiveYearImpactFactor?.value ?? null,
+        jcrQuartile: dbRecord.metrics?.jcrQuartile?.value ?? 'Q1',
+        casZone: casMetric?.value ?? null,
+        firstDecisionDays: daysMetric?.value ?? null,
+        indexing: dbRecord.metrics?.indexing?.value ?? ['SCIE', 'Scopus'],
+        openAccessType: dbRecord.metrics?.openAccessType?.value ?? 'Hybrid Open Access',
+        apcUsd: apcMetric?.value ?? null,
+        chinaWaiverAvailable: false,
+        aimsAndScopeSummary: dbRecord.aimsAndScopeSummary,
+        primaryDiscipline: dbRecord.primaryDiscipline,
+        submissionPortalUrl: dbRecord.submissionPortalUrl,
+        isVerifiedClarivate: true,
+        verificationStatus: 'source_verified',
+        reportingYear: ifMetric?.period || `JCR ${ifMetric?.year || 2025} (Clarivate JCR)`,
+        sourceAttribution: `Verified via ${ifMetric?.source || 'Clarivate JCR'} (${ifMetric?.year || 2025})`,
+        isFromCache: true,
+        cachedAt: dbRecord.lastUpdated || dbRecord.lastAccess,
+        cacheExpiresAt: ifMetric?.expireAt,
+      };
+    }
+  }
+
+  // 2. Check persistent in-memory cache
   if (!forceRefresh && metricsCache.has(journalId)) {
     const cached = metricsCache.get(journalId)!;
     if (!isCachedJournalExpired(cached) && cached.fullFacts) {
@@ -423,7 +553,7 @@ export async function lookupClarivateFacts(url: string, forceRefresh = false): P
     console.log(`[Cache EXPIRED] Cached data for ${journalId} is stale. Refreshing...`);
   }
 
-  // 2. Direct exact catalog match
+  // 3. Direct exact catalog match
   const exact = CLARIVATE_JCR_CATALOG.find((entry) => {
     const entryNorm = normalizeUrlComponents(entry.url);
     if (norm.slug && entry.slugs.includes(norm.slug)) return true;
@@ -768,7 +898,7 @@ app.post('/api/update-journal-metrics', (req, res) => {
 interface HeadlineSeed {
   text: string;
   sourceFact: string;
-  language: 'EN' | 'ZH';
+  language: 'EN' | 'ZH' | 'JA';
   category: string;
   positionRecommendation: string;
 }
@@ -777,7 +907,7 @@ interface HeadlineSeed {
 export function generateStageHeadlines(
   facts: any,
   stage: StageCode,
-  outputLanguage: 'all' | 'EN' | 'ZH' = 'all'
+  outputLanguage: 'EN' | 'ZH' | 'JA' = 'EN'
 ) {
   const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
   const disciplineShort = (facts.primaryDiscipline || 'Scientific').split('(')[0].trim().slice(0, 14);
@@ -820,9 +950,27 @@ export function generateStageHeadlines(
       { text: smartClamp(`查阅期刊同行评议规范`, 30), sourceFact: 'Peer Review', language: 'ZH', category: 'Journal Identity', positionRecommendation: 'Any Position' },
     ];
 
+    const ja: HeadlineSeed[] = [
+      { text: smartClamp(`${shortName} 学術ジャーナル公式`, 30), sourceFact: facts.journalName, language: 'JA', category: 'Journal Identity', positionRecommendation: 'Position 1' },
+      { text: smartClamp(`最新の科学研究成果と論文`, 30), sourceFact: facts.primaryDiscipline, language: 'JA', category: 'Scope & Community', positionRecommendation: 'Position 1' },
+      { text: smartClamp(`${facts.publisher} 刊行学術誌`, 30), sourceFact: facts.publisher, language: 'JA', category: 'Journal Identity', positionRecommendation: 'Position 1' },
+      { text: smartClamp(`国際ピアレビュー学術論文`, 30), sourceFact: 'Peer Review', language: 'JA', category: 'Journal Identity', positionRecommendation: 'Position 2' },
+      { text: smartClamp(`世界の科学者による研究知見`, 30), sourceFact: 'Community', language: 'JA', category: 'Scope & Community', positionRecommendation: 'Position 2' },
+      { text: smartClamp(`学術ブレークスルーを閲覧`, 30), sourceFact: 'Discovery', language: 'JA', category: 'Call to Action', positionRecommendation: 'Position 2' },
+      { text: smartClamp(`オープンアクセス論文も多数`, 30), sourceFact: facts.openAccessType || 'Open Access', language: 'JA', category: 'Scope & Community', positionRecommendation: 'Position 3' },
+      { text: smartClamp(`掲載領域と出版趣旨を確認`, 30), sourceFact: 'Aims & Scope', language: 'JA', category: 'Call to Action', positionRecommendation: 'Position 3' },
+      { text: smartClamp(`最新の査読済み論文を読む`, 30), sourceFact: 'Readership', language: 'JA', category: 'Call to Action', positionRecommendation: 'Any Position' },
+      { text: smartClamp(`ジャーナルの詳細はこちら`, 30), sourceFact: 'CTA', language: 'JA', category: 'Call to Action', positionRecommendation: 'Any Position' },
+      { text: smartClamp(`国際研究ネットワークと連携`, 30), sourceFact: 'Community', language: 'JA', category: 'Scope & Community', positionRecommendation: 'Any Position' },
+      { text: smartClamp(`注目論文ハイライトを公開中`, 30), sourceFact: 'Highlights', language: 'JA', category: 'Scope & Community', positionRecommendation: 'Any Position' },
+      { text: smartClamp(`信頼の学術出版プラットフォーム`, 30), sourceFact: facts.publisher, language: 'JA', category: 'Journal Identity', positionRecommendation: 'Any Position' },
+      { text: smartClamp(`各専門領域の最先端研究`, 30), sourceFact: 'Topics', language: 'JA', category: 'Scope & Community', positionRecommendation: 'Any Position' },
+      { text: smartClamp(`学術誌の公式情報を確認`, 30), sourceFact: 'Journal Identity', language: 'JA', category: 'Call to Action', positionRecommendation: 'Any Position' },
+    ];
+
     if (outputLanguage === 'EN') return en.slice(0, 15).map(h => ({ ...h, charCount: h.text.length }));
     if (outputLanguage === 'ZH') return zh.slice(0, 15).map(h => ({ ...h, charCount: h.text.length }));
-    return [...en.slice(0, 10), ...zh.slice(0, 5)].map(h => ({ ...h, charCount: h.text.length }));
+    return ja.slice(0, 15).map(h => ({ ...h, charCount: h.text.length }));
   }
 
   // CON (Consideration) - Includes Journal Comparison
@@ -831,7 +979,6 @@ export function generateStageHeadlines(
       { text: smartClamp(`Is Your Manuscript a Fit?`, 30), sourceFact: 'Fit Evaluation', language: 'EN', category: 'Scope & Community', positionRecommendation: 'Position 1' },
       { text: smartClamp(`${shortName} Aims & Scope`, 30), sourceFact: 'Scope Criteria', language: 'EN', category: 'Scope & Community', positionRecommendation: 'Position 1' },
       { text: smartClamp(`Evaluate ${shortName}`, 30), sourceFact: facts.journalName, language: 'EN', category: 'Journal Identity', positionRecommendation: 'Position 1' },
-      // Conditional metrics (NO nulls)
       ...(facts.impactFactor ? [{ text: smartClamp(`Clarivate IF ${facts.impactFactor} ${facts.jcrQuartile || ''}`.trim(), 30), sourceFact: `IF ${facts.impactFactor}`, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       { text: smartClamp(`Indexed in ${facts.indexing?.slice(0, 2).join(' & ') || 'SCIE & Scopus'}`, 30), sourceFact: 'Indexing', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' },
       { text: smartClamp(`Rigorous Peer Review Standards`, 30), sourceFact: 'Editorial Standards', language: 'EN', category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' },
@@ -864,9 +1011,27 @@ export function generateStageHeadlines(
       { text: smartClamp(`综合评估期刊学术声誉`, 30), sourceFact: 'Reputation', language: 'ZH', category: 'Evaluation & Metrics', positionRecommendation: 'Any Position' },
     ];
 
+    const ja: HeadlineSeed[] = [
+      { text: smartClamp(`${shortName} 投稿基準と掲載方針`, 30), sourceFact: 'Scope Check', language: 'JA', category: 'Scope & Community', positionRecommendation: 'Position 1' },
+      ...(facts.impactFactor ? [{ text: smartClamp(`インパクトファクター ${facts.impactFactor}`, 30), sourceFact: `IF ${facts.impactFactor}`, language: 'JA' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 1' }] : []),
+      { text: smartClamp(`学術論文の適合性を確認`, 30), sourceFact: 'Fit Evaluation', language: 'JA', category: 'Scope & Community', positionRecommendation: 'Position 1' },
+      ...(facts.firstDecisionDays ? [{ text: smartClamp(`初回判定まで平均${facts.firstDecisionDays}日`, 30), sourceFact: `${facts.firstDecisionDays}日査読`, language: 'JA' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      { text: smartClamp(`厳正な国際ピアレビュー`, 30), sourceFact: 'Editorial Standards', language: 'JA', category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' },
+      { text: smartClamp(`同分野ジャーナルとの比較`, 30), sourceFact: 'Comparison Evaluation', language: 'JA', category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' },
+      { text: smartClamp(`収載インデックスと評価`, 30), sourceFact: 'Indexing', language: 'JA', category: 'Evaluation & Metrics', positionRecommendation: 'Position 3' },
+      { text: smartClamp(`透明な出版費用とOA情報`, 30), sourceFact: 'Publishing Options', language: 'JA', category: 'Publishing Options', positionRecommendation: 'Position 3' },
+      { text: smartClamp(`受付可能な論文形式一覧`, 30), sourceFact: 'Article Formats', language: 'JA', category: 'Scope & Community', positionRecommendation: 'Position 3' },
+      { text: smartClamp(`投稿前の適合性チェック`, 30), sourceFact: 'Fit CTA', language: 'JA', category: 'Call to Action', positionRecommendation: 'Any Position' },
+      { text: smartClamp(`編集方針と審査プロセス`, 30), sourceFact: 'Editorial Policy', language: 'JA', category: 'Evaluation & Metrics', positionRecommendation: 'Any Position' },
+      { text: smartClamp(`迅速で公正な査読体制`, 30), sourceFact: 'Review Turnaround', language: 'JA', category: 'Evaluation & Metrics', positionRecommendation: 'Any Position' },
+      { text: smartClamp(`研究の国際的発信力を評価`, 30), sourceFact: 'Reputation', language: 'JA', category: 'Evaluation & Metrics', positionRecommendation: 'Any Position' },
+      { text: smartClamp(`著者向け投稿要件を確認`, 30), sourceFact: 'Author Guidance', language: 'JA', category: 'Call to Action', positionRecommendation: 'Any Position' },
+      { text: smartClamp(`学術誌の指標を詳しく確認`, 30), sourceFact: 'Metrics Review', language: 'JA', category: 'Evaluation & Metrics', positionRecommendation: 'Any Position' },
+    ];
+
     if (outputLanguage === 'EN') return en.slice(0, 15).map(h => ({ ...h, charCount: h.text.length }));
     if (outputLanguage === 'ZH') return zh.slice(0, 15).map(h => ({ ...h, charCount: h.text.length }));
-    return [...en.slice(0, 10), ...zh.slice(0, 5)].map(h => ({ ...h, charCount: h.text.length }));
+    return ja.slice(0, 15).map(h => ({ ...h, charCount: h.text.length }));
   }
 
   // DEC (Decision)
@@ -906,13 +1071,31 @@ export function generateStageHeadlines(
     { text: smartClamp(`开始准备您的学术稿件`, 30), sourceFact: 'CTA', language: 'ZH', category: 'Call to Action', positionRecommendation: 'Any Position' },
   ];
 
+  const ja: HeadlineSeed[] = [
+    { text: smartClamp(`${shortName} 論文オンライン投稿`, 30), sourceFact: 'Submission Portal', language: 'JA', category: 'Author Guidance', positionRecommendation: 'Position 1' },
+    { text: smartClamp(`投稿規程と提出チェックリスト`, 30), sourceFact: 'Author Guidelines', language: 'JA', category: 'Author Guidance', positionRecommendation: 'Position 1' },
+    { text: smartClamp(`公式オンライン投稿窓口`, 30), sourceFact: 'Portal', language: 'JA', category: 'Author Guidance', positionRecommendation: 'Position 1' },
+    { text: smartClamp(`原稿執筆要領とフォーマット`, 30), sourceFact: 'Preparation', language: 'JA', category: 'Author Guidance', positionRecommendation: 'Position 2' },
+    { text: smartClamp(`公式投稿テンプレート無料入手`, 30), sourceFact: 'Templates', language: 'JA', category: 'Author Guidance', positionRecommendation: 'Position 2' },
+    { text: smartClamp(`提出前セルフチェックシート`, 30), sourceFact: 'Checklist', language: 'JA', category: 'Author Guidance', positionRecommendation: 'Position 2' },
+    ...(facts.firstDecisionDays ? [{ text: smartClamp(`初回査読結果まで平均${facts.firstDecisionDays}日`, 30), sourceFact: `${facts.firstDecisionDays}日判定`, language: 'JA' as const, category: 'Author Guidance', positionRecommendation: 'Position 3' }] : []),
+    { text: smartClamp(`投稿後の査読進捗追跡可能`, 30), sourceFact: 'Tracking', language: 'JA', category: 'Author Guidance', positionRecommendation: 'Position 3' },
+    { text: smartClamp(`原稿提出を今すぐ開始`, 30), sourceFact: 'CTA', language: 'JA', category: 'Call to Action', positionRecommendation: 'Any Position' },
+    { text: smartClamp(`公式投稿システムはこちら`, 30), sourceFact: 'Portal', language: 'JA', category: 'Author Guidance', positionRecommendation: 'Any Position' },
+    { text: smartClamp(`論文投稿ガイドをダウンロード`, 30), sourceFact: 'Download Guide', language: 'JA', category: 'Call to Action', positionRecommendation: 'Any Position' },
+    { text: smartClamp(`出版手数料と支援制度`, 30), sourceFact: 'Fees', language: 'JA', category: 'Author Guidance', positionRecommendation: 'Any Position' },
+    { text: smartClamp(`国際基準の原稿受付窓口`, 30), sourceFact: 'Standards', language: 'JA', category: 'Author Guidance', positionRecommendation: 'Any Position' },
+    { text: smartClamp(`投稿準備をステップ毎に案内`, 30), sourceFact: 'Steps', language: 'JA', category: 'Author Guidance', positionRecommendation: 'Any Position' },
+    { text: smartClamp(`論文原稿の提出はこちらから`, 30), sourceFact: 'CTA', language: 'JA', category: 'Call to Action', positionRecommendation: 'Any Position' },
+  ];
+
   if (outputLanguage === 'EN') return en.slice(0, 15).map(h => ({ ...h, charCount: h.text.length }));
   if (outputLanguage === 'ZH') return zh.slice(0, 15).map(h => ({ ...h, charCount: h.text.length }));
-  return [...en.slice(0, 10), ...zh.slice(0, 5)].map(h => ({ ...h, charCount: h.text.length }));
+  return ja.slice(0, 15).map(h => ({ ...h, charCount: h.text.length }));
 }
 
 // Stage Descriptions with language purity
-export function generateStageDescriptions(facts: any, stage: StageCode, outputLanguage: 'all' | 'EN' | 'ZH' = 'all') {
+export function generateStageDescriptions(facts: any, stage: StageCode, outputLanguage: 'EN' | 'ZH' | 'JA' = 'EN') {
   if (stage === 'AWA') {
     const en = [
       { text: smartClamp(`Explore research published in ${facts.journalName}. Serving the global scientific community.`, 90), sourceFact: 'Journal Overview', language: 'EN' as const, theme: 'Scope & Relevance' },
@@ -926,9 +1109,15 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
       { text: smartClamp(`查阅期刊学术定位、出版宗旨及最新录用论文成果，探索国际前沿科研动态。`, 90), sourceFact: 'Discovery', language: 'ZH' as const, theme: 'Scope & Relevance' },
       { text: smartClamp(`由知名出版机构提供高质量学术平台，赋能科研人员把握学科发展脉络。`, 90), sourceFact: facts.publisher, language: 'ZH' as const, theme: 'Scope & Relevance' },
     ];
+    const ja = [
+      { text: smartClamp(`${facts.journalName}の最新学術論文を閲覧。世界をリードする研究成果をお届けします。`, 90), sourceFact: 'Journal Overview', language: 'JA' as const, theme: 'Scope & Relevance' },
+      { text: smartClamp(`${facts.publisher}がお届けする最先端の科学研究論文。各分野の重要知見を今すぐ確認。`, 90), sourceFact: facts.publisher, language: 'JA' as const, theme: 'Scope & Relevance' },
+      { text: smartClamp(`国際学術コミュニティに向けた画期的な研究知見。査読付き最新号をオンラインで閲覧。`, 90), sourceFact: 'Community Readership', language: 'JA' as const, theme: 'Scope & Relevance' },
+      { text: smartClamp(`ジャーナルの掲載対象領域、出版方針、最新のブレークスルー論文をチェック。`, 90), sourceFact: 'Discovery CTA', language: 'JA' as const, theme: 'Scope & Relevance' },
+    ];
     if (outputLanguage === 'EN') return en.map(d => ({ ...d, charCount: d.text.length }));
     if (outputLanguage === 'ZH') return zh.map(d => ({ ...d, charCount: d.text.length }));
-    return [en[0], zh[0], en[1], zh[1]].map(d => ({ ...d, charCount: d.text.length }));
+    return ja.map(d => ({ ...d, charCount: d.text.length }));
   }
 
   if (stage === 'CON') {
@@ -949,9 +1138,17 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
       { text: smartClamp(`查阅作者要求、出版模式及同行评审流程，为您的学术成果选择适宜期刊。`, 90), sourceFact: 'Scope Check', language: 'ZH' as const, theme: 'Evaluation & Peer Review' },
       { text: smartClamp(`客观对比各期刊审稿周期与收稿方向，基于真实指标评估稿件发表定位。`, 90), sourceFact: 'Comparison Evaluation', language: 'ZH' as const, theme: 'Comparison & Fit' },
     ];
+    const ifJa = facts.impactFactor ? `インパクトファクター${facts.impactFactor}、` : '';
+    const daysJa = facts.firstDecisionDays ? `初回判定まで平均${facts.firstDecisionDays}日。` : '迅速な査読体制。';
+    const ja = [
+      { text: smartClamp(`あなたの研究成果を${facts.journalName}へ。${ifJa}厳正な国際ピアレビューを実施。`, 90), sourceFact: 'Evaluation', language: 'JA' as const, theme: 'Evaluation & Peer Review' },
+      { text: smartClamp(`透明性の高い出版方針と明確な採択基準。${daysJa}投稿前の適合性をご確認ください。`, 90), sourceFact: 'Turnaround', language: 'JA' as const, theme: 'Evaluation & Peer Review' },
+      { text: smartClamp(`受付可能な原稿形式、出版モデル、査読プロセスを客観的に比較し最適なジャーナルを選択。`, 90), sourceFact: 'Publishing Options', language: 'JA' as const, theme: 'Publishing Options' },
+      { text: smartClamp(`研究の国際的影響力を最大化。同分野の主要ジャーナルと指標・査読期間を横断比較。`, 90), sourceFact: 'Comparison Evaluation', language: 'JA' as const, theme: 'Comparison & Fit' },
+    ];
     if (outputLanguage === 'EN') return en.map(d => ({ ...d, charCount: d.text.length }));
     if (outputLanguage === 'ZH') return zh.map(d => ({ ...d, charCount: d.text.length }));
-    return [en[0], zh[0], en[2], zh[1]].map(d => ({ ...d, charCount: d.text.length }));
+    return ja.map(d => ({ ...d, charCount: d.text.length }));
   }
 
   // DEC
@@ -967,70 +1164,140 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
     { text: smartClamp(`提供详尽作者准备清单与格式规范，支持在线追踪稿件审稿状态。`, 90), sourceFact: 'Manuscript Prep', language: 'ZH' as const, theme: 'Author Checklist' },
     { text: smartClamp(`严格遵循学术规范，查阅版面费与资助支持细则，安全提交研究手稿。`, 90), sourceFact: 'Submission Portal', language: 'ZH' as const, theme: 'Publishing Options' },
   ];
+  const ja = [
+    { text: smartClamp(`${facts.journalName}公式オンライン投稿窓口。投稿規程と提出チェックリストを確認。`, 90), sourceFact: 'Author Guidelines', language: 'JA' as const, theme: 'Author Checklist' },
+    { text: smartClamp(`論文フォーマット、執筆要領、必要書類一式をダウンロードして提出準備を開始。`, 90), sourceFact: 'Manuscript Prep', language: 'JA' as const, theme: 'Author Checklist' },
+    { text: smartClamp(`Springer Nature公式投稿システムから直接提出。投稿後はオンラインで進捗を追跡可能。`, 90), sourceFact: 'Submission Portal', language: 'JA' as const, theme: 'Publishing Options' },
+    { text: smartClamp(`出版倫理基準を遵守し、公正な国際ピアレビューへ。査読用原稿の提出はこちらから。`, 90), sourceFact: 'Peer Review Workflow', language: 'JA' as const, theme: 'Evaluation & Peer Review' },
+  ];
   if (outputLanguage === 'EN') return en.map(d => ({ ...d, charCount: d.text.length }));
   if (outputLanguage === 'ZH') return zh.map(d => ({ ...d, charCount: d.text.length }));
-  return [en[0], zh[0], en[1], zh[1]].map(d => ({ ...d, charCount: d.text.length }));
+  return ja.map(d => ({ ...d, charCount: d.text.length }));
 }
 
-export function generateStageKeywords(facts: any, stage: StageCode) {
+export function generateStageKeywords(facts: any, stage: StageCode, outputLanguage: 'EN' | 'ZH' | 'JA' = 'EN') {
   const shortName = facts.journalName.toLowerCase();
   const disc = (facts.primaryDiscipline || 'science').toLowerCase().split('(')[0].trim();
 
   if (stage === 'AWA') {
     return {
-      englishSearchKeywords: [
+      englishSearchKeywords: outputLanguage === 'EN' ? [
         { keyword: `${disc} research articles`, matchType: 'Broad' as const, intent: 'Research Discovery' },
         { keyword: `"${facts.journalName.toLowerCase()}" overview`, matchType: 'Phrase' as const, intent: 'Journal Discovery' },
         { keyword: `explore ${facts.publisher.toLowerCase()} journals`, matchType: 'Phrase' as const, intent: 'Publisher Discovery' },
         { keyword: `[${facts.journalName.toLowerCase()} scope]`, matchType: 'Exact' as const, intent: 'Scope Discovery' },
-      ],
-      chineseAuthorKeywords: [
+      ] : [],
+      chineseAuthorKeywords: outputLanguage === 'ZH' ? [
         { keywordZh: `${facts.journalName} 期刊介绍与研究方向`, matchType: '短语 (Phrase)' as const, intentZh: '了解学科范畴' },
         { keywordZh: `${disc} 学术前沿文献`, matchType: '短语 (Phrase)' as const, intentZh: '学术发现与阅读' },
         { keywordZh: `${facts.publisher} 旗下学术期刊`, matchType: '短语 (Phrase)' as const, intentZh: '出版机构发现' },
-      ],
-      negativeKeywords: ['代写', '买卖论文', '包录用', '降重包过', '枪手', '论文代发中介'],
+      ] : [],
+      japaneseAuthorKeywords: outputLanguage === 'JA' ? [
+        { keywordJa: `${facts.journalName} 最新論文`, matchType: 'フレーズ一致 (Phrase)' as const, intentJa: '論文閲覧・学術動向' },
+        { keywordJa: `${disc} 学術雑誌 研究トレンド`, matchType: 'フレーズ一致 (Phrase)' as const, intentJa: '分野別最新知見' },
+        { keywordJa: `${facts.publisher} 国際学術誌 購読`, matchType: 'フレーズ一致 (Phrase)' as const, intentJa: '出版元・ジャーナル発見' },
+        { keywordJa: `[${facts.journalName.toLowerCase()} 論文一覧]`, matchType: '完全一致 (Exact)' as const, intentJa: 'ジャーナル直接検索' },
+      ] : [],
+      negativeKeywords: outputLanguage === 'JA'
+        ? ['論文代行', '卒論代行', 'レポート代行', '論文売買', '査読偽装', 'ハゲタカジャーナル', '即時掲載保証']
+        : outputLanguage === 'ZH'
+        ? ['代写', '买卖论文', '包录用', '降重包过', '枪手', '论文代发中介']
+        : ['essay mill', 'buy paper', 'guaranteed acceptance', 'paper broker', 'fast publication service'],
     };
   }
 
   if (stage === 'CON') {
     return {
-      englishSearchKeywords: [
-        { keyword: `[${shortName} impact factor 2024]`, matchType: 'Exact' as const, intent: 'Metric Evaluation' },
+      englishSearchKeywords: outputLanguage === 'EN' ? [
+        { keyword: `[${shortName} impact factor 2025]`, matchType: 'Exact' as const, intent: 'Metric Evaluation' },
         { keyword: `"${shortName} aims and scope"`, matchType: 'Phrase' as const, intent: 'Fit Evaluation' },
         { keyword: `"${shortName} compared to similar journals"`, matchType: 'Phrase' as const, intent: 'Journal Comparison' },
         { keyword: `[${shortName} review time vs standard]`, matchType: 'Exact' as const, intent: 'Turnaround Check' },
-      ],
-      chineseAuthorKeywords: [
+      ] : [],
+      chineseAuthorKeywords: outputLanguage === 'ZH' ? [
         { keywordZh: `${facts.journalName} 和同类期刊对比`, matchType: '短语 (Phrase)' as const, intentZh: '选刊横向对比' },
         { keywordZh: `${facts.journalName} 分区 影响因子`, matchType: '短语 (Phrase)' as const, intentZh: '分区与考核标准' },
         { keywordZh: `${facts.journalName} 审稿周期与收稿范围`, matchType: '短语 (Phrase)' as const, intentZh: '稿件契合度评估' },
-      ],
-      negativeKeywords: ['代写', '买卖论文', '包录用', '降重包过', '枪手', '论文代发中介'],
+      ] : [],
+      japaneseAuthorKeywords: outputLanguage === 'JA' ? [
+        { keywordJa: `[${facts.journalName} インパクトファクター]`, matchType: '完全一致 (Exact)' as const, intentJa: '学術指標・業績評価' },
+        { keywordJa: `"${facts.journalName} 投稿規程"`, matchType: 'フレーズ一致 (Phrase)' as const, intentJa: '原稿適合性確認' },
+        { keywordJa: `"${facts.journalName} 査読期間 採択率"`, matchType: 'フレーズ一致 (Phrase)' as const, intentJa: 'ジャーナル比較・選定' },
+        { keywordJa: `[${facts.journalName} 査読プロセス]`, matchType: '完全一致 (Exact)' as const, intentJa: 'ピアレビュー基準' },
+      ] : [],
+      negativeKeywords: outputLanguage === 'JA'
+        ? ['論文代行', '卒論代行', 'レポート代行', '論文売買', '査読偽装', 'ハゲタカジャーナル', '即時掲載保証']
+        : outputLanguage === 'ZH'
+        ? ['代写', '买卖论文', '包录用', '降重包过', '枪手', '论文代发中介']
+        : ['essay mill', 'buy paper', 'guaranteed acceptance', 'paper broker', 'fast publication service'],
     };
   }
 
   // DEC
   return {
-    englishSearchKeywords: [
+    englishSearchKeywords: outputLanguage === 'EN' ? [
       { keyword: `[submit manuscript ${shortName}]`, matchType: 'Exact' as const, intent: 'Direct Submission' },
       { keyword: `"${shortName} author guidelines"`, matchType: 'Phrase' as const, intent: 'Manuscript Preparation' },
       { keyword: `"${shortName} submission portal"`, matchType: 'Phrase' as const, intent: 'Submission System' },
       { keyword: `[${shortName} manuscript checklist]`, matchType: 'Exact' as const, intent: 'Pre-submission Checklist' },
-    ],
-    chineseAuthorKeywords: [
+    ] : [],
+    chineseAuthorKeywords: outputLanguage === 'ZH' ? [
       { keywordZh: `${facts.journalName} 官方投稿系统入口`, matchType: '短语 (Phrase)' as const, intentZh: '在线提交稿件' },
       { keywordZh: `${facts.journalName} 作者指南与格式体例`, matchType: '短语 (Phrase)' as const, intentZh: '准备投稿文件' },
       { keywordZh: `${facts.journalName} 投稿模板与流程`, matchType: '短语 (Phrase)' as const, intentZh: '提交前格式校对' },
-    ],
-    negativeKeywords: ['代写', '买卖论文', '包录用', '降重包过', '枪手', '论文代发中介'],
+    ] : [],
+    japaneseAuthorKeywords: outputLanguage === 'JA' ? [
+      { keywordJa: `[${facts.journalName} 論文投稿ポータル]`, matchType: '完全一致 (Exact)' as const, intentJa: 'オンライン原稿提出' },
+      { keywordJa: `"${facts.journalName} 執筆要領 テンプレート"`, matchType: 'フレーズ一致 (Phrase)' as const, intentJa: '投稿前フォーマット準備' },
+      { keywordJa: `"${facts.journalName} オンライン投稿システム"`, matchType: 'フレーズ一致 (Phrase)' as const, intentJa: '査読用原稿受付窓口' },
+      { keywordJa: `[${facts.journalName} 投稿チェックリスト]`, matchType: '完全一致 (Exact)' as const, intentJa: '提出前最終確認' },
+    ] : [],
+    negativeKeywords: outputLanguage === 'JA'
+      ? ['論文代行', '卒論代行', 'レポート代行', '論文売買', '査読偽装', 'ハゲタカジャーナル', '即時掲載保証']
+      : outputLanguage === 'ZH'
+      ? ['代写', '买卖论文', '包录用', '降重包过', '枪手', '论文代发中介']
+      : ['essay mill', 'buy paper', 'guaranteed acceptance', 'paper broker', 'fast publication service'],
   };
 }
 
-export function generateStageDisplayAd(facts: any, stage: StageCode) {
+export function generateStageDisplayAd(facts: any, stage: StageCode, outputLanguage: 'EN' | 'ZH' | 'JA' = 'EN') {
   const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
 
   if (stage === 'AWA') {
+    if (outputLanguage === 'JA') {
+      return {
+        shortHeadline: smartClamp(`${shortName}の最新研究`, 30),
+        shortHeadlineCharCount: 0,
+        longHeadline: smartClamp(`世界をリードする学術誌${facts.journalName} · 最新論文を閲覧`, 90),
+        longHeadlineCharCount: 0,
+        description: smartClamp(`自然科学の最先端研究成果とブレークスルーをお届けします。今すぐ最新号を閲覧。`, 90),
+        descriptionCharCount: 0,
+        businessName: facts.publisher,
+        ctaText: '最新論文を閲覧',
+        visualConceptPrompt: `An academic research banner focusing on scientific discovery, high-resolution microscopy or molecular lattice, subtle journal cover, and clean Springer Nature branding. Low text density.`,
+        imageAccentColor: '#002d62',
+        targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'sciencedirect.com', 'nature.com'],
+        bannerHeadlineZh: `${facts.journalName} 最新論文を閲覧`,
+        bannerSubtextZh: `${facts.publisher} 刊行 · 国際ピアレビュー論文`,
+      };
+    }
+    if (outputLanguage === 'ZH') {
+      return {
+        shortHeadline: smartClamp(`探索 ${shortName}`, 30),
+        shortHeadlineCharCount: 0,
+        longHeadline: smartClamp(`探索 ${facts.journalName} 前沿学术成果 · ${facts.publisher}`, 90),
+        longHeadlineCharCount: 0,
+        description: smartClamp(`查阅 ${facts.primaryDiscipline || '综合性科学'} 领域最新发表论文与研究进展。`, 90),
+        descriptionCharCount: 0,
+        businessName: facts.publisher,
+        ctaText: '查阅期刊成果',
+        visualConceptPrompt: `An academic research banner focusing on scientific discovery, high-resolution microscopy or molecular lattice, subtle journal cover, and clean Springer Nature branding. Low text density.`,
+        imageAccentColor: '#002d62',
+        targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'sciencedirect.com', 'nature.com'],
+        bannerHeadlineZh: `探索 ${facts.journalName} 学术成果`,
+        bannerSubtextZh: `由 ${facts.publisher} 出版 · 汇聚全球前沿学术发现与学科突破`,
+      };
+    }
     return {
       shortHeadline: smartClamp(`Explore ${shortName}`, 30),
       shortHeadlineCharCount: 0,
@@ -1043,13 +1310,47 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
       visualConceptPrompt: `An academic research banner focusing on scientific discovery, high-resolution microscopy or molecular lattice, subtle journal cover, and clean Springer Nature branding. Low text density.`,
       imageAccentColor: '#002d62',
       targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'sciencedirect.com', 'nature.com'],
-      bannerHeadlineZh: `探索 ${facts.journalName} 学术成果`,
-      bannerSubtextZh: `由 ${facts.publisher} 出版 · 汇聚全球前沿学术发现与学科突破`,
+      bannerHeadlineZh: `Discover ${facts.journalName}`,
+      bannerSubtextZh: `Published by ${facts.publisher} · Groundbreaking Scientific Discoveries`,
     };
   }
 
   if (stage === 'CON') {
     const metricStr = facts.impactFactor ? `Clarivate IF ${facts.impactFactor}` : 'Indexed Research';
+    if (outputLanguage === 'JA') {
+      return {
+        shortHeadline: smartClamp(`${shortName} 投稿基準`, 30),
+        shortHeadlineCharCount: 0,
+        longHeadline: smartClamp(`${facts.journalName}への投稿を検討: 厳正な査読と高い国際的評価`, 90),
+        longHeadlineCharCount: 0,
+        description: smartClamp(`客観的な学術指標、査読期間、原稿フォーマットを確認し、最適な学術誌を選択。`, 90),
+        descriptionCharCount: 0,
+        businessName: facts.publisher,
+        ctaText: '投稿規程を確認',
+        visualConceptPrompt: `An objective academic evaluation ad featuring the official journal cover, Clarivate indexing badges (SCIE), and professional scholarly palette.`,
+        imageAccentColor: '#1e1b4b',
+        targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'scholar.google.com', 'nature.com'],
+        bannerHeadlineZh: `${facts.journalName} 投稿検討ガイド`,
+        bannerSubtextZh: `査読基準と学術指標を確認`,
+      };
+    }
+    if (outputLanguage === 'ZH') {
+      return {
+        shortHeadline: smartClamp(`核对 ${shortName} 契合度`, 30),
+        shortHeadlineCharCount: 0,
+        longHeadline: smartClamp(`评估 ${facts.journalName}: 同行评议严谨，指标透明`, 90),
+        longHeadlineCharCount: 0,
+        description: smartClamp(`核对期刊学科范畴、审稿周期与发表模式，助力学者理性选刊。`, 90),
+        descriptionCharCount: 0,
+        businessName: facts.publisher,
+        ctaText: '核对期刊契合度',
+        visualConceptPrompt: `An objective academic evaluation ad featuring the official journal cover, Clarivate indexing badges (SCIE), and professional scholarly palette.`,
+        imageAccentColor: '#1e1b4b',
+        targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'scholar.google.com', 'nature.com'],
+        bannerHeadlineZh: `${facts.journalName} 选刊评估指南`,
+        bannerSubtextZh: `核对学术契合度、审稿流程与收稿范围`,
+      };
+    }
     return {
       shortHeadline: smartClamp(`Check ${shortName} Fit`, 30),
       shortHeadlineCharCount: 0,
@@ -1062,12 +1363,46 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
       visualConceptPrompt: `An objective academic evaluation ad featuring the official journal cover, Clarivate indexing badges (SCIE), and professional scholarly palette.`,
       imageAccentColor: '#1e1b4b',
       targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'scholar.google.com', 'nature.com'],
-      bannerHeadlineZh: `${facts.journalName} 选刊评估指南`,
-      bannerSubtextZh: `核对学术契合度、审稿流程与收稿范围`,
+      bannerHeadlineZh: `${facts.journalName} Publishing Evaluation`,
+      bannerSubtextZh: `Review Editorial Scope, Turnaround Metrics and Indexing`,
     };
   }
 
   // DEC
+  if (outputLanguage === 'JA') {
+    return {
+      shortHeadline: smartClamp(`${shortName} オンライン投稿`, 30),
+      shortHeadlineCharCount: 0,
+      longHeadline: smartClamp(`${facts.journalName} 論文投稿窓口 · 公式オンライン提出ポータル`, 90),
+      longHeadlineCharCount: 0,
+      description: smartClamp(`著者向け投稿規程とチェックリストを完備。公式システムから直接手稿を提出。`, 90),
+      descriptionCharCount: 0,
+      businessName: facts.publisher,
+      ctaText: '論文を投稿する',
+      visualConceptPrompt: `A streamlined author guidance banner showcasing a manuscript submission checklist icon, clear typography, verified portal badge, and Springer Nature integrity crest.`,
+      imageAccentColor: '#064e3b',
+      targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'nature.com', 'springerlink.com'],
+      bannerHeadlineZh: `${facts.journalName} 原稿オンライン受付`,
+      bannerSubtextZh: `公式投稿ポータルから直接提出`,
+    };
+  }
+  if (outputLanguage === 'ZH') {
+    return {
+      shortHeadline: smartClamp(`投递至 ${shortName}`, 30),
+      shortHeadlineCharCount: 0,
+      longHeadline: smartClamp(`${facts.journalName} 官方作者投稿须知与提交入口`, 90),
+      longHeadlineCharCount: 0,
+      description: smartClamp(`查阅手稿体例规范，下载格式清单，通过 Springer Nature 官方通道在线递交论文。`, 90),
+      descriptionCharCount: 0,
+      businessName: facts.publisher,
+      ctaText: '查阅投稿清单',
+      visualConceptPrompt: `A streamlined author guidance banner showcasing a manuscript submission checklist icon, clear typography, verified portal badge, and Springer Nature integrity crest.`,
+      imageAccentColor: '#064e3b',
+      targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'nature.com', 'springerlink.com'],
+      bannerHeadlineZh: `${facts.journalName} 作者投稿须知`,
+      bannerSubtextZh: `获取官方投稿清单与格式指南 · 在线投递学术稿件`,
+    };
+  }
   return {
     shortHeadline: smartClamp(`Submit to ${shortName}`, 30),
     shortHeadlineCharCount: 0,
@@ -1080,21 +1415,21 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
     visualConceptPrompt: `A streamlined author guidance banner showcasing a manuscript submission checklist icon, clear typography, verified portal badge, and Springer Nature integrity crest.`,
     imageAccentColor: '#064e3b',
     targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'nature.com', 'springerlink.com'],
-    bannerHeadlineZh: `${facts.journalName} 作者投稿须知`,
-    bannerSubtextZh: `获取官方投稿清单与格式指南 · 在线投递学术稿件`,
+    bannerHeadlineZh: `Submit to ${facts.journalName}`,
+    bannerSubtextZh: `Access Author Guidelines, Preparation Checklist and Portal`,
   };
 }
 
 export function generateDeterministicCampaign(
   facts: any,
   stage: StageCode,
-  outputLanguage: 'all' | 'EN' | 'ZH' = 'all'
+  outputLanguage: 'EN' | 'ZH' | 'JA' = 'EN'
 ) {
   const stageConfig = STAGE_CONFIGS[stage];
   const headlines = generateStageHeadlines(facts, stage, outputLanguage);
   const descriptions = generateStageDescriptions(facts, stage, outputLanguage);
-  const keywords = generateStageKeywords(facts, stage);
-  const displayAd = generateStageDisplayAd(facts, stage);
+  const keywords = generateStageKeywords(facts, stage, outputLanguage);
+  const displayAd = generateStageDisplayAd(facts, stage, outputLanguage);
 
   displayAd.shortHeadlineCharCount = displayAd.shortHeadline.length;
   displayAd.longHeadlineCharCount = displayAd.longHeadline.length;
@@ -1104,29 +1439,83 @@ export function generateDeterministicCampaign(
   const baseUrl = norm.full || 'https://www.nature.com';
 
   const sitelinks =
-    stage === 'AWA'
+    outputLanguage === 'JA'
+      ? stage === 'AWA'
+        ? [
+            { text: 'ジャーナル概要', description1: '学術ミッションと掲載方針', description2: '国際的学術コミュニティ', finalUrl: `${baseUrl}/about`, title: 'ジャーナル概要', desc: '学術ミッションと掲載方針。国際的学術コミュニティ。', urlPath: `${baseUrl}/about` },
+            { text: '最新論文を閲覧', description1: '厳選された査読済み論文', description2: '最新の科学的発見を公開', finalUrl: `${baseUrl}/articles`, title: '最新論文を閲覧', desc: '厳選された査読済み論文。最新の科学的発見を公開。', urlPath: `${baseUrl}/articles` },
+            { text: '国際編集委員会', description1: '世界一流の研究者陣が運営', description2: '公正なピアレビューを担保', finalUrl: `${baseUrl}/editors`, title: '国際編集委員会', desc: '世界一流の研究者陣が運営。公正なピアレビューを担保。', urlPath: `${baseUrl}/editors` },
+            { text: '特集論文集', description1: '重要研究テーマの特集号', description2: '高注目度の論文を収録', finalUrl: `${baseUrl}/collections`, title: '特集論文集', desc: '重要研究テーマの特集号。高注目度の論文を収録。', urlPath: `${baseUrl}/collections` },
+          ]
+        : stage === 'CON'
+        ? [
+            { text: '掲載方針と領域', description1: '研究テーマの合致度を確認', description2: '受領対象の論文分野一覧', finalUrl: `${baseUrl}/aims-and-scope`, title: '掲載方針と領域', desc: '研究テーマの合致度を確認。受領対象の論文分野一覧。', urlPath: `${baseUrl}/aims-and-scope` },
+            { text: '受付論文形式', description1: '原著論文・総説の受付要項', description2: '短報やレターの基準も網羅', finalUrl: `${baseUrl}/article-types`, title: '受付論文形式', desc: '原著論文・総説の受付要項。短報やレターの基準も網羅。', urlPath: `${baseUrl}/article-types` },
+            { text: '学術指標と収載', description1: '公式IFと収載インデックス', description2: '国際データベース検索対応', finalUrl: `${baseUrl}/metrics`, title: '学術指標と収載', desc: '公式IFと収載インデックス。国際データベース検索対応。', urlPath: `${baseUrl}/metrics` },
+            { text: '出版費用とOA', description1: '透明なAPC規定と助成案内', description2: '各種免除ポリシーを完備', finalUrl: `${baseUrl}/open-access`, title: '出版費用とOA', desc: '透明なAPC規定と助成案内。各種免除ポリシーを完備。', urlPath: `${baseUrl}/open-access` },
+          ]
+        : [
+            { text: '著者向け投稿規程', description1: '原稿執筆要領とフォーマット', description2: '図表作成ガイドライン完備', finalUrl: `${baseUrl}/for-authors`, title: '著者向け投稿規程', desc: '原稿執筆要領とフォーマット。図表作成ガイドライン完備。', urlPath: `${baseUrl}/for-authors` },
+            { text: '提出前チェック', description1: '投稿に必要な添付書類一覧', description2: '倫理同意書とデータ要件', finalUrl: `${baseUrl}/checklist`, title: '提出前チェック', desc: '投稿に必要な添付書類一覧。倫理同意書とデータ要件。', urlPath: `${baseUrl}/checklist` },
+            { text: '出版費用と免除', description1: '費用ポリシーと助成案内', description2: '機関契約による費用支援', finalUrl: `${baseUrl}/apc-waivers`, title: '出版費用と免除', desc: '費用ポリシーと助成案内。機関契約による費用支援。', urlPath: `${baseUrl}/apc-waivers` },
+            { text: 'オンライン投稿', description1: '公式原稿提出システムへ', description2: '査読進捗を常時追跡可能', finalUrl: `${baseUrl}/submit`, title: 'オンライン投稿', desc: '公式原稿提出システムへ。査読進捗を常時追跡可能。', urlPath: `${baseUrl}/submit` },
+          ]
+      : outputLanguage === 'ZH'
+      ? stage === 'AWA'
+        ? [
+            { text: '期刊介绍与范围', description1: '了解研究学科与期刊定位', description2: '学术共同体与读者覆盖', finalUrl: `${baseUrl}/about`, title: '期刊介绍与范围', desc: '了解研究学科与期刊定位。学术共同体与读者覆盖。', urlPath: `${baseUrl}/about` },
+            { text: '查阅最新论文', description1: '浏览同行评议前沿成果', description2: '高学术价值精选研究', finalUrl: `${baseUrl}/articles`, title: '查阅最新论文', desc: '浏览同行评议前沿成果。高学术价值精选研究。', urlPath: `${baseUrl}/articles` },
+            { text: '国际编委团队', description1: '知名领军学者把关审稿', description2: '保障专业严谨学术水准', finalUrl: `${baseUrl}/editors`, title: '国际编委团队', desc: '知名领军学者把关审稿。保障专业严谨学术水准。', urlPath: `${baseUrl}/editors` },
+            { text: '特色专题论文集', description1: '精选前沿学术主题专辑', description2: '跨学科热点专题探索', finalUrl: `${baseUrl}/collections`, title: '特色专题论文集', desc: '精选前沿学术主题专辑。跨学科热点专题探索。', urlPath: `${baseUrl}/collections` },
+          ]
+        : stage === 'CON'
+        ? [
+            { text: '收稿范围契合核对', description1: '确认稿件主题与栏目定位', description2: '评估论文契合度与标准', finalUrl: `${baseUrl}/aims-and-scope`, title: '收稿范围契合核对', desc: '确认稿件主题与栏目定位。评估论文契合度与标准。', urlPath: `${baseUrl}/aims-and-scope` },
+            { text: '接受文章类型体例', description1: '原著论著快报与综述要求', description2: '查阅字数与版块规范', finalUrl: `${baseUrl}/article-types`, title: '接受文章类型体例', desc: '原著论著快报与综述要求。查阅字数与版块规范。', urlPath: `${baseUrl}/article-types` },
+            { text: '期刊指标检索收录', description1: '影响因子与数据库收录现状', description2: '权威引文与分区公开', finalUrl: `${baseUrl}/metrics`, title: '期刊指标检索收录', desc: '影响因子与数据库收录现状。权威引文与分区公开。', urlPath: `${baseUrl}/metrics` },
+            { text: '版面费开源政策', description1: '透明公开的APC与减免支持', description2: '符合中国科研资助政策', finalUrl: `${baseUrl}/open-access`, title: '版面费开源政策', desc: '透明公开的APC与减免支持。符合中国科研资助政策。', urlPath: `${baseUrl}/open-access` },
+          ]
+        : [
+            { text: '作者投稿须知指南', description1: '原稿体例规范与格式说明', description2: '官方排版模板免费下载', finalUrl: `${baseUrl}/for-authors`, title: '作者投稿须知指南', desc: '原稿体例规范与格式说明。官方排版模板免费下载。', urlPath: `${baseUrl}/for-authors` },
+            { text: '投稿前自查清单', description1: '核对必备文件与签署表格', description2: '规避初审退修常见疏漏', finalUrl: `${baseUrl}/checklist`, title: '投稿前自查清单', desc: '核对必备文件与签署表格。规避初审退修常见疏漏。', urlPath: `${baseUrl}/checklist` },
+            { text: '版面费与资助减免', description1: '资助政策与费用支付说明', description2: '机构合作协议免缴指南', finalUrl: `${baseUrl}/apc-waivers`, title: '版面费与资助减免', desc: '资助政策与费用支付说明。机构合作协议免缴指南。', urlPath: `${baseUrl}/apc-waivers` },
+            { text: '官方在线投递系统', description1: '安全提交经过校对的稿件', description2: '全程透明追踪审稿进度', finalUrl: `${baseUrl}/submit`, title: '官方在线投递系统', desc: '安全提交经过校对的稿件。全程透明追踪审稿进度。', urlPath: `${baseUrl}/submit` },
+          ]
+      : stage === 'AWA'
       ? [
-          { title: 'Journal Overview & Scope', desc: 'Explore research fields and mission', urlPath: `${baseUrl}/about` },
-          { title: 'Browse Latest Articles', desc: 'Read recent peer-reviewed discoveries', urlPath: `${baseUrl}/articles` },
-          { title: 'Editorial Leadership', desc: 'Meet the international editorial board', urlPath: `${baseUrl}/editors` },
-          { title: 'Research Collections', desc: 'Curated thematic paper collections', urlPath: `${baseUrl}/collections` },
+          { text: 'Journal Overview & Scope', description1: 'Explore research fields and mission', description2: 'Connect with global scientific readers', finalUrl: `${baseUrl}/about`, title: 'Journal Overview & Scope', desc: 'Explore research fields and mission. Connect with global scientific readers.', urlPath: `${baseUrl}/about` },
+          { text: 'Browse Latest Articles', description1: 'Read recent peer-reviewed studies', description2: 'Open discoveries and notable papers', finalUrl: `${baseUrl}/articles`, title: 'Browse Latest Articles', desc: 'Read recent peer-reviewed studies. Open discoveries and notable papers.', urlPath: `${baseUrl}/articles` },
+          { text: 'Editorial Leadership', description1: 'Meet international board members', description2: 'Distinguished active researchers', finalUrl: `${baseUrl}/editors`, title: 'Editorial Leadership', desc: 'Meet international board members. Distinguished active researchers.', urlPath: `${baseUrl}/editors` },
+          { text: 'Thematic Collections', description1: 'Curated topical research series', description2: 'Cross-disciplinary special issues', finalUrl: `${baseUrl}/collections`, title: 'Thematic Collections', desc: 'Curated topical research series. Cross-disciplinary special issues.', urlPath: `${baseUrl}/collections` },
         ]
       : stage === 'CON'
       ? [
-          { title: 'Aims & Scope Evaluation', desc: 'Check topical alignment and criteria', urlPath: `${baseUrl}/aims-and-scope` },
-          { title: 'Article Types & Formats', desc: 'Accepted original research & reviews', urlPath: `${baseUrl}/article-types` },
-          { title: 'Journal Metrics & Indexing', desc: `Indexing & Clarivate status`, urlPath: `${baseUrl}/metrics` },
-          { title: 'Publishing Options & Fees', desc: `Transparent APC & OA publishing`, urlPath: `${baseUrl}/open-access` },
+          { text: 'Aims & Scope Evaluation', description1: 'Check topical alignment and criteria', description2: 'Verify if your paper fits aims', finalUrl: `${baseUrl}/aims-and-scope`, title: 'Aims & Scope Evaluation', desc: 'Check topical alignment and criteria. Verify if your paper fits aims.', urlPath: `${baseUrl}/aims-and-scope` },
+          { text: 'Article Types & Formats', description1: 'Accepted original research & reviews', description2: 'Guidelines on word count and data', finalUrl: `${baseUrl}/article-types`, title: 'Article Types & Formats', desc: 'Accepted original research & reviews. Guidelines on word count and data.', urlPath: `${baseUrl}/article-types` },
+          { text: 'Journal Metrics & Index', description1: 'Official Impact Factor and rankings', description2: 'Indexed in Web of Science and PubMed', finalUrl: `${baseUrl}/metrics`, title: 'Journal Metrics & Index', desc: 'Official Impact Factor and rankings. Indexed in Web of Science and PubMed.', urlPath: `${baseUrl}/metrics` },
+          { text: 'Publishing Options & Fees', description1: 'Transparent APC and waiver terms', description2: 'Funding and institutional support', finalUrl: `${baseUrl}/open-access`, title: 'Publishing Options & Fees', desc: 'Transparent APC and waiver terms. Funding and institutional support.', urlPath: `${baseUrl}/open-access` },
         ]
       : [
-          { title: 'Author Guidelines', desc: 'Manuscript preparation and style guide', urlPath: `${baseUrl}/for-authors` },
-          { title: 'Submission Checklist', desc: 'Required documentation before submitting', urlPath: `${baseUrl}/checklist` },
-          { title: 'APC & Waiver Criteria', desc: 'Fee policy and funding guidelines', urlPath: `${baseUrl}/apc-waivers` },
-          { title: 'Online Submission Portal', desc: 'Submit paper for peer review', urlPath: `${baseUrl}/submit` },
+          { text: 'Author Guidelines', description1: 'Manuscript preparation and style', description2: 'Download Word and LaTeX templates', finalUrl: `${baseUrl}/for-authors`, title: 'Author Guidelines', desc: 'Manuscript preparation and style. Download Word and LaTeX templates.', urlPath: `${baseUrl}/for-authors` },
+          { text: 'Submission Checklist', description1: 'Required files and checklist items', description2: 'Avoid common delays before review', finalUrl: `${baseUrl}/checklist`, title: 'Submission Checklist', desc: 'Required files and checklist items. Avoid common delays before review.', urlPath: `${baseUrl}/checklist` },
+          { text: 'APC & Waiver Criteria', description1: 'Transparent author publishing fees', description2: 'Institutional discounts and waivers', finalUrl: `${baseUrl}/apc-waivers`, title: 'APC & Waiver Criteria', desc: 'Transparent author publishing fees. Institutional discounts and waivers.', urlPath: `${baseUrl}/apc-waivers` },
+          { text: 'Online Submission Portal', description1: 'Direct author upload portal', description2: 'Track peer review status online', finalUrl: `${baseUrl}/submit`, title: 'Online Submission Portal', desc: 'Direct author upload portal. Track peer review status online.', urlPath: `${baseUrl}/submit` },
         ];
 
   const callouts =
-    stage === 'AWA'
+    outputLanguage === 'JA'
+      ? stage === 'AWA'
+        ? [`${facts.publisher} 刊行`, '世界的な読者層', '国際ピアレビュー', '最新の科学的知見']
+        : stage === 'CON'
+        ? [facts.impactFactor ? `IF ${facts.impactFactor}` : 'SCIE 収載', '厳正なピアレビュー', facts.firstDecisionDays ? `初回判定: 平均${facts.firstDecisionDays}日` : '迅速な審査体制', '明確な出版基準']
+        : ['著者向け投稿規程完備', '提出前チェックリスト対応', facts.firstDecisionDays ? `初回判定: 平均${facts.firstDecisionDays}日` : '迅速な査読', '公式オンライン投稿']
+      : outputLanguage === 'ZH'
+      ? stage === 'AWA'
+        ? [`${facts.publisher} 出版`, '国际学术读者网络', '严谨同行评议', '学科前沿成果']
+        : stage === 'CON'
+        ? [facts.impactFactor ? `Clarivate IF ${facts.impactFactor}` : 'SCIE 收录', facts.casZone ? facts.casZone.slice(0, 14) : '同行评议标准', facts.firstDecisionDays ? `平均初审约${facts.firstDecisionDays}天` : '审稿流程规范', '发表政策透明']
+        : ['作者指南规范齐备', '投稿材料自查清单', facts.firstDecisionDays ? `初审约${facts.firstDecisionDays}天` : '审稿周期透明', '官方投递通道']
+      : stage === 'AWA'
       ? [`Published by ${facts.publisher}`, (facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), 'Global Readership', 'Peer-Reviewed Science']
       : stage === 'CON'
       ? [facts.impactFactor ? `Clarivate IF ${facts.impactFactor}` : 'Indexed in SCIE', facts.casZone ? facts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', facts.firstDecisionDays ? `1st Decision: ${facts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
@@ -1150,16 +1539,14 @@ export function generateDeterministicCampaign(
       sitelinks,
       callouts,
       structuredSnippet: {
-        header: 'Disciplines',
-        values: [(facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), facts.publisher, 'Peer-Reviewed Research'],
+        header: outputLanguage === 'JA' ? '学術領域' : outputLanguage === 'ZH' ? '学科方向' : 'Disciplines',
+        values: [(facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), facts.publisher, outputLanguage === 'JA' ? '査読付き学術研究' : outputLanguage === 'ZH' ? '同行评议学术成果' : 'Peer-Reviewed Research'],
       },
       recommendedFinalUrl: `${baseUrl}${stageConfig.recommendedDestination.urlPath}`,
     },
-    displayAds: {
-      ...displayAd,
-      recommendedFinalUrl: `${baseUrl}${stageConfig.recommendedDestination.urlPath}`,
-    },
+    displayAds: displayAd,
     keywords,
+    outputLanguage,
   };
 }
 
@@ -1170,7 +1557,7 @@ app.post('/api/generate-campaign', async (req, res) => {
       landingPageUrl,
       channels = ['search', 'display'],
       funnelStage = 'CON',
-      outputLanguage = 'all',
+      outputLanguage = 'EN',
       customPlaybook = '',
       userProvidedFacts = null,
     } = req.body;
@@ -1232,7 +1619,7 @@ ${customPlaybook ? `PLAYBOOK RULES:\n${customPlaybook}\n` : ''}
 GOOGLE ADS REQUIREMENTS:
 1. Search Headlines: 15 items, strictly <=30 visual width.
 2. Search Descriptions: 4 items, strictly <=90 visual width.
-3. Language purity: If language is 'EN', output ZERO Chinese characters. If 'ZH', output ZERO Latin letters.`;
+3. Language purity: If language is 'EN', output ZERO Chinese or Japanese characters. If 'ZH', output 100% authentic Simplified Chinese with ZERO Latin letters or Japanese kana. If 'JA', output 100% authentic academic Japanese (日本語) with ZERO Latin letters or Chinese-only phrasing.`;
 
       try {
         const timeoutPromise = new Promise<null>((_, reject) =>
@@ -1359,7 +1746,7 @@ GOOGLE ADS REQUIREMENTS:
 // 4. API: Compare All 3 Stages (AWA, CON, DEC) Side-by-Side
 app.post('/api/compare-stages', async (req, res) => {
   try {
-    const { landingPageUrl, outputLanguage = 'all' } = req.body;
+    const { landingPageUrl, outputLanguage = 'EN' } = req.body;
     const facts = await lookupClarivateFacts(landingPageUrl);
 
     const awa = generateDeterministicCampaign(facts, 'AWA', outputLanguage);
@@ -1378,6 +1765,155 @@ app.post('/api/compare-stages', async (req, res) => {
   } catch (err: any) {
     console.error('Compare stages failed:', err);
     res.status(500).json({ error: err.message || 'Failed to compare stages' });
+  }
+});
+
+// 5. API: Admin Playbook Configuration
+app.get('/api/playbook', (_req, res) => {
+  res.json({ success: true, playbook: adminPlaybook });
+});
+
+app.post('/api/playbook', (req, res) => {
+  try {
+    const updated = req.body;
+    if (updated && typeof updated === 'object') {
+      adminPlaybook = {
+        ...adminPlaybook,
+        ...updated,
+        lastModified: new Date().toISOString(),
+      };
+      savePlaybookToDisk();
+      console.log(`[Admin Playbook] Updated and saved to disk. Active preset: ${adminPlaybook.activePreset}`);
+      return res.json({ success: true, playbook: adminPlaybook });
+    }
+    res.status(400).json({ error: 'Invalid playbook payload' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to save playbook' });
+  }
+});
+
+// 6. API: Metrics Database Journals List & Update
+app.get('/api/database/journals', (_req, res) => {
+  try {
+    const list: any[] = [];
+    metricsDatabase.forEach((val, key) => {
+      if (key.startsWith('http://') || key.startsWith('https://')) {
+        list.push(val);
+      }
+    });
+    res.json({ success: true, journals: list });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to list database journals' });
+  }
+});
+
+app.post('/api/database/journal', (req, res) => {
+  try {
+    const { journal } = req.body;
+    if (!journal || !journal.canonicalUrl) {
+      return res.status(400).json({ error: 'Journal object with canonicalUrl is required' });
+    }
+    const norm = normalizeUrlComponents(journal.canonicalUrl);
+    const key = norm.full;
+    metricsDatabase.set(key, {
+      ...journal,
+      lastUpdated: new Date().toISOString(),
+    });
+    if (journal.journalId) metricsDatabase.set(journal.journalId, journal);
+    saveDatabaseToDisk();
+    console.log(`[Metrics DB] Saved journal ${journal.journalName} to database.`);
+    res.json({ success: true, journal });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to save journal to database' });
+  }
+});
+
+// 7. API: Batch Check Metrics for Multiple URLs (Bulk Mode)
+app.post('/api/batch-check-metrics', async (req, res) => {
+  try {
+    const { urls } = req.body;
+    if (!Array.isArray(urls)) {
+      return res.status(400).json({ error: 'urls array is required' });
+    }
+
+    const results = await Promise.all(
+      urls.map(async (rawUrl: string) => {
+        const cleaned = (rawUrl || '').trim();
+        if (!cleaned) return null;
+        try {
+          const facts = await lookupClarivateFacts(cleaned);
+          return {
+            url: cleaned,
+            facts,
+            status: facts.verificationStatus === 'missing' ? 'missing_metrics' : 'metrics_ready',
+          };
+        } catch (err: any) {
+          return {
+            url: cleaned,
+            error: err.message || 'Lookup failed',
+            status: 'error',
+          };
+        }
+      })
+    );
+
+    res.json({ success: true, items: results.filter(Boolean) });
+  } catch (err: any) {
+    console.error('Batch metrics check failed:', err);
+    res.status(500).json({ error: err.message || 'Batch check failed' });
+  }
+});
+
+// 8. API: Batch Campaign Generation (Bulk Mode)
+app.post('/api/batch-generate-campaigns', async (req, res) => {
+  try {
+    const { items, stage = 'CON', outputLanguage = 'EN' } = req.body;
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ error: 'items array is required' });
+    }
+
+    const normalizedStage = normalizeStage(stage);
+
+    const generatedResults = await Promise.all(
+      items.map(async (item: { url: string; userProvidedFacts?: any }) => {
+        try {
+          let facts: JCRJournalEntry;
+          if (item.userProvidedFacts && item.userProvidedFacts.verificationStatus === 'user_provided') {
+            facts = item.userProvidedFacts;
+          } else {
+            facts = await lookupClarivateFacts(item.url);
+          }
+
+          if (facts.verificationStatus === 'missing' || facts.impactFactor === null) {
+            return {
+              url: item.url,
+              status: 'missing_metrics',
+              facts,
+              error: 'Missing required metrics. Manual review required.',
+            };
+          }
+
+          const campaign = generateDeterministicCampaign(facts, normalizedStage, outputLanguage);
+          return {
+            url: item.url,
+            status: 'completed',
+            facts,
+            campaign,
+          };
+        } catch (err: any) {
+          return {
+            url: item.url,
+            status: 'error',
+            error: err.message || 'Generation failed',
+          };
+        }
+      })
+    );
+
+    res.json({ success: true, results: generatedResults });
+  } catch (err: any) {
+    console.error('Batch generation failed:', err);
+    res.status(500).json({ error: err.message || 'Batch generation failed' });
   }
 });
 

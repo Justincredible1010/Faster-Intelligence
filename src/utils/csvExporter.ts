@@ -98,8 +98,10 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
 
   const rows: string[][] = [];
 
-  // 1. English Keywords
-  if (campaign.keywords?.englishSearchKeywords) {
+  const lang = campaign.outputLanguage || 'EN';
+
+  // 1. English Keywords (if EN mode)
+  if (lang === 'EN' && campaign.keywords?.englishSearchKeywords) {
     campaign.keywords.englishSearchKeywords.forEach((kw) => {
       const cleanKeyword = kw.keyword.replace(/^\[|\]$|^"|"$/g, '');
       rows.push([
@@ -122,14 +124,38 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
     });
   }
 
-  // 2. Chinese Keywords (if any)
-  if (campaign.keywords?.chineseAuthorKeywords) {
+  // 2. Chinese Keywords (if ZH mode)
+  if (lang === 'ZH' && campaign.keywords?.chineseAuthorKeywords) {
     campaign.keywords.chineseAuthorKeywords.forEach((kw) => {
       const matchType = kw.matchType.includes('精确') ? 'Exact' : 'Phrase';
       rows.push([
         `${journalName} - ${cfg.shortLabel} - Search (ZH)`,
         `${cfg.shortLabel} 中文学术关键词`,
         kw.keywordZh,
+        matchType,
+        '',
+        h1,
+        h2,
+        h3,
+        d1,
+        d2,
+        finalUrl,
+        displayUrl,
+        factProvenance,
+        confidenceScore.toFixed(2),
+        qualityNotes,
+      ]);
+    });
+  }
+
+  // 3. Japanese Keywords (if JA mode)
+  if (lang === 'JA' && campaign.keywords?.japaneseAuthorKeywords) {
+    campaign.keywords.japaneseAuthorKeywords.forEach((kw) => {
+      const matchType = kw.matchType.includes('完全一致') ? 'Exact' : kw.matchType.includes('フレーズ') ? 'Phrase' : 'Broad';
+      rows.push([
+        `${journalName} - ${cfg.shortLabel} - Search (JA)`,
+        `${cfg.shortLabel} 日本語学術キーワード`,
+        kw.keywordJa,
         matchType,
         '',
         h1,
@@ -251,3 +277,121 @@ All headlines (<=30 visual width) and descriptions (<=90 visual width) have been
   readmeLink.click();
   document.body.removeChild(readmeLink);
 }
+
+/**
+ * Generates unified Bulk Google Ads Editor CSV containing multiple campaigns
+ */
+export function generateBulkGoogleAdsEditorCsv(campaigns: GeneratedAdCampaign[]): string {
+  const headers = [
+    'Campaign',
+    'Ad Group',
+    'Keyword',
+    'Match Type',
+    'Max CPC',
+    'Headline 1',
+    'Headline 2',
+    'Headline 3',
+    'Description 1',
+    'Description 2',
+    'Final URL',
+    'Display URL',
+    'Fact Provenance',
+    'Confidence',
+    'Quality Notes',
+  ];
+
+  const allRows: string[][] = [];
+
+  campaigns.forEach((campaign) => {
+    const stage = normalizeStage(campaign.funnelStage);
+    const cfg = STAGE_CONFIGS[stage];
+    const facts = campaign.clarivateFacts;
+    const journalName = facts.journalName || 'Journal';
+    const campaignName = `${journalName} - ${cfg.shortLabel} - Search (${campaign.outputLanguage || 'EN'})`;
+    const adGroupName = `${cfg.shortLabel} Target Keywords`;
+    const finalUrl = campaign.recommendedDestination?.url || facts?.url || 'https://www.nature.com';
+    const displayUrl = deriveDisplayUrl(finalUrl);
+
+    const factProvenance = `Clarivate IF ${facts.impactFactor ?? 'None'} (${facts.reportingYear || '2025'}) | ${facts.verificationStatus}`;
+    const confidenceScore = facts.verificationStatus === 'source_verified' ? 0.95 : facts.verificationStatus === 'user_provided' ? 0.85 : 0.6;
+    const qualityNotes = facts.verificationStatus === 'source_verified' ? 'Verified API Record' : 'User Provided';
+
+    const headlines = campaign.searchAds?.headlines || [];
+    const h1 = smartClampWithWidth(headlines[0]?.text || `Discover ${journalName}`, 30);
+    const h2 = smartClampWithWidth(headlines[1]?.text || `${journalName} Research`, 30);
+    const h3 = smartClampWithWidth(headlines[2]?.text || cfg.primaryCta, 30);
+
+    const descriptions = campaign.searchAds?.descriptions || [];
+    const d1 = smartClampWithWidth(descriptions[0]?.text || `Read peer-reviewed research in ${journalName}.`, 90);
+    const d2 = smartClampWithWidth(descriptions[1]?.text || `Explore aims, scope and articles published by ${facts.publisher}.`, 90);
+
+    const lang = campaign.outputLanguage || 'EN';
+
+    if (lang === 'EN' && campaign.keywords?.englishSearchKeywords) {
+      campaign.keywords.englishSearchKeywords.forEach((kw) => {
+        allRows.push([
+          campaignName,
+          adGroupName,
+          kw.keyword.replace(/^\[|\]$|^"|"$/g, ''),
+          kw.matchType,
+          '',
+          h1, h2, h3, d1, d2,
+          finalUrl, displayUrl, factProvenance, confidenceScore.toFixed(2), qualityNotes,
+        ]);
+      });
+    } else if (lang === 'ZH' && campaign.keywords?.chineseAuthorKeywords) {
+      campaign.keywords.chineseAuthorKeywords.forEach((kw) => {
+        allRows.push([
+          campaignName,
+          adGroupName,
+          kw.keywordZh,
+          kw.matchType.includes('精确') ? 'Exact' : 'Phrase',
+          '',
+          h1, h2, h3, d1, d2,
+          finalUrl, displayUrl, factProvenance, confidenceScore.toFixed(2), qualityNotes,
+        ]);
+      });
+    } else if (lang === 'JA' && campaign.keywords?.japaneseAuthorKeywords) {
+      campaign.keywords.japaneseAuthorKeywords.forEach((kw) => {
+        allRows.push([
+          campaignName,
+          adGroupName,
+          kw.keywordJa,
+          kw.matchType.includes('完全一致') ? 'Exact' : 'Phrase',
+          '',
+          h1, h2, h3, d1, d2,
+          finalUrl, displayUrl, factProvenance, confidenceScore.toFixed(2), qualityNotes,
+        ]);
+      });
+    }
+
+    if (allRows.length === 0) {
+      allRows.push([
+        campaignName, adGroupName, journalName.toLowerCase(), 'Phrase', '',
+        h1, h2, h3, d1, d2, finalUrl, displayUrl, factProvenance, confidenceScore.toFixed(2), qualityNotes,
+      ]);
+    }
+  });
+
+  return (
+    headers.join(',') +
+    '\n' +
+    allRows.map((row) => row.map((cell) => escapeCsvField(cell)).join(',')).join('\n')
+  );
+}
+
+/**
+ * Downloads Bulk Google Ads Editor package for all generated campaigns
+ */
+export function downloadBulkGoogleAdsPackage(campaigns: GeneratedAdCampaign[]) {
+  const csvContent = generateBulkGoogleAdsEditorCsv(campaigns);
+  const bom = '\uFEFF';
+  const csvBlob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const csvLink = document.createElement('a');
+  csvLink.href = URL.createObjectURL(csvBlob);
+  csvLink.download = `bulk-google-ads-editor-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(csvLink);
+  csvLink.click();
+  document.body.removeChild(csvLink);
+}
+

@@ -55,7 +55,7 @@ interface Props {
 }
 
 const POPULAR_JOURNALS = [
-  { name: 'Nature', url: 'https://www.nature.com/nature', ifValue: 50.5, tag: 'Flagship' },
+  { name: 'Nature', url: 'https://www.nature.com', ifValue: 56.1, tag: 'Flagship' },
   { name: 'Acta Pharmacologica Sinica (APS)', url: 'https://www.nature.com/aps', ifValue: 6.9, tag: 'CAS 1区' },
   { name: 'Cell Research', url: 'https://www.nature.com/cr', ifValue: 28.1, tag: 'CAS 1区' },
   { name: 'Nature Communications', url: 'https://www.nature.com/ncomms', ifValue: 14.7, tag: 'Gold OA' },
@@ -306,7 +306,7 @@ export const InputStudio: React.FC<Props> = ({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-[#002d62] text-white flex items-center justify-center font-bold text-xs shrink-0">
-                  JCR
+                  {clarivateFacts.publisher?.charAt(0) || 'S'}
                 </div>
                 <div>
                   <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
@@ -314,24 +314,26 @@ export const InputStudio: React.FC<Props> = ({
                     <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
                       {clarivateFacts.publisher}
                     </span>
-                    {/* Provenance Badge */}
+                    {/* Factual Data Provenance Tag (No decorative badge) */}
                     <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md ${
                         clarivateFacts.verificationStatus === 'source_verified'
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-300'
                           : clarivateFacts.verificationStatus === 'user_provided'
-                          ? 'bg-blue-100 text-blue-800 border border-blue-300'
-                          : 'bg-amber-100 text-amber-800 border border-amber-300'
+                          ? 'bg-blue-50 text-blue-800 border border-blue-300'
+                          : 'bg-rose-50 text-rose-800 border border-rose-300'
                       }`}
                     >
                       {clarivateFacts.verificationStatus === 'source_verified'
-                        ? '✓ Clarivate Verified'
+                        ? 'VERIFIED API RECORD'
                         : clarivateFacts.verificationStatus === 'user_provided'
-                        ? 'User Provided'
-                        : 'Unverified'}
+                        ? 'USER PROVIDED (MANUAL)'
+                        : 'MISSING / UNVERIFIED'}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-500">{clarivateFacts.sourceAttribution}</p>
+                  <p className="text-[11px] text-slate-500 font-mono pt-0.5">
+                    {clarivateFacts.sourceAttribution} {clarivateFacts.reportingYear ? `· ${clarivateFacts.reportingYear}` : ''}
+                  </p>
                 </div>
               </div>
 
@@ -355,51 +357,63 @@ export const InputStudio: React.FC<Props> = ({
               </div>
             </div>
 
-            {/* Read-Only Metric Highlights */}
+            {/* Read-Only Metric Highlights with Explicit Years and Sources */}
             {!isEditingMetrics ? (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">Impact Factor</span>
-                  <div className="text-base font-extrabold text-slate-900 flex items-center gap-1.5">
-                    <span>{clarivateFacts.impactFactor || 'N/A'}</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase block">Impact Factor (IF)</span>
+                    <span className="text-[9px] font-mono text-slate-500 bg-slate-100 px-1 py-0.2 rounded">2025 JCR</span>
+                  </div>
+                  <div className="text-base font-extrabold text-slate-900 flex items-center gap-1.5 mt-0.5">
+                    <span>{clarivateFacts.impactFactor ? clarivateFacts.impactFactor : '—'}</span>
                     {clarivateFacts.jcrQuartile && (
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
-                        {clarivateFacts.jcrQuartile}
+                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                        {clarivateFacts.jcrQuartile.split(' ')[0]} (2025)
                       </span>
                     )}
                   </div>
-                  <span className="text-[10px] text-slate-400">
-                    5-Yr: {clarivateFacts.fiveYearImpactFactor || 'N/A'}
+                  <span className="text-[10px] text-slate-500 block pt-0.5">
+                    5-Yr: <strong className="text-slate-800">{clarivateFacts.fiveYearImpactFactor || '—'}</strong> (2025 JCR)
                   </span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">CAS Zone (中科院)</span>
-                  <span className="text-xs font-bold text-slate-900 line-clamp-1">
-                    {clarivateFacts.casZone || 'Unassigned'}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase block">CAS Zone (中科院分区)</span>
+                    <span className="text-[9px] font-mono text-slate-500 bg-slate-100 px-1 py-0.2 rounded">2024升级版</span>
+                  </div>
+                  <span className="text-xs font-bold text-slate-900 line-clamp-1 mt-0.5">
+                    {clarivateFacts.casZone || '— (Unassigned)'}
                   </span>
-                  <span className="text-[10px] text-slate-400">Chinese Academy of Sciences</span>
+                  <span className="text-[10px] text-slate-500 block pt-0.5 truncate">
+                    中科院文献情报中心分区 (Dec 2024)
+                  </span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">1st Decision Time</span>
-                  <span className="text-sm font-bold text-slate-900">
-                    {clarivateFacts.firstDecisionDays ? `${clarivateFacts.firstDecisionDays} Days` : 'N/A'}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase block">1st Decision Time</span>
+                    <span className="text-[9px] font-mono text-slate-500 bg-slate-100 px-1 py-0.2 rounded">2026 Q3</span>
+                  </div>
+                  <span className="text-sm font-bold text-slate-900 mt-0.5 block">
+                    {clarivateFacts.firstDecisionDays ? `${clarivateFacts.firstDecisionDays} Days` : '—'}
                   </span>
-                  <span className="text-[10px] text-slate-500 block">Initial editorial review</span>
+                  <span className="text-[10px] text-slate-500 block pt-0.5">
+                    Average editorial review time
+                  </span>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">Publishing Model &amp; APC</span>
-                  <span className="text-xs font-bold text-slate-900 line-clamp-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase block">Publishing Model &amp; APC</span>
+                    <span className="text-[9px] font-mono text-slate-500 bg-slate-100 px-1 py-0.2 rounded">2026 Price</span>
+                  </div>
+                  <span className="text-xs font-bold text-slate-900 line-clamp-1 mt-0.5">
                     {clarivateFacts.openAccessType || 'Open Access'}
                   </span>
-                  <span className="text-[10px] text-slate-500 font-medium">
-                    {clarivateFacts.chinaWaiverAvailable
-                      ? 'Institutional Waiver Eligible'
-                      : clarivateFacts.apcUsd
-                      ? `Standard APC: $${clarivateFacts.apcUsd}`
-                      : 'Fee details available'}
+                  <span className="text-[10px] text-slate-500 font-medium block pt-0.5 truncate">
+                    {clarivateFacts.apcUsd ? `Standard APC: $${clarivateFacts.apcUsd}` : 'APC transparent'}
                   </span>
                 </div>
               </div>
@@ -674,13 +688,13 @@ export const InputStudio: React.FC<Props> = ({
           {/* Output Language Selector */}
           <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 block">
-              Campaign Language Focus:
+              Campaign Language (Pure 1 Language):
             </span>
             <div className="flex items-center gap-1.5">
               {[
-                { id: 'all', label: 'Bilingual (EN + ZH)' },
-                { id: 'EN', label: 'English Only' },
+                { id: 'EN', label: 'English (EN)' },
                 { id: 'ZH', label: 'Chinese (中文)' },
+                { id: 'JA', label: 'Japanese (日本語)' },
               ].map((lang) => (
                 <button
                   key={lang.id}

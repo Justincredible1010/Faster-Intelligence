@@ -2,7 +2,7 @@ export type StageCode = 'AWA' | 'CON' | 'DEC';
 // Backwards compatibility alias for existing code
 export type FunnelStage = StageCode | 'TOFU' | 'MOFU' | 'BOFU';
 
-export type OutputLanguage = 'all' | 'EN' | 'ZH';
+export type OutputLanguage = 'EN' | 'ZH' | 'JA';
 
 export type FactVerificationStatus = 'source_verified' | 'user_provided' | 'unverified' | 'missing';
 
@@ -104,7 +104,7 @@ export interface GoogleSearchHeadline {
   charCount: number;
   charWidth?: number;
   sourceFact: string;
-  language: 'EN' | 'ZH';
+  language: 'EN' | 'ZH' | 'JA';
   category?: 'Journal Identity' | 'Scope & Community' | 'Evaluation & Metrics' | 'Author Guidance' | 'Call to Action' | string;
   positionRecommendation?: string; // e.g. 'Position 1', 'Position 2', 'Any Position'
   strayChars?: string[];
@@ -116,16 +116,27 @@ export interface GoogleSearchDescription {
   charCount: number;
   charWidth?: number;
   sourceFact: string;
-  language: 'EN' | 'ZH';
+  language: 'EN' | 'ZH' | 'JA';
   theme?: 'Scope & Relevance' | 'Evaluation & Peer Review' | 'Author Checklist' | 'Publishing Options' | string;
   strayChars?: string[];
   isPurityValid?: boolean;
 }
 
+export interface GoogleSearchSitelink {
+  text: string;           // Max 25 chars (12 CJK)
+  description1: string;   // Max 35 chars (17 CJK)
+  description2: string;   // Max 35 chars (17 CJK)
+  finalUrl: string;
+  // Backwards compatibility properties
+  title?: string;
+  desc?: string;
+  urlPath?: string;
+}
+
 export interface GoogleSearchAds {
   headlines: GoogleSearchHeadline[];
   descriptions: GoogleSearchDescription[];
-  sitelinks: { title: string; desc: string; urlPath?: string }[];
+  sitelinks: GoogleSearchSitelink[];
   callouts?: string[];
   structuredSnippet?: { header: string; values: string[] };
   recommendedFinalUrl?: string;
@@ -146,8 +157,8 @@ export interface GoogleDisplayAd {
   visualConceptPrompt: string;
   imageAccentColor: string;
   targetPlacements: string[];
-  bannerHeadlineZh: string;
-  bannerSubtextZh: string;
+  bannerHeadlineZh?: string;
+  bannerSubtextZh?: string;
   customBannerImage?: string;
   recommendedFinalUrl?: string;
 }
@@ -164,9 +175,16 @@ export interface ChineseKeywordItem {
   intentZh: string;
 }
 
+export interface JapaneseKeywordItem {
+  keywordJa: string;
+  matchType: '完全一致 (Exact)' | 'フレーズ一致 (Phrase)' | '部分一致 (Broad)';
+  intentJa: string;
+}
+
 export interface AcademicKeywordsPack {
   englishSearchKeywords: AcademicKeywordItem[];
   chineseAuthorKeywords: ChineseKeywordItem[];
+  japaneseAuthorKeywords?: JapaneseKeywordItem[];
   negativeKeywords: string[];
 }
 
@@ -330,3 +348,65 @@ export function normalizeStage(stage: string): StageCode {
   if (upper === 'DEC' || upper === 'BOFU') return 'DEC';
   return 'CON'; // Default
 }
+
+// --- DATABASE & PROVENANCE TYPES ---
+export interface MetricRecord<T = number | string | null> {
+  value: T;
+  year: number;                    // e.g. 2025
+  period: string;                  // e.g. "JCR 2025 Release (2024 citation window)"
+  source: string;                  // e.g. "Clarivate Journal Citation Reports API"
+  verifiedAt: string;              // ISO timestamp
+  expireAt: string;                // ISO timestamp
+  status: 'verified' | 'unverified' | 'user_provided' | 'missing';
+}
+
+export interface JournalMetricsDatabaseRecord {
+  journalId: string;
+  journalName: string;
+  publisher: string;
+  canonicalUrl: string;
+  slugs: string[];
+  metrics: {
+    impactFactor: MetricRecord<number | null>;
+    fiveYearImpactFactor: MetricRecord<number | null>;
+    jcrQuartile: MetricRecord<string | null>;
+    casZone: MetricRecord<string | null>;
+    firstDecisionDays: MetricRecord<number | null>;
+    apcUsd: MetricRecord<number | null>;
+    openAccessType: MetricRecord<string | null>;
+    indexing: MetricRecord<string[]>;
+  };
+  aimsAndScopeSummary: string;
+  primaryDiscipline: string;
+  submissionPortalUrl?: string;
+  lastUpdated: string;
+  lastAccess: string;
+}
+
+// --- BULK PROCESSING TYPES ---
+export interface BulkJournalBatchItem {
+  id: string;
+  url: string;
+  journalName?: string;
+  publisher?: string;
+  status: 'pending' | 'checking_metrics' | 'metrics_ready' | 'missing_metrics' | 'generating' | 'completed' | 'error';
+  errorMessage?: string;
+  facts?: ClarivateJournalMetrics;
+  campaign?: GeneratedAdCampaign;
+  adStrengthScore?: number;
+  adStrengthLabel?: string;
+  complianceStatus?: 'clean' | 'warnings' | 'errors';
+}
+
+// --- ADMIN PLAYBOOK CONFIG ---
+export interface AdminPlaybookConfig {
+  activePreset: string;
+  brandVoice: string;
+  brandRules: string[];
+  prohibitedTerms: string[];
+  requiredDisclaimers: Record<string, string>;
+  customPromptInstructions: string;
+  lastModified: string;
+  modifiedBy: string;
+}
+
