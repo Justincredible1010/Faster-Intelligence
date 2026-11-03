@@ -50,6 +50,7 @@ import { metricFieldIsTrusted } from '../utils/metricClaims';
 import { editedStageUrlToApply, suggestStageUrl } from '../utils/stageUrlSuggestion';
 import type { StageUrlRules } from '../utils/stageUrlRules';
 import { formatUsageCount } from '../utils/usageCounts';
+import { getVerifiedPageFacts, setPageFactVerified } from '../utils/verifiedPageFacts';
 
 interface Props {
   landingPageUrl: string;
@@ -130,6 +131,11 @@ export const InputStudio: React.FC<Props> = ({
   const [editError, setEditError] = useState<string | null>(null);
   const [stageUrlDraft, setStageUrlDraft] = useState('');
   const [stageUrlWarning, setStageUrlWarning] = useState<string | null>(null);
+  const factsUrl = clarivateFacts?.url || '';
+  const [verifiedKinds, setVerifiedKinds] = useState<string[]>([]);
+  useEffect(() => {
+    setVerifiedKinds(factsUrl ? getVerifiedPageFacts(factsUrl) : []);
+  }, [factsUrl]);
 
   useEffect(() => {
     if (clarivateFacts) {
@@ -409,7 +415,7 @@ export const InputStudio: React.FC<Props> = ({
                     <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
                       {clarivateFacts.publisher}
                     </span>
-                    {/* Provenance Badge */}
+                    {/* Factual Data Provenance Tag (No decorative badge) */}
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                         sourceKind === 'clarivate'
@@ -449,7 +455,7 @@ export const InputStudio: React.FC<Props> = ({
               </div>
             </div>
 
-            {/* Read-Only Metric Highlights */}
+            {/* Read-Only Metric Highlights with Explicit Years and Sources */}
             {!isEditingMetrics ? (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -540,6 +546,29 @@ export const InputStudio: React.FC<Props> = ({
                     <span className="text-[10px] text-slate-500">
                       {feature.provenance === 'clarivate_wos_journals_api' ? 'From Clarivate' : 'From the journal website'}
                     </span>
+                    {feature.provenance !== 'clarivate_wos_journals_api' && factsUrl ? (
+                      verifiedKinds.includes(feature.kind) ? (
+                        <button
+                          type="button"
+                          onClick={() => setVerifiedKinds(setPageFactVerified(factsUrl, feature.kind, false))}
+                          className="ml-2 text-[10px] font-semibold text-emerald-700"
+                          title="Click to mark as unverified again"
+                        >
+                          ✓ Verified by you
+                        </button>
+                      ) : (
+                        <>
+                          <span className="ml-2 text-[10px] font-semibold text-amber-700">Unverified</span>
+                          <button
+                            type="button"
+                            onClick={() => setVerifiedKinds(setPageFactVerified(factsUrl, feature.kind, true))}
+                            className="ml-2 text-[10px] font-semibold text-blue-700 underline"
+                          >
+                            Verify
+                          </button>
+                        </>
+                      )
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -870,6 +899,7 @@ export const InputStudio: React.FC<Props> = ({
                 { id: 'all', label: 'English and Chinese' },
                 { id: 'EN', label: 'English only' },
                 { id: 'ZH', label: 'Chinese only' },
+                { id: 'JA', label: 'Japanese (日本語)' },
               ].map((lang) => (
                 <button
                   key={lang.id}

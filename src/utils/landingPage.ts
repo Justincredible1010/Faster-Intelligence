@@ -1460,7 +1460,8 @@ function featureSourceLabel(feature: PageSourcedFeature): string {
   return feature.provenance === 'clarivate_wos_journals_api' ? 'clarivate_wos_journals_api' : 'Page-sourced';
 }
 
-export function formatLandingPagePromptSection(facts: MergeableJournalFacts): string {
+export function formatLandingPagePromptSection(facts: MergeableJournalFacts, verifiedKinds: string[] = []): string {
+  const verified = new Set(verifiedKinds);
   const page = facts.extractedFacts;
   if (!page) return 'No landing page facts were extracted.';
   const lines = [
@@ -1478,7 +1479,14 @@ export function formatLandingPagePromptSection(facts: MergeableJournalFacts): st
     ...page.pageMetrics
       .filter((item) => item.kind !== 'impact_factor' && item.kind !== 'five_year_impact_factor')
       .map((item) => `- Page-sourced ${item.label}: ${item.value}`),
-    ...(page.pageFeatures || []).map((feature) => `- ${featureSourceLabel(feature)} ${feature.label}: ${feature.text}`),
+    ...(page.pageFeatures || []).map(
+      (feature) =>
+        `- ${featureSourceLabel(feature)} ${feature.label}: ${feature.text} ${
+          feature.provenance === 'clarivate_wos_journals_api' || verified.has(feature.kind)
+            ? '[user-verified]'
+            : '[UNVERIFIED: extracted automatically, not yet checked by the user; use only as stated on the page, never embellish]'
+        }`
+    ),
     'Do not state an impact factor, 5-year impact factor, or ranking from the journal page.',
   ];
   return lines.filter(Boolean).join('\n');

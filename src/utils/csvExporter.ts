@@ -1,6 +1,14 @@
 import { GeneratedAdCampaign, STAGE_CONFIGS, normalizeStage } from '../types';
 import { chinaChannelsExportSection } from '../china/exportText';
 import { smartClampWithWidth } from './textUtils';
+
+/** Keyword text for the CSV: match type lives in its own column, so strip [] and quotes. */
+export function plainKeyword(keyword: string): string {
+  return (keyword || '')
+    .replace(/[\[\]［］"＂“”「」『』]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 import { formatJifClaim, metricsAreTrusted, metricsFromClarivateWos, trustedApcUsd, trustedCasZone, trustedFirstDecisionDays } from './metricClaims';
 
 function escapeCsvField(field: string | number | undefined | null): string {
@@ -103,10 +111,12 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
 
   const rows: string[][] = [];
 
-  // 1. English Keywords
-  if (campaign.keywords?.englishSearchKeywords) {
+  const lang = campaign.outputLanguage || 'EN';
+
+  // 1. English Keywords (if EN mode)
+  if ((lang === 'EN' || lang === 'all') && campaign.keywords?.englishSearchKeywords) {
     campaign.keywords.englishSearchKeywords.forEach((kw) => {
-      const cleanKeyword = kw.keyword.replace(/^\[|\]$|^"|"$/g, '');
+      const cleanKeyword = plainKeyword(kw.keyword);
       rows.push([
         campaignName,
         adGroupName,
@@ -127,14 +137,38 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
     });
   }
 
-  // 2. Chinese Keywords (if any)
-  if (campaign.keywords?.chineseAuthorKeywords) {
+  // 2. Chinese Keywords (if ZH mode)
+  if ((lang === 'ZH' || lang === 'all') && campaign.keywords?.chineseAuthorKeywords) {
     campaign.keywords.chineseAuthorKeywords.forEach((kw) => {
       const matchType = kw.matchType.includes('精确') ? 'Exact' : 'Phrase';
       rows.push([
         `${journalName} - ${cfg.shortLabel} - Search (ZH)`,
         `${cfg.shortLabel} 中文学术关键词`,
-        kw.keywordZh,
+        plainKeyword(kw.keywordZh),
+        matchType,
+        '',
+        h1,
+        h2,
+        h3,
+        d1,
+        d2,
+        finalUrl,
+        displayUrl,
+        factProvenance,
+        confidenceScore.toFixed(2),
+        qualityNotes,
+      ]);
+    });
+  }
+
+  // 3. Japanese Keywords (if JA mode)
+  if (lang === 'JA' && campaign.keywords?.japaneseAuthorKeywords) {
+    campaign.keywords.japaneseAuthorKeywords.forEach((kw) => {
+      const matchType = kw.matchType.includes('完全一致') ? 'Exact' : kw.matchType.includes('フレーズ') ? 'Phrase' : 'Broad';
+      rows.push([
+        `${journalName} - ${cfg.shortLabel} - Search (JA)`,
+        `${cfg.shortLabel} 日本語学術キーワード`,
+        plainKeyword(kw.keywordJa),
         matchType,
         '',
         h1,
@@ -260,3 +294,36 @@ ${chinaChannelsExportSection(campaign)}
   readmeLink.click();
   document.body.removeChild(readmeLink);
 }
+
+/**
+ * Bulk Google Ads Editor CSV: the single-campaign export for each campaign,
+ * concatenated under one header. Reusing it keeps the same provenance rules
+ * (no invented URLs, years or verification labels).
+ */
+export function generateBulkGoogleAdsEditorCsv(campaigns: GeneratedAdCampaign[]): string {
+  let header = '';
+  const bodies: string[] = [];
+  for (const campaign of campaigns) {
+    const csv = generateGoogleAdsEditorCsv(campaign);
+    const nl = csv.indexOf('\n');
+    if (!header) header = nl >= 0 ? csv.slice(0, nl) : csv;
+    if (nl >= 0 && csv.slice(nl + 1).trim()) bodies.push(csv.slice(nl + 1));
+  }
+  return [header, ...bodies].filter(Boolean).join('\n');
+}
+
+/**
+ * Downloads Bulk Google Ads Editor package for all generated campaigns
+ */
+export function downloadBulkGoogleAdsPackage(campaigns: GeneratedAdCampaign[]) {
+  const csvContent = generateBulkGoogleAdsEditorCsv(campaigns);
+  const bom = '\uFEFF';
+  const csvBlob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const csvLink = document.createElement('a');
+  csvLink.href = URL.createObjectURL(csvBlob);
+  csvLink.download = `bulk-google-ads-editor-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(csvLink);
+  csvLink.click();
+  document.body.removeChild(csvLink);
+}
+

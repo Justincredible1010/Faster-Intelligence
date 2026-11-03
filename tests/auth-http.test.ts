@@ -18,10 +18,15 @@ import { MockOidcIssuer, type MockClaims } from './mockOidcIssuer';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mcge-auth-'));
 process.env.METRICS_CACHE_PATH = path.join(tmp, 'metrics-cache.json');
 process.env.METRICS_AUDIT_PATH = path.join(tmp, 'metrics-audit.jsonl');
+process.env.PLAYBOOK_PATH = path.join(tmp, 'admin-playbook.json');
+process.env.METRICS_DATABASE_PATH = path.join(tmp, 'metrics-database.json');
 process.env.AUTH_SESSION_SECRET = 'test-session-secret-should-be-32b-min!!';
 process.env.NODE_ENV = 'test';
 process.env.AUTH_EMAIL_TRANSPORT = 'console';
 delete process.env.GEMINI_API_KEY;
+// Keep the suite hermetic: a real key in the shell would call the live Clarivate API
+// and turn catalog snapshots into clarivate_api records.
+delete process.env.CLARIVATE_API_KEY;
 
 let baseUrl = '';
 let appServer: Server;
@@ -128,6 +133,12 @@ async function loginViaIssuer(jar: Jar): Promise<{ location: string; body: Await
 
 const PROTECTED = [
   { method: 'POST', path: '/api/fetch-clarivate-facts', body: { url: 'https://www.nature.com/nature' } },
+  { method: 'POST', path: '/api/batch-check-metrics', body: { urls: ['https://www.nature.com/nature'] } },
+  { method: 'POST', path: '/api/batch-generate-campaigns', body: { items: [{ url: 'https://www.nature.com/nature' }], stage: 'AWA' } },
+  { method: 'GET', path: '/api/playbook' },
+  { method: 'POST', path: '/api/playbook', body: { customPromptInstructions: 'x' } },
+  { method: 'GET', path: '/api/database/journals' },
+  { method: 'POST', path: '/api/database/journal', body: { journal: { canonicalUrl: 'https://www.nature.com/nature' } } },
   { method: 'GET', path: '/api/cache/journal/nature' },
   { method: 'POST', path: '/api/cache/refresh/nature', body: {} },
   { method: 'GET', path: '/api/cache/list' },
@@ -413,6 +424,98 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(user.user.email, 'dev.user@springernature.com');
     const list = await api('/api/cache/list', { jar, csrf: user.csrfToken });
     assert.equal(list.status, 200);
+  });
+
+  it('runs AI Studio batch endpoints with a URL cap and trusted lookups only', async () => {
+    const jar: Jar = new Map();
+    const user = await devLogin(jar);
+    const tooMany = Array.from({ length: 26 }, (_, i) => `https://www.nature.com/j${i}`);
+    const capped = await api('/api/batch-check-metrics', { jar, csrf: user.csrfToken, body: { urls: tooMany } });
+    assert.equal(capped.status, 400);
+    const empty = await api('/api/batch-generate-campaigns', { jar, csrf: user.csrfToken, body: { items: [] } });
+    assert.equal(empty.status, 400);
+    const noCsrf = await api('/api/batch-check-metrics', { jar, body: { urls: ['https://www.nature.com/nature'] } });
+    assert.equal(noCsrf.status, 403);
+
+    const checked = await api('/api/batch-check-metrics', {
+      jar,
+      csrf: user.csrfToken,
+      body: { urls: ['https://www.nature.com/nature', 'https://evil.example.com/journal'] },
+    });
+    assert.equal(checked.status, 200);
+    const { items } = await checked.json();
+    assert.equal(items.length, 2);
+    assert.equal(items[0].status, 'success');
+    assert.equal(items[0].facts.url, 'https://www.nature.com/nature');
+    assert.equal(items[1].status, 'error');
+
+    const generated = await api('/api/batch-generate-campaigns', {
+      jar,
+      csrf: user.csrfToken,
+      body: {
+        items: [{ url: 'https://www.nature.com/nature', facts: { impactFactor: 999 } }],
+        stage: 'DEC',
+        outputLanguage: 'JA',
+      },
+    });
+    assert.equal(generated.status, 200);
+    const body = await generated.json();
+    assert.equal(body.outputLanguage, 'JA');
+    const campaign = body.results[0].campaign;
+    assert.equal(campaign.funnelStage, 'DEC');
+    assert.doesNotMatch(JSON.stringify(campaign), /999/);
+    assert.ok(campaign.keywords.japaneseAuthorKeywords.length > 0);
+  });
+
+  it('serves the playbook to signed-in users and saves it only for admins', async () => {
+    const jar: Jar = new Map();
+    const user = await devLogin(jar);
+    const read = await api('/api/playbook', { jar });
+    assert.equal(read.status, 200);
+    assert.equal(typeof (await read.json()).playbook.activePreset, 'string');
+
+    const denied = await api('/api/playbook', { jar, csrf: user.csrfToken, body: { customPromptInstructions: 'Be factual.' } });
+    assert.equal(denied.status, 403);
+
+    applyEnv({ NODE_ENV: 'development', AUTH_DEV_BYPASS: 'true', AUTH_ADMIN_EMAILS: 'dev.user@springernature.com' });
+    const bad = await api('/api/playbook', { jar, csrf: user.csrfToken, body: { brandRules: 'not a list' } });
+    assert.equal(bad.status, 400);
+    const saved = await api('/api/playbook', {
+      jar,
+      csrf: user.csrfToken,
+      body: { customPromptInstructions: 'Be factual.', modifiedBy: 'someone@else.com' },
+    });
+    assert.equal(saved.status, 200);
+    const pb = (await saved.json()).playbook;
+    assert.equal(pb.customPromptInstructions, 'Be factual.');
+    assert.equal(pb.modifiedBy, 'dev.user@springernature.com');
+    const again = await (await api('/api/playbook', { jar })).json();
+    assert.equal(again.playbook.customPromptInstructions, 'Be factual.');
+  });
+
+  it('keeps Clarivate-only fields out of the editable metrics database', async () => {
+    const jar: Jar = new Map();
+    const user = await devLogin(jar);
+    applyEnv({ NODE_ENV: 'development', AUTH_DEV_BYPASS: 'true', AUTH_ADMIN_EMAILS: 'dev.user@springernature.com' });
+    const journal = { canonicalUrl: 'https://www.nature.com/nature', journalName: 'Nature', publisher: 'Nature Portfolio' };
+    const rejected = await api('/api/database/journal', {
+      jar,
+      csrf: user.csrfToken,
+      body: { journal: { ...journal, metrics: { impactFactor: { value: 50 } } } },
+    });
+    assert.equal(rejected.status, 400);
+    const saved = await api('/api/database/journal', {
+      jar,
+      csrf: user.csrfToken,
+      body: { journal: { ...journal, metrics: { apcUsd: { value: 12000, source: 'Journal fees page' } } } },
+    });
+    assert.equal(saved.status, 200);
+    const list = await (await api('/api/database/journals', { jar })).json();
+    const nature = list.journals.find((j: any) => j.canonicalUrl === 'https://www.nature.com/nature');
+    assert.equal(nature.metrics.apcUsd.value, 12000);
+    assert.equal(nature.metrics.apcUsd.status, 'user_provided');
+    assert.match(nature.metrics.apcUsd.source, /dev\.user@springernature\.com/);
+    assert.equal(nature.metrics.impactFactor.value, null);
   });
 
   it('lets an admin save stage URL rules and keeps them for the next lookup', async () => {

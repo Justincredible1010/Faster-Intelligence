@@ -10,6 +10,9 @@ import { StageComparisonModal } from './components/StageComparisonModal';
 import { StrategySummaryBanner } from './components/StrategySummaryBanner';
 import { ManualJournalModal } from './components/ManualJournalModal';
 import { ValidationReportModal } from './components/ValidationReportModal';
+import { BulkCampaignStudio } from './components/BulkCampaignStudio';
+import { MetricsDatabaseModal } from './components/MetricsDatabaseModal';
+import { VersionBadge } from './components/VersionBadge';
 import {
   StageCode,
   OutputLanguage,
@@ -24,6 +27,10 @@ import { downloadGoogleAdsEditorPackage } from './utils/csvExporter';
 import { chinaChannelsExportSection } from './china/exportText';
 import { AlertCircle, AlertTriangle } from 'lucide-react';
 import { apiFetch } from './auth/api';
+import { getVerifiedPageFacts } from './utils/verifiedPageFacts';
+import { createCopyEditQueue } from './utils/playbookProposals';
+
+const copyEditQueue = createCopyEditQueue();
 import { pickEditableJournalFacts } from './utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from './utils/journalUrl';
 import { formatJifClaim, trustedApcUsd, trustedCasZone, trustedQuartile } from './utils/metricClaims';
@@ -56,6 +63,8 @@ export default function App() {
   const [isCompareOpen, setIsCompareOpen] = useState<boolean>(false);
   const [isManualJournalOpen, setIsManualJournalOpen] = useState<boolean>(false);
   const [isComplianceModalOpen, setIsComplianceModalOpen] = useState<boolean>(false);
+  const [isDatabaseModalOpen, setIsDatabaseModalOpen] = useState<boolean>(false);
+  const [activeView, setActiveView] = useState<'single' | 'bulk'>('single');
   const [customPlaybook, setCustomPlaybook] = useState<string>(PRESET_SKILLS.default);
   const [hasManualEdits, setHasManualEdits] = useState<boolean>(false);
   const [confirmReplaceEdits, setConfirmReplaceEdits] = useState(false);
@@ -93,6 +102,23 @@ export default function App() {
 
   useEffect(() => {
     loadStageUrlRules();
+  }, []);
+
+  // Load the admin playbook saved on the server, if there is one.
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch('/api/playbook')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const saved = data?.playbook?.customPromptInstructions;
+        if (!cancelled && typeof saved === 'string' && saved.trim()) {
+          setCustomPlaybook(saved);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -234,6 +260,7 @@ export default function App() {
           customPlaybook: playbook,
           issn: (manualFacts || clarivateFacts)?.issn || (manualFacts || clarivateFacts)?.eIssn,
           userProvidedFacts: browserFacts ? pickEditableJournalFacts(browserFacts) : null,
+          verifiedPageFacts: getVerifiedPageFacts(url.trim()),
         }),
       });
 
@@ -320,6 +347,17 @@ export default function App() {
   const handleEditHeadline = (index: number, newText: string) => {
     if (!campaign || !campaign.searchAds) return;
     const updatedHeadlines = [...campaign.searchAds.headlines];
+    const originalHeadline = campaign.searchAds.headlines[index];
+    if (originalHeadline) {
+      copyEditQueue.edit({
+        field: `searchAds.headlines.${index}`,
+        language: originalHeadline.language,
+        before: originalHeadline.text,
+        after: newText,
+        journalName: campaign.clarivateFacts?.journalName,
+        stage: campaign.funnelStage,
+      });
+    }
     updatedHeadlines[index] = {
       ...updatedHeadlines[index],
       text: newText,
@@ -340,6 +378,17 @@ export default function App() {
   const handleEditDescription = (index: number, newText: string) => {
     if (!campaign || !campaign.searchAds) return;
     const updatedDescs = [...campaign.searchAds.descriptions];
+    const originalDescription = campaign.searchAds.descriptions[index];
+    if (originalDescription) {
+      copyEditQueue.edit({
+        field: `searchAds.descriptions.${index}`,
+        language: originalDescription.language,
+        before: originalDescription.text,
+        after: newText,
+        journalName: campaign.clarivateFacts?.journalName,
+        stage: campaign.funnelStage,
+      });
+    }
     updatedDescs[index] = {
       ...updatedDescs[index],
       text: newText,
@@ -477,6 +526,18 @@ ${chinaChannelsExportSection(campaign)}
   };
 
   const handleNav = (id: AppNavId) => {
+    if (id === 'bulk') {
+      setActiveView('bulk');
+      setPinnedNav('bulk');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    if (id === 'metrics-db') {
+      setPinnedNav('metrics-db');
+      setIsDatabaseModalOpen(true);
+      return;
+    }
+    setActiveView('single');
     if (id === 'search' || id === 'display' || id === 'weibo' || id === 'wechat' || id === 'keywords') {
       setPreviewTab(id);
       setPinnedNav(null);
@@ -566,6 +627,22 @@ ${chinaChannelsExportSection(campaign)}
           </div>
         )}
 
+        {activeView === 'bulk' && (
+          <section id="bulk-campaigns" className="scroll-mt-20">
+            <BulkCampaignStudio
+              onSelectCampaignForPreview={(camp) => {
+                setCampaign(camp);
+                if (camp.clarivateFacts) setClarivateFacts(camp.clarivateFacts);
+                if (camp.clarivateFacts?.url) setLandingPageUrl(camp.clarivateFacts.url);
+                setFunnelStage(normalizeStage(camp.funnelStage));
+                setPinnedNav(null);
+                setActiveView('single');
+              }}
+            />
+          </section>
+        )}
+
+        <div className={activeView === 'bulk' ? 'hidden' : 'space-y-6'}>
         {confirmReplaceEdits && (
           <div className="p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs space-y-2">
             <div className="flex items-center gap-2 font-bold">
@@ -660,6 +737,17 @@ ${chinaChannelsExportSection(campaign)}
 
           {campaign && !isLoading && (
             <>
+              {campaign.copyQa && !campaign.copyQa.ready && (
+                <div role="alert" className="mb-3 p-3 rounded-lg border border-rose-300 bg-rose-50 text-xs text-rose-900">
+                  <strong>Not ready to publish:</strong> {campaign.copyQa.issues.length} line(s) failed the final copy check
+                  (half brackets, cut-off text, over length or tone). Edit the flagged lines before you export.
+                  <ul className="mt-1 list-disc pl-4">
+                    {campaign.copyQa.issues.slice(0, 5).map((i, n) => (
+                      <li key={n}>{i.field}: {i.issues.join(', ')}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <StrategySummaryBanner
                 campaign={campaign}
                 onOpenCompareStages={() => setIsCompareOpen(true)}
@@ -727,6 +815,7 @@ ${chinaChannelsExportSection(campaign)}
             Sign out
           </button>
         </section>
+        </div>
       </main>
 
       {/* Footer */}
@@ -735,7 +824,14 @@ ${chinaChannelsExportSection(campaign)}
           <span>
             Marketing Content Generation Engine · Google Search and Display campaigns for awareness, consideration, and decision
           </span>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button
+              onClick={() => setIsDatabaseModalOpen(true)}
+              className="text-emerald-700 hover:underline font-semibold"
+            >
+              Metrics database
+            </button>
+            <span>·</span>
             <button
               onClick={() => setIsCompareOpen(true)}
               className="text-blue-700 hover:underline font-medium"
@@ -763,9 +859,26 @@ ${chinaChannelsExportSection(campaign)}
             >
               How the stages differ
             </button>
+            <span>·</span>
+            <VersionBadge />
           </div>
         </div>
       </footer>
+
+      {/* Metrics database (stored values with source, year, and expiry) */}
+      <MetricsDatabaseModal
+        isOpen={isDatabaseModalOpen}
+        onClose={() => {
+          setIsDatabaseModalOpen(false);
+          if (pinnedNav === 'metrics-db') setPinnedNav(null);
+        }}
+        onSelectJournalUrl={(url) => {
+          setIsDatabaseModalOpen(false);
+          setActiveView('single');
+          setLandingPageUrl(url);
+          fetchClarivateFacts(url);
+        }}
+      />
 
       {/* Strategy Guide Modal */}
       <FrameworkModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />

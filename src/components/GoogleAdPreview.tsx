@@ -29,6 +29,7 @@ import {
   formatDescriptionCountLabel,
   validateLanguagePurity,
   cleanStrayCharacters,
+  brandTermsFor,
   smartClampWithWidth,
 } from '../utils/textUtils';
 import { SearchResultsMockup } from './SearchResultsMockup';
@@ -51,7 +52,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
   onEditDescription,
 }) => {
   const [activeTab, setActiveTab] = useState<'serp' | 'assets'>('serp');
-  const [langView, setLangView] = useState<'all' | 'EN' | 'ZH'>('all');
+  const [langView, setLangView] = useState<'all' | 'EN' | 'ZH' | 'JA'>('all');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const headlines = content.headlines || [];
@@ -63,8 +64,8 @@ export const GoogleAdPreview: React.FC<Props> = ({
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  const handleCleanPurity = (index: number, isHeadline: boolean, text: string, targetLang: 'EN' | 'ZH') => {
-    const cleaned = cleanStrayCharacters(text, targetLang);
+  const handleCleanPurity = (index: number, isHeadline: boolean, text: string, targetLang: 'EN' | 'ZH' | 'JA') => {
+    const cleaned = cleanStrayCharacters(text, targetLang, brandTermsFor(facts));
     if (isHeadline && onEditHeadline) {
       onEditHeadline(index, cleaned);
     } else if (!isHeadline && onEditDescription) {
@@ -152,7 +153,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
           <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
             <div className="flex items-center gap-1.5">
               <span className="text-slate-500 font-medium">Show:</span>
-              {(['all', 'EN', 'ZH'] as const).map((l) => (
+              {(['all', 'EN', 'ZH', 'JA'] as const).map((l) => (
                 <button
                   key={l}
                   onClick={() => setLangView(l)}
@@ -162,7 +163,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
                       : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
                   }`}
                 >
-                  {l === 'all' ? 'All (Bilingual)' : l === 'EN' ? 'English Only' : 'Chinese (中文)'}
+                  {l === 'all' ? 'All Languages' : l === 'EN' ? 'English (EN)' : l === 'ZH' ? 'Chinese (中文)' : 'Japanese (日本語)'}
                 </button>
               ))}
             </div>
@@ -200,7 +201,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
               {filteredHeadlines.map((h, index) => {
                 const width = countCharacterWidth(h.text);
                 const isOverLimit = width > 30;
-                const purityCheck = validateLanguagePurity(h.text, h.language);
+                const purityCheck = validateLanguagePurity(h.text, h.language, brandTermsFor(facts));
                 const hasStray = !purityCheck.valid;
 
                 return (
@@ -250,6 +251,12 @@ export const GoogleAdPreview: React.FC<Props> = ({
                           : 'bg-slate-50/70 border-slate-200 text-slate-900 focus:bg-white focus:ring-2 focus:ring-blue-600'
                       }`}
                     />
+
+                    {h.qaReady === false && (
+                      <div className="p-1.5 bg-rose-100/70 border border-rose-300 rounded text-[10px] text-rose-900">
+                        Not ready: {(h.qaIssues || []).join(', ') || 'failed the final copy check'}
+                      </div>
+                    )}
 
                     {/* Language Purity Warning */}
                     {hasStray && (
@@ -321,7 +328,7 @@ export const GoogleAdPreview: React.FC<Props> = ({
               {filteredDescriptions.map((d, index) => {
                 const width = countCharacterWidth(d.text);
                 const isOverLimit = width > 90;
-                const purityCheck = validateLanguagePurity(d.text, d.language);
+                const purityCheck = validateLanguagePurity(d.text, d.language, brandTermsFor(facts));
                 const hasStray = !purityCheck.valid;
 
                 return (

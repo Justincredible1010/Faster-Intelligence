@@ -19,9 +19,40 @@ import { factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection } from '
 import { withChinaChannels } from './src/china/withChinaChannels';
 import type { ClarivateJournalMetrics, ExtractedPageFacts, PageSourcedFeature } from './src/types';
 import { getMetricsStore } from './src/utils/metricsStore';
+import {
+  buildSitelinks,
+  japaneseDescriptions,
+  japaneseDisplayAd,
+  japaneseHeadlines,
+  japaneseKeywords,
+  localizedCallouts,
+  localizedPeerReviewed,
+  buildStructuredSnippet,
+  localizedSnippetHeader,
+  type AdLanguage,
+} from './src/server/localizedCopy';
+import {
+  MetricsDatabaseError,
+  applyDatabaseUpdate,
+  withClarivateMetrics,
+} from './src/server/metricsDatabase';
+import { PlaybookValidationError, applyPlaybookUpdate, defaultPlaybook } from './src/server/playbook';
 import { loadJournalMetrics } from './src/utils/metricsRefresh';
 import { DEFAULT_STAGE_URL_RULES, parseStageUrlRules } from './src/utils/stageUrlRules';
 import { normalizeIssn } from './src/utils/issn';
+import { safeShorten, shortenName } from './src/utils/textUtils';
+import { qaCampaignCopy } from './src/utils/adCopyQa';
+import type { AdminPlaybookConfig } from './src/types';
+import { sanitizeVerifiedKinds } from './src/utils/verifiedPageFacts';
+import { getPlaybookStore, newProposalId } from './src/server/playbookStore';
+import {
+  ProposalValidationError,
+  applyApprovedProposal,
+  applyCopyCorrections,
+  buildProposal,
+  isDuplicateProposal,
+  playbookPromptSection,
+} from './src/server/playbookLearning';
 import { formatUsageCount } from './src/utils/usageCounts';
 import {
   LandingPageError,
@@ -248,33 +279,15 @@ function isCachedJournalExpired(cached: CachedJournal): boolean {
 // CJK Character Double-Width Counting (Google Ads Standard)
 export function countCharacterWidth(text: string): number {
   if (!text) return 0;
-  const cjkChars = (text.match(/[\u4e00-\u9fa5\u3400-\u4dbf\u3000-\u303f\uff01-\uffee]/g) || []).length;
+  const cjkChars = (text.match(/[\u4e00-\u9fa5\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\u3000-\u303f\uff01-\uffee]/g) || []).length;
   const otherChars = text.length - cjkChars;
   return (cjkChars * 2) + otherChars;
 }
 
 // Smart clamp function respecting Google Ads visual width (30 max for headlines, 90 for descriptions)
+/** Word- and bracket-safe shortening (see safeShorten). */
 export function smartClamp(text: string, maxWidth: number): string {
-  if (!text) return '';
-  const trimmed = text.trim();
-  if (countCharacterWidth(trimmed) <= maxWidth) return trimmed;
-
-  let slice = trimmed;
-  while (countCharacterWidth(slice) > maxWidth && slice.length > 0) {
-    slice = slice.slice(0, -1);
-  }
-
-  // Avoid cutting mid-word for Latin letters
-  const lastChar = slice.slice(-1);
-  const nextChar = trimmed.charAt(slice.length);
-  if (/[a-zA-Z0-9]/.test(lastChar) && /[a-zA-Z0-9]/.test(nextChar)) {
-    const lastSpace = slice.lastIndexOf(' ');
-    if (lastSpace > 4) {
-      slice = slice.slice(0, lastSpace);
-    }
-  }
-
-  return slice.replace(/[,;:\-\s·/|]+$/, '').trim();
+  return safeShorten(text, maxWidth);
 }
 
 // Shared Stage Strategy Configuration
@@ -1323,12 +1336,15 @@ interface HeadlineSeed {
 export function generateStageHeadlines(
   facts: any,
   stage: StageCode,
-  outputLanguage: 'all' | 'EN' | 'ZH' = 'all'
+  outputLanguage: AdLanguage = 'all'
 ) {
   facts = withAdIdentity(factsForCopy(facts));
   const jifClaim = formatJifClaim(facts);
-  const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
-  const disciplineShort = (facts.primaryDiscipline || 'Scientific').split('(')[0].trim().slice(0, 14);
+  if (outputLanguage === 'JA') {
+    return japaneseHeadlines(facts, stage, { jifClaim, firstDecisionDays: facts.firstDecisionDays ?? null });
+  }
+  const shortName = (shortenName(facts.journalName, 18) || facts.journalName);
+  const disciplineShort = (shortenName((facts.primaryDiscipline || 'Scientific').split('(')[0].trim(), 14) || 'Scientific');
   const publishedBy = facts.publisher ? smartClamp(`Published by ${facts.publisher}`, 30) : '';
   const articleTypeHeadline = pageFeatureText(facts, 'article_types')?.split(',')[0]?.trim() || '';
   const publishingHeadline = pageFeatureText(facts, 'publishing_model') || '';
@@ -1406,7 +1422,7 @@ export function generateStageHeadlines(
     ];
 
     const zh: HeadlineSeed[] = [
-      ...(facts.casZone ? [{ text: smartClamp(`${facts.casZone.slice(0, 11)}评议标准`, 30), sourceFact: facts.casZone, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 1' }] : []),
+      ...(facts.casZone ? [{ text: smartClamp(`${safeShorten(facts.casZone, 22)}评议标准`, 30), sourceFact: facts.casZone, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 1' }] : []),
       { text: smartClamp(`查阅期刊范围与收稿类型`, 30), sourceFact: 'Scope Check', language: 'ZH', category: 'Scope & Community', positionRecommendation: 'Position 1' },
       ...(facts.firstDecisionDays ? [{ text: smartClamp(`平均初审周期约${facts.firstDecisionDays}天`, 30), sourceFact: `${facts.firstDecisionDays}天初审`, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       ...(facts.articleDownloads ? [{ text: smartClamp(`文章下载量${formatUsageCount(facts.articleDownloads)}`, 30), sourceFact: 'Article downloads', language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
@@ -1474,7 +1490,11 @@ export function generateStageHeadlines(
 }
 
 // Stage Descriptions with language purity
-export function generateStageDescriptions(facts: any, stage: StageCode, outputLanguage: 'all' | 'EN' | 'ZH' = 'all') {
+export function generateStageDescriptions(facts: any, stage: StageCode, outputLanguage: AdLanguage = 'all') {
+  if (outputLanguage === 'JA') {
+    const f = withAdIdentity(factsForCopy(facts));
+    return japaneseDescriptions(f, stage, { jifClaim: formatJifClaim(f), firstDecisionDays: f.firstDecisionDays ?? null });
+  }
   facts = withAdIdentity(factsForCopy(facts));
   const jifClaim = formatJifClaim(facts);
   const aimsLines = pageFeatureLines(pageFeatureText(facts, 'aims_and_audience'), 90);
@@ -1534,7 +1554,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
   if (stage === 'CON') {
     const daysText = facts.firstDecisionDays ? `First decision in ${facts.firstDecisionDays} days.` : 'Editorial criteria are listed on the journal site.';
     const feeText = facts.apcUsd ? `APC ($${facts.apcUsd})` : 'publishing options';
-    const casText = facts.casZone ? `（${facts.casZone.slice(0, 10)}）` : '';
+    const casText = facts.casZone ? `（${safeShorten(facts.casZone, 20)}）` : '';
     const downloadsText = facts.articleDownloads
       ? `${formatUsageCount(facts.articleDownloads)} article downloads.`
       : facts.fullTextViews
@@ -1587,8 +1607,9 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
   return mixedDescriptions(en, zh);
 }
 
-export function generateStageKeywords(facts: any, stage: StageCode) {
+export function generateStageKeywords(facts: any, stage: StageCode, outputLanguage: AdLanguage = 'all'): any {
   facts = withAdIdentity(factsForCopy(facts));
+  if (outputLanguage === 'JA') return japaneseKeywords(facts, stage);
   const shortName = facts.journalName.toLowerCase();
   const disc = (facts.primaryDiscipline || 'science').toLowerCase().split('(')[0].trim();
 
@@ -1649,10 +1670,13 @@ export function generateStageKeywords(facts: any, stage: StageCode) {
   };
 }
 
-export function generateStageDisplayAd(facts: any, stage: StageCode) {
+export function generateStageDisplayAd(facts: any, stage: StageCode, outputLanguage: AdLanguage = 'all'): any {
   facts = withAdIdentity(factsForCopy(facts));
   const jifClaim = formatJifClaim(facts);
-  const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
+  if (outputLanguage === 'JA') {
+    return japaneseDisplayAd(facts, stage, { jifClaim, firstDecisionDays: facts.firstDecisionDays ?? null });
+  }
+  const shortName = (shortenName(facts.journalName, 18) || facts.journalName);
 
   if (stage === 'AWA') {
     return {
@@ -1710,14 +1734,14 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
     ctaText: 'View Checklist',
     visualConceptPrompt: `A streamlined author guidance banner showcasing a manuscript submission checklist icon, clear typography, verified portal badge, and Springer Nature integrity crest.`,
     imageAccentColor: '#064e3b',
-    targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'nature.com', 'springerlink.com'],
+    targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'nature.com', 'link.springer.com'],
     bannerHeadlineZh: `${facts.journalName} 作者投稿须知`,
     bannerSubtextZh: `获取官方投稿清单与格式指南 · 在线投递学术稿件`,
   };
 }
 
-function uniqueSitelinks(
-  links: { title: string; desc: string; urlPath: string }[],
+function uniqueSitelinks<T extends { urlPath: string }>(
+  links: T[],
   landingUrl: string
 ) {
   const seen = new Set<string>();
@@ -1734,14 +1758,14 @@ function uniqueSitelinks(
 export function generateDeterministicCampaign(
   facts: any,
   stage: StageCode,
-  outputLanguage: 'all' | 'EN' | 'ZH' = 'all'
+  outputLanguage: AdLanguage = 'all'
 ) {
   facts = withAdIdentity(facts);
   const stageConfig = STAGE_CONFIGS[stage];
   const headlines = generateStageHeadlines(facts, stage, outputLanguage);
   const descriptions = generateStageDescriptions(facts, stage, outputLanguage);
-  const keywords = generateStageKeywords(facts, stage);
-  const displayAd = generateStageDisplayAd(facts, stage);
+  const keywords = generateStageKeywords(facts, stage, outputLanguage);
+  const displayAd = generateStageDisplayAd(facts, stage, outputLanguage);
 
   displayAd.shortHeadlineCharCount = displayAd.shortHeadline.length;
   displayAd.longHeadlineCharCount = displayAd.longHeadline.length;
@@ -1749,33 +1773,10 @@ export function generateDeterministicCampaign(
 
   const copyFacts = factsForCopy(facts);
   const destinationUrl = stageDestinationUrl(facts, stage);
-  const sitelink = (title: string, desc: string, role: Parameters<typeof resolveCampaignUrl>[1]) => ({
-    title,
-    desc,
-    urlPath: resolveCampaignUrl(facts, role),
-  });
-
+  // Sitelink text <= 25, descriptions <= 35 (CJK counts 2). URLs come only from
+  // resolveCampaignUrl roles, so no path is invented.
   const sitelinks = uniqueSitelinks(
-    stage === 'AWA'
-      ? [
-          sitelink('Journal Overview & Scope', 'Explore research fields and mission', 'about'),
-          sitelink('Browse Latest Articles', 'Read recent peer-reviewed discoveries', 'articles'),
-          sitelink('Editorial Leadership', 'Meet the international editorial board', 'editors'),
-          sitelink('Research Collections', 'Curated thematic paper collections', 'collections'),
-        ]
-      : stage === 'CON'
-      ? [
-          sitelink('Aims & Scope Evaluation', 'Check topical alignment and criteria', 'aims'),
-          sitelink('Article Types & Formats', 'Accepted original research and reviews', 'articles'),
-          sitelink('Journal Metrics & Indexing', 'Indexing and journal metrics', 'landing'),
-          sitelink('Publishing Options & Fees', 'Transparent APC and OA publishing', 'fees'),
-        ]
-      : [
-          sitelink('Author Guidelines', 'Manuscript preparation and style guide', 'guidelines'),
-          sitelink('Submission Checklist', 'Required documentation before submitting', 'checklist'),
-          sitelink('APC & Waiver Criteria', 'Fee policy and funding guidelines', 'fees'),
-          sitelink('Online Submission Portal', 'Submit paper for peer review', 'submission'),
-        ],
+    buildSitelinks(stage, outputLanguage, (role) => resolveCampaignUrl(facts, role)),
     campaignLandingUrl(facts)
   );
 
@@ -1790,10 +1791,18 @@ export function generateDeterministicCampaign(
           'Peer-Reviewed Science',
         ]
       : stage === 'CON'
-      ? [formatJifClaim(copyFacts) || impactCallout, copyFacts.casZone ? copyFacts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', copyFacts.firstDecisionDays ? `1st Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
+      ? [formatJifClaim(copyFacts) || impactCallout, copyFacts.casZone ? safeShorten(copyFacts.casZone, 25) : 'Peer-Reviewed Quality', copyFacts.firstDecisionDays ? `1st Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
       : ['Author Guidelines Ready', 'Standard Preparation Checklist', copyFacts.firstDecisionDays ? `First Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Official Submission Portal'];
+  const localizedCalloutList =
+    outputLanguage === 'ZH' || outputLanguage === 'JA'
+      ? localizedCallouts(stage, outputLanguage, facts, {
+          jifClaim: formatJifClaim(copyFacts),
+          firstDecisionDays: copyFacts.firstDecisionDays ?? null,
+          casZone: copyFacts.casZone ?? null,
+        })
+      : null;
 
-  return withChinaChannels(guardAdCopy({
+  return qaCampaignCopy(withChinaChannels(guardAdCopy({
     funnelStage: stage,
     legacyStage: stage === 'AWA' ? 'TOFU' : stage === 'CON' ? 'MOFU' : 'BOFU',
     clarivateFacts: facts,
@@ -1810,11 +1819,8 @@ export function generateDeterministicCampaign(
       headlines,
       descriptions,
       sitelinks,
-      callouts,
-      structuredSnippet: {
-        header: 'Disciplines',
-        values: [(facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), facts.publisher, 'Peer-Reviewed Research'].filter(Boolean),
-      },
+      callouts: localizedCalloutList || callouts,
+      structuredSnippet: buildStructuredSnippet(facts, outputLanguage),
       recommendedFinalUrl: destinationUrl,
     },
     displayAds: {
@@ -1822,7 +1828,11 @@ export function generateDeterministicCampaign(
       recommendedFinalUrl: destinationUrl,
     },
     keywords,
-  }, facts));
+  }, facts)));
+}
+
+export function parseOutputLanguage(raw: unknown): AdLanguage {
+  return raw === 'EN' || raw === 'ZH' || raw === 'JA' ? raw : 'all';
 }
 
 // 3. Campaign Generation API
@@ -1832,12 +1842,15 @@ app.post('/api/generate-campaign', async (req, res) => {
       landingPageUrl,
       channels = ['search', 'display'],
       funnelStage = 'CON',
-      outputLanguage = 'all',
+      outputLanguage: rawOutputLanguage = 'all',
       customPlaybook = '',
       userProvidedFacts = null,
+      verifiedPageFacts = [],
       issn,
       eIssn,
     } = req.body;
+    const outputLanguage = parseOutputLanguage(rawOutputLanguage);
+    const serverPlaybook = await loadServerPlaybook();
 
     const normalizedStage = normalizeStage(funnelStage);
     const stageConfig = STAGE_CONFIGS[normalizedStage];
@@ -1926,14 +1939,16 @@ JOURNAL:
 
 ${metricPromptSection(facts)}
 
-${formatLandingPagePromptSection(facts)}
+${formatLandingPagePromptSection(facts, sanitizeVerifiedKinds(verifiedPageFacts))}
+
+${playbookPromptSection(serverPlaybook)}
 
 ${customPlaybook ? `PLAYBOOK RULES:\n${customPlaybook}\n` : ''}
 
 GOOGLE ADS REQUIREMENTS:
 1. Search Headlines: 15 items, strictly <=30 visual width.
 2. Search Descriptions: 4 items, strictly <=90 visual width.
-3. Language purity: If language is 'EN', output ZERO Chinese characters. If 'ZH', output ZERO Latin letters.`;
+3. Language purity: If language is 'EN', output ZERO Chinese characters. If 'ZH', output ZERO Latin letters. If 'JA', write natural Japanese (kana + kanji) with ZERO Latin letters except the journal name.`;
 
       try {
         const timeoutPromise = new Promise<null>((_, reject) =>
@@ -2035,7 +2050,7 @@ GOOGLE ADS REQUIREMENTS:
 
     const destinationUrl = stageDestinationUrl(facts, normalizedStage);
 
-    const campaign = withChinaChannels(guardAdCopy({
+    const campaign = qaCampaignCopy(applyCopyCorrections(withChinaChannels(guardAdCopy({
       funnelStage: normalizedStage,
       legacyStage: normalizedStage === 'AWA' ? 'TOFU' : normalizedStage === 'CON' ? 'MOFU' : 'BOFU',
       clarivateFacts: facts,
@@ -2050,7 +2065,7 @@ GOOGLE ADS REQUIREMENTS:
         url: destinationUrl,
         description: stageConfig.recommendedDestination.description,
       },
-    }, facts));
+    }, facts)), serverPlaybook, outputLanguage), { fallback, prohibitedTerms: serverPlaybook.prohibitedTerms });
 
     res.json({ success: true, campaign });
   } catch (error: any) {
@@ -2066,7 +2081,8 @@ GOOGLE ADS REQUIREMENTS:
 // 4. API: Compare All 3 Stages (AWA, CON, DEC) Side-by-Side
 app.post('/api/compare-stages', async (req, res) => {
   try {
-    const { landingPageUrl, outputLanguage = 'all', issn, eIssn } = req.body;
+    const { landingPageUrl, outputLanguage: rawOutputLanguage = 'all', issn, eIssn } = req.body;
+    const outputLanguage = parseOutputLanguage(rawOutputLanguage);
     const requestedIssn = typeof issn === 'string' && issn.trim() ? issn : typeof eIssn === 'string' ? eIssn : undefined;
     const facts = withAdIdentity(await lookupClarivateFacts(landingPageUrl, false, requestedIssn));
 
@@ -2091,6 +2107,206 @@ app.post('/api/compare-stages', async (req, res) => {
     console.error('Compare stages failed:', err);
     res.status(500).json({ error: err.message || 'Failed to compare stages' });
   }
+});
+
+// --- Ported from AI Studio: admin playbook, metrics database, bulk campaigns ---
+
+const PLAYBOOK_PATH = process.env.PLAYBOOK_PATH || path.resolve(__dirname, 'admin-playbook.json');
+const METRICS_DATABASE_PATH = process.env.METRICS_DATABASE_PATH || path.resolve(__dirname, 'metrics-database.json');
+const PLAYBOOK_PROPOSALS_PATH = process.env.PLAYBOOK_PROPOSALS_PATH || path.resolve(__dirname, 'playbook-proposals.json');
+export const BULK_MAX_URLS = 25;
+
+function playbookStore() {
+  return getPlaybookStore({ playbook: PLAYBOOK_PATH, metrics: METRICS_DATABASE_PATH, proposals: PLAYBOOK_PROPOSALS_PATH });
+}
+
+/** Playbook used by generation. A storage outage falls back to the defaults rather than failing generation. */
+async function loadServerPlaybook(): Promise<AdminPlaybookConfig> {
+  try {
+    return await (await playbookStore()).getPlaybook();
+  } catch (err) {
+    console.warn('[Playbook Store] read failed, using defaults:', err instanceof Error ? err.message : err);
+    return defaultPlaybook();
+  }
+}
+
+function editorEmail(res: express.Response): string {
+  return getRequestSession(res)?.user?.email || 'unknown';
+}
+
+app.get('/api/playbook', async (_req, res) => {
+  try {
+    res.json({ playbook: await (await playbookStore()).getPlaybook() });
+  } catch (err) {
+    console.error('Playbook read failed:', err);
+    res.status(500).json({ error: 'Could not read playbook' });
+  }
+});
+
+app.post('/api/playbook', requireAdmin, async (req, res) => {
+  try {
+    const store = await playbookStore();
+    const next = applyPlaybookUpdate(await store.getPlaybook(), req.body, editorEmail(res));
+    await store.savePlaybook(next);
+    res.json({ success: true, playbook: next });
+  } catch (err) {
+    if (err instanceof PlaybookValidationError) return res.status(400).json({ error: err.message });
+    console.error('Playbook save failed:', err);
+    res.status(500).json({ error: 'Could not save playbook' });
+  }
+});
+
+/** Any signed-in user can propose a copy edit or rule. Nothing changes until an admin approves. */
+app.post('/api/playbook/proposals', async (req, res) => {
+  try {
+    const store = await playbookStore();
+    const proposal = buildProposal(req.body, editorEmail(res), newProposalId());
+    const existing = await store.listProposals();
+    if (isDuplicateProposal(proposal, existing)) return res.json({ success: true, duplicate: true });
+    await store.saveProposal(proposal);
+    res.json({ success: true, proposal });
+  } catch (err) {
+    if (err instanceof ProposalValidationError) return res.status(400).json({ error: err.message });
+    console.error('Proposal save failed:', err);
+    res.status(500).json({ error: 'Could not save the proposal' });
+  }
+});
+
+app.get('/api/playbook/proposals', requireAdmin, async (req, res) => {
+  try {
+    const status = ['pending', 'approved', 'rejected'].includes(String(req.query.status)) ? (String(req.query.status) as any) : undefined;
+    res.json({ proposals: await (await playbookStore()).listProposals(status) });
+  } catch (err) {
+    console.error('Proposal list failed:', err);
+    res.status(500).json({ error: 'Could not read proposals' });
+  }
+});
+
+app.post('/api/playbook/proposals/:id/decision', requireAdmin, async (req, res) => {
+  try {
+    const decision = req.body?.decision;
+    if (decision !== 'approve' && decision !== 'reject') return res.status(400).json({ error: 'decision must be approve or reject' });
+    const store = await playbookStore();
+    const proposal = await store.getProposal(String(req.params.id));
+    if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+    if (proposal.status !== 'pending') return res.status(409).json({ error: `Proposal is already ${proposal.status}` });
+    const editor = editorEmail(res);
+    const now = new Date();
+    let playbook = await store.getPlaybook();
+    if (decision === 'approve') {
+      playbook = applyApprovedProposal(playbook, proposal, editor, now);
+      await store.savePlaybook(playbook);
+    }
+    const decided = { ...proposal, status: decision === 'approve' ? 'approved' : 'rejected', decidedBy: editor, decidedAt: now.toISOString() } as const;
+    await store.saveProposal(decided);
+    res.json({ success: true, proposal: decided, playbook });
+  } catch (err) {
+    console.error('Proposal decision failed:', err);
+    res.status(500).json({ error: 'Could not save the decision' });
+  }
+});
+
+/** One metrics model: supplementary fields from the store, IF/5-year IF/quartile only from the Clarivate store. */
+app.get('/api/database/journals', async (_req, res) => {
+  try {
+    const records = await (await playbookStore()).listMetricsRecords();
+    const store = await getMetricsStore();
+    const journals = await Promise.all(
+      records.map(async (record) => {
+        const key = normalizeJournalUrl(record.canonicalUrl).canonical;
+        const entry = JOURNAL_CATALOG.find((j) => normalizeJournalUrl(j.url).canonical === key);
+        const issn = (entry as any)?.issn || (entry as any)?.eIssn;
+        const latest = issn ? await store.getLatestByIssn(issn) : null;
+        return withClarivateMetrics(
+          record,
+          latest ? ({ ...latest.metrics, jcrYear: latest.jcrYear } as any) : null,
+          latest?.retrievedAt
+        );
+      })
+    );
+    res.json({ journals });
+  } catch (err) {
+    console.error('Metrics database read failed:', err);
+    res.status(500).json({ error: 'Could not read the metrics database' });
+  }
+});
+
+app.post('/api/database/journal', requireAdmin, async (req, res) => {
+  try {
+    const journal = req.body?.journal ?? req.body;
+    const key = normalizeJournalUrl(String(journal?.canonicalUrl || '')).canonical;
+    if (!key) return res.status(400).json({ error: 'A journal canonicalUrl is required' });
+    if (rejectedJournalHost(res, key)) return;
+    const store = await playbookStore();
+    const records = await store.listMetricsRecords();
+    const existing = records.find((r) => normalizeJournalUrl(r.canonicalUrl).canonical === key) || null;
+    const updated = applyDatabaseUpdate(existing, { ...journal, canonicalUrl: key }, editorEmail(res));
+    await store.saveMetricsRecord(updated);
+    res.json({ success: true, journal: updated });
+  } catch (err) {
+    if (err instanceof MetricsDatabaseError) return res.status(err.status).json({ error: err.message });
+    if (err instanceof LandingPageError) return res.status(400).json({ error: err.message });
+    console.error('Metrics database save failed:', err);
+    res.status(500).json({ error: 'Could not save the journal' });
+  }
+});
+
+/** Validate a bulk URL list: 1..BULK_MAX_URLS strings. Returns null after sending a 400. */
+function bulkUrls(res: express.Response, raw: unknown): string[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    res.status(400).json({ error: 'Provide a non-empty list of journal URLs' });
+    return null;
+  }
+  if (raw.length > BULK_MAX_URLS) {
+    res.status(400).json({ error: `At most ${BULK_MAX_URLS} URLs per batch` });
+    return null;
+  }
+  if (!raw.every((u) => typeof u === 'string' && u.trim().length > 0 && u.length <= 2048)) {
+    res.status(400).json({ error: 'Every URL must be a non-empty string' });
+    return null;
+  }
+  return raw.map((u) => (u as string).trim());
+}
+
+/** Runs one URL at a time against the trusted lookup. Client-supplied facts are never accepted. */
+async function bulkLookup(url: string) {
+  const canonical = normalizeJournalUrl(url).canonical;
+  if (!canonical) throw new LandingPageError('Not a valid journal URL', 'ssrf');
+  parseAllowedJournalUrl(canonical);
+  return withAdIdentity(await lookupClarivateFacts(canonical));
+}
+
+app.post('/api/batch-check-metrics', async (req, res) => {
+  const urls = bulkUrls(res, req.body?.urls);
+  if (!urls) return;
+  const items = [];
+  for (const url of urls) {
+    try {
+      const facts = await bulkLookup(url);
+      items.push({ url, status: 'success', facts });
+    } catch (err: any) {
+      items.push({ url, status: 'error', error: err instanceof LandingPageError ? err.message : 'Lookup failed' });
+    }
+  }
+  res.json({ success: true, items });
+});
+
+app.post('/api/batch-generate-campaigns', async (req, res) => {
+  const rawItems = req.body?.items;
+  const urls = bulkUrls(res, Array.isArray(rawItems) ? rawItems.map((i: any) => (typeof i === 'string' ? i : i?.url)) : rawItems);
+  if (!urls) return;
+  const stage = normalizeStage(req.body?.stage || 'AWA');
+  const outputLanguage = parseOutputLanguage(req.body?.outputLanguage);
+  const results = [];
+  for (const url of urls) {
+    try {
+      const facts = await bulkLookup(url);
+      results.push({ url, status: 'success', facts, campaign: generateDeterministicCampaign(facts, stage, outputLanguage) });
+    } catch (err: any) {
+      results.push({ url, status: 'error', error: err instanceof LandingPageError ? err.message : 'Generation failed' });
+    }
+  }
+  res.json({ success: true, stage, outputLanguage, results });
 });
 
 app.use('/api', (_req, res) => {
