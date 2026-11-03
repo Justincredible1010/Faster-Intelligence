@@ -7,7 +7,7 @@
  * - sitelink URLs are never built here; the caller maps each link to a
  *   stage-fit URL role, so no path is invented.
  */
-import { smartClampWithWidth as clamp } from '../utils/textUtils';
+import { safeShorten, shortenName, smartClampWithWidth as clamp } from '../utils/textUtils';
 import type { StageCode } from '../types';
 
 export type AdLanguage = 'all' | 'EN' | 'ZH' | 'JA';
@@ -115,6 +115,42 @@ export function localizedSnippetHeader(language: AdLanguage): string {
   return language === 'JA' ? '学術領域' : language === 'ZH' ? '学科方向' : 'Disciplines';
 }
 
+/** Google requires at least 3 values per structured snippet; each value is at most 25 width. */
+export const SNIPPET_MIN_VALUES = 3;
+export const SNIPPET_VALUE_MAX = 25;
+
+const ZH_SNIPPET_TYPES = ['原创研究论文', '综述文章', '同行评议成果', '专题论文集'];
+const JA_SNIPPET_TYPES = ['原著論文', '総説', '査読付き論文', '特集論文集'];
+
+/**
+ * Structured snippet with >= 3 values, or undefined (omitted) when there are not enough.
+ * ZH/JA use Google's "Types" header with localized article types, so no English
+ * discipline or publisher text leaks into CJK ads.
+ */
+export function buildStructuredSnippet(
+  facts: { primaryDiscipline?: string | null; publisher?: string | null },
+  language: AdLanguage
+): { header: string; values: string[] } | undefined {
+  let header: string;
+  let values: string[];
+  if (language === 'ZH') {
+    header = '类型';
+    values = ZH_SNIPPET_TYPES;
+  } else if (language === 'JA') {
+    header = '種類';
+    values = JA_SNIPPET_TYPES;
+  } else {
+    header = 'Disciplines';
+    values = [
+      (facts.primaryDiscipline || '').split('(')[0].trim(),
+      facts.publisher || '',
+      'Peer-Reviewed Research',
+    ];
+  }
+  const clean = Array.from(new Set(values.map((v) => safeShorten(v, SNIPPET_VALUE_MAX)).filter(Boolean)));
+  return clean.length >= SNIPPET_MIN_VALUES ? { header, values: clean } : undefined;
+}
+
 export function localizedPeerReviewed(language: AdLanguage): string {
   return language === 'JA' ? '査読付き学術研究' : language === 'ZH' ? '同行评议学术成果' : 'Peer-Reviewed Research';
 }
@@ -137,7 +173,7 @@ export function localizedCallouts(stage: StageCode, language: 'ZH' | 'JA', facts
       : stage === 'AWA'
         ? [...(facts.publisher ? [`${facts.publisher} 出版`] : []), '国际学术读者', '同行评议期刊', '学科前沿成果']
         : stage === 'CON'
-          ? [...(claims.jifClaim ? [claims.jifClaim] : []), ...(claims.casZone ? [claims.casZone.slice(0, 12)] : []), '同行评议标准', ...(days ? [`初审约${days}天`] : []), '出版政策公开']
+          ? [...(claims.jifClaim ? [claims.jifClaim] : []), ...(claims.casZone ? [safeShorten(claims.casZone, 24)] : []), '同行评议标准', ...(days ? [`初审约${days}天`] : []), '出版政策公开']
           : ['作者指南', '投稿材料自查清单', ...(days ? [`初审约${days}天`] : []), '官方投稿通道'];
   return out.map((c) => clamp(c, CALLOUT_MAX)).filter(Boolean).slice(0, 4);
 }
@@ -149,7 +185,7 @@ function h(text: string, sourceFact: string, category: string, positionRecommend
 }
 
 export function japaneseHeadlines(facts: any, stage: StageCode, claims: TrustedClaims) {
-  const name = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
+  const name = (shortenName(facts.journalName, 18) || facts.journalName);
   const days = claims.firstDecisionDays;
   let list: Seed[];
   if (stage === 'AWA') {
@@ -278,7 +314,7 @@ export function japaneseKeywords(facts: any, stage: StageCode) {
 }
 
 export function japaneseDisplayAd(facts: any, stage: StageCode, claims: TrustedClaims) {
-  const name = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
+  const name = (shortenName(facts.journalName, 18) || facts.journalName);
   const business = facts.publisher || facts.journalName;
   const common = { shortHeadlineCharCount: 0, longHeadlineCharCount: 0, descriptionCharCount: 0, businessName: business };
   if (stage === 'AWA') {
@@ -317,7 +353,7 @@ export function japaneseDisplayAd(facts: any, stage: StageCode, claims: TrustedC
     ctaText: '投稿規程を見る',
     visualConceptPrompt: 'A streamlined author guidance banner showcasing a manuscript submission checklist icon and clear typography.',
     imageAccentColor: '#064e3b',
-    targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'nature.com', 'springerlink.com'],
+    targetPlacements: ['researchgate.net', 'ncbi.nlm.nih.gov (PubMed)', 'nature.com', 'link.springer.com'],
     bannerHeadlineZh: `${facts.journalName} 原稿オンライン受付`,
     bannerSubtextZh: '投稿規程と提出チェックリスト',
   };

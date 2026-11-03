@@ -1,6 +1,14 @@
 import { GeneratedAdCampaign, STAGE_CONFIGS, normalizeStage } from '../types';
 import { chinaChannelsExportSection } from '../china/exportText';
 import { smartClampWithWidth } from './textUtils';
+
+/** Keyword text for the CSV: match type lives in its own column, so strip [] and quotes. */
+export function plainKeyword(keyword: string): string {
+  return (keyword || '')
+    .replace(/[\[\]［］"＂“”「」『』]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 import { formatJifClaim, metricsAreTrusted, metricsFromClarivateWos, trustedApcUsd, trustedCasZone, trustedFirstDecisionDays } from './metricClaims';
 
 function escapeCsvField(field: string | number | undefined | null): string {
@@ -108,7 +116,7 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
   // 1. English Keywords (if EN mode)
   if ((lang === 'EN' || lang === 'all') && campaign.keywords?.englishSearchKeywords) {
     campaign.keywords.englishSearchKeywords.forEach((kw) => {
-      const cleanKeyword = kw.keyword.replace(/^\[|\]$|^"|"$/g, '');
+      const cleanKeyword = plainKeyword(kw.keyword);
       rows.push([
         campaignName,
         adGroupName,
@@ -136,7 +144,7 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
       rows.push([
         `${journalName} - ${cfg.shortLabel} - Search (ZH)`,
         `${cfg.shortLabel} 中文学术关键词`,
-        kw.keywordZh,
+        plainKeyword(kw.keywordZh),
         matchType,
         '',
         h1,
@@ -160,7 +168,7 @@ export function generateGoogleAdsEditorCsv(campaign: GeneratedAdCampaign): strin
       rows.push([
         `${journalName} - ${cfg.shortLabel} - Search (JA)`,
         `${cfg.shortLabel} 日本語学術キーワード`,
-        kw.keywordJa,
+        plainKeyword(kw.keywordJa),
         matchType,
         '',
         h1,
