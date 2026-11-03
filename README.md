@@ -1,7 +1,39 @@
-# Marketing Content Generation Engine
-### Source-Grounded Google Ads & Author Marketing Engine for Greater China & Global Scholarly Publishing
+# OmniFact
+### Source-grounded marketing content engine for Springer Nature journal marketers
+
+OmniFact turns a journal's own landing page and verified metrics into ready-to-publish search, display and social copy in English, Chinese and Japanese.
+
+## What makes OmniFact different
+
+1. **Facts grounded in the journal landing page.** OmniFact crawls the journal's landing page and builds copy from the facts it finds there. Each extracted fact is labelled **Unverified** until a user clicks **Verify**, and copy treats unverified facts with caution. No invented claims, metrics or URLs: unknown journals return null metrics and generation is blocked.
+2. **Ad platform best practices built in, with a final QA gate.** Every ad in every language passes a final check before it is shown: character limits (with CJK double-width counting), unclosed brackets, truncated titles and fragments, tone, structured-snippet minimums (at least 3 values or omitted) and ad policy (trademarks, unverifiable superlatives, China advertising law terms). Fixable issues are repaired automatically; anything else is flagged **Not ready to publish**.
+
+## Key features
+
+- **Clarivate metrics as the only source** for Impact Factor and JCR quartile, cached by ISSN and JCR year; the in-repo catalog is a labelled snapshot never used in ad copy.
+- **Funnel-stage targeting** (Awareness, Consideration, Decision) with stage-specific keywords, CTAs and landing pages.
+- **EN / ZH / JA copy** with language-purity checks.
+- **Google Search ads** with sitelinks, callouts and structured snippets, plus **responsive display ads** and previews.
+- **Bulk campaigns** across many journals in one run.
+- **WeChat and Weibo organic posts** for China channels.
+- **Playbook learning:** user edits and rules become proposals; an admin approves or rejects them, and approved rules shape future copy. Stored in Firestore so they survive redeploys.
+- **CSV export** ready for Google Ads Editor import.
+- **@springernature.com sign-in** and a **version badge** showing the running build.
+
+## Roadmap
+
+- Baidu Search and So360 Search/Display channels, with their policy rules in the QA gate
+- Adobe Express Stock assets for creatives
+- Editable banner creatives
+- More organic social posts and platforms
+- Live Firestore setup in production (`FIRESTORE_PROJECT_ID`)
+- Browser click-through verification of the UI
+- Native-speaker proofreading of Japanese copy
+- Journal download and usage metrics
 
 ---
+
+# Reference
 
 ## 1. Executive Summary & Vision
 
