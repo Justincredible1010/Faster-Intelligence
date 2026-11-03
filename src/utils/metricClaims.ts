@@ -208,13 +208,13 @@ export function metricPromptSection(facts: MetricCarrier): string {
     const jifClaim = formatJifClaim(facts);
     if (jifClaim) lines.push(`- Cite the impact factor exactly as: ${jifClaim}`);
     if (impactPhrase) lines.push(`- Source label: ${impactPhrase}`);
-  } else if (facts?.impactFactor != null) {
-    lines.push('- Do not state an impact factor. A journal-website or catalog figure is reference only.');
+  } else {
+    lines.push('- Do not state an impact factor. Only a Clarivate JCR figure may be cited; a journal-website or catalog figure is reference only.');
   }
   if (fiveYear != null) {
     lines.push(`- 5-year impact factor: ${fiveYear}`);
     if (fiveYearPhrase) lines.push(`- Source label: ${fiveYearPhrase}`);
-  } else if (facts?.fiveYearImpactFactor != null) {
+  } else {
     lines.push('- Do not state a 5-year impact factor. A journal-website or catalog figure is reference only.');
   }
   if (quartile) lines.push(`- JCR quartile: ${quartile}`);

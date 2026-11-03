@@ -90,7 +90,7 @@ const POPULAR_JOURNALS = JOURNAL_CATALOG.map((journal) => ({
   tag: JOURNAL_TAGS[journal.url] || journal.publisher,
 }));
 
-const INLINE_METRIC_FIELDS = ['journalName', 'impactFactor', 'casZone', 'firstDecisionDays'] as const;
+const INLINE_METRIC_FIELDS = ['journalName', 'impactFactor', 'fiveYearImpactFactor', 'casZone', 'firstDecisionDays'] as const;
 
 function sameMetricValue(left: unknown, right: unknown): boolean {
   if (left == null && right == null) return true;
@@ -475,9 +475,7 @@ export const InputStudio: React.FC<Props> = ({
                   <span className="text-[10px] text-slate-400 block">
                     5-year: {fiveYearCopy.valueText}
                   </span>
-                  {fiveYearCopy.fromClarivate && (
-                    <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{fiveYearCopy.caption}</span>
-                  )}
+                  <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{fiveYearCopy.caption}</span>
                   <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{impactCopy.caption}</span>
                 </div>
 
@@ -598,6 +596,21 @@ export const InputStudio: React.FC<Props> = ({
                       onChange={(e) =>
                         setEditedFacts((prev) =>
                           prev ? { ...prev, impactFactor: parseFloat(e.target.value) || null } : null
+                        )
+                      }
+                      className="w-full text-xs p-1.5 border border-slate-300 rounded bg-slate-50 text-slate-900 font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 font-semibold block">5-year IF</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      aria-label="5-year impact factor"
+                      value={editedFacts?.fiveYearImpactFactor ?? ''}
+                      onChange={(e) =>
+                        setEditedFacts((prev) =>
+                          prev ? { ...prev, fiveYearImpactFactor: parseFloat(e.target.value) || null } : null
                         )
                       }
                       className="w-full text-xs p-1.5 border border-slate-300 rounded bg-slate-50 text-slate-900 font-bold"

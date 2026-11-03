@@ -522,11 +522,10 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   assert.strictEqual(mixed.impactFactor, 56.1);
   assert.strictEqual(mixed.provenanceMap?.impactFactor?.source, 'clarivate_wos_journals_api');
   assert.strictEqual(mixed.provenanceMap?.impactFactor?.year, 2025);
-  assert.strictEqual(mixed.fiveYearImpactFactor, 51);
-  assert.strictEqual(mixed.provenanceMap?.fiveYearImpactFactor?.source, 'page_sourced');
+  assert.strictEqual(mixed.fiveYearImpactFactor, null, 'A page 5-year IF is not shown when Clarivate has none');
   assert.strictEqual(mixed.firstDecisionDays, 9);
   assert.strictEqual(mixed.provenanceMap?.firstDecisionDays?.source, 'page_sourced');
-  assert.strictEqual(mixed.provenanceMap?.jcrQuartile?.source, 'catalog_snapshot');
+  assert.strictEqual(mixed.provenanceMap?.jcrQuartile?.source, 'clarivate_wos_journals_api', 'Clarivate quartile beats a catalog quartile');
   assert.strictEqual(mixed.provenanceMap?.casZone?.source, 'catalog_snapshot');
   assert.strictEqual(mixed.provenanceMap?.indexing?.source, 'catalog_snapshot');
   assert.deepStrictEqual(mixed.indexing, nature.indexing);
@@ -763,6 +762,53 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   } finally {
     await new Promise<void>((resolve, reject) => listener.close((err) => (err ? reject(err) : resolve())));
   }
+}
+
+{
+  const { mergeClarivateOverLanding, restoredProvenance } = await import('../server.ts');
+  const { chinaCopyFacts } = await import('../src/china/copyFacts.ts');
+  const { wholeSentences } = await import('../src/utils/landingPage.ts');
+  const base = {
+    journalName: 'Oncogene', publisher: 'Springer Nature', url: 'https://www.nature.com/onc/',
+    issn: '0950-9232', impactFactor: null, fiveYearImpactFactor: null, jcrQuartile: null,
+    verificationStatus: 'page_sourced', provenanceSource: 'page_sourced', provenanceMap: {},
+  } as any;
+  // A typed 5-year IF becomes user_provided.
+  const edited = { ...base, fiveYearImpactFactor: 8.1 };
+  const map = restoredProvenance(edited, base);
+  assert.strictEqual(map.fiveYearImpactFactor?.source, 'user_provided');
+  assert.strictEqual(map.impactFactor, undefined);
+  const saved = { ...edited, provenanceMap: map };
+  // Re-lookup where Clarivate returns no 5-year IF keeps the typed value.
+  const relooked = mergeClarivateOverLanding(saved, {
+    journalName: 'ONCOGENE', publisher: '', impactFactor: null, fiveYearImpactFactor: null, jcrQuartile: null,
+    verificationStatus: 'clarivate_api', provenanceSource: 'clarivate_wos_journals_api', isVerifiedClarivate: true,
+    jcrYear: 2025, issn: '0950-9232', primaryDiscipline: '', indexing: [], sourceAttribution: '',
+  } as any);
+  assert.strictEqual(relooked.fiveYearImpactFactor, 8.1);
+  assert.strictEqual(relooked.provenanceMap?.fiveYearImpactFactor?.source, 'user_provided');
+  // The copy treats it as unverified: never cited as a Clarivate figure.
+  const copy = chinaCopyFacts(relooked as any);
+  assert(!JSON.stringify(copy).includes('8.1'));
+  // A Clarivate value still wins over a typed one when the API returns it.
+  const verified = mergeClarivateOverLanding(saved, {
+    journalName: 'ONCOGENE', publisher: '', impactFactor: 9.1, fiveYearImpactFactor: 8.2, jcrQuartile: 'Q1',
+    verificationStatus: 'clarivate_api', provenanceSource: 'clarivate_wos_journals_api', isVerifiedClarivate: true,
+    jcrYear: 2025, issn: '0950-9232', primaryDiscipline: '', indexing: [], sourceAttribution: '',
+  } as any);
+  assert.strictEqual(verified.fiveYearImpactFactor, 8.2);
+  assert.strictEqual(verified.provenanceMap?.fiveYearImpactFactor?.source, 'clarivate_wos_journals_api');
+
+  // wholeSentences keeps abbreviations intact and never returns cut text.
+  assert.strictEqual(
+    wholeSentences('Covers cancer biology, e.g. signalling and genetics. Publishes reviews by Dr. Smith et al. and more'),
+    'Covers cancer biology, e.g. signalling and genetics.'
+  );
+  assert.strictEqual(wholeSentences('Research on tumours, i.e. oncogenes and suppressors, from labs worldwide'), null);
+  assert.strictEqual(wholeSentences('A journal led by Dr. Smith et al. covering oncology and more...'), null);
+  assert.strictEqual(wholeSentences('Oncogene publishes cancer research.'), 'Oncogene publishes cancer research.');
+  assert.strictEqual(wholeSentences('肿瘤研究期刊。涵盖分子'), null);
+  assert.strictEqual(wholeSentences('Oncogene 是一本肿瘤学期刊，发表癌症研究。涵盖分子'), 'Oncogene 是一本肿瘤学期刊，发表癌症研究。');
 }
 
 console.log('✓ Clarivate client, store, refresh policy, and claim guard passed.\n');

@@ -85,6 +85,8 @@ export interface ExtractedPageFacts {
   specialIssuesAvailable: ExtractedFactField<boolean>;
   /** Metrics the page itself states. Each item is labelled page-sourced. */
   pageMetrics: PageSourcedMetric[];
+  /** Normalized names from an "Abstracted/indexed in" list on the page. */
+  indexedIn?: string[];
   /** Features the visible page or its real links state. Each item is page-sourced. */
   pageFeatures: PageSourcedFeature[];
   layout: 'nature_portfolio' | 'springer_link' | 'unknown';

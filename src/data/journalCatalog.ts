@@ -17,6 +17,11 @@ interface CatalogSeed extends Omit<CatalogJournal, 'url' | 'verificationStatus' 
 function snapshot(seed: CatalogSeed): CatalogJournal {
   return {
     ...seed,
+    // Impact factors, quartile and rank come only from the Clarivate API. The
+    // historical numbers in this file are never served.
+    impactFactor: null,
+    fiveYearImpactFactor: null,
+    jcrQuartile: undefined,
     url: normalizeJournalUrl(seed.url).canonical,
     verificationStatus: 'catalog_snapshot',
     provenanceSource: 'catalog_snapshot',
