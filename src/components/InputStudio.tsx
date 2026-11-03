@@ -409,7 +409,7 @@ export const InputStudio: React.FC<Props> = ({
                     <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
                       {clarivateFacts.publisher}
                     </span>
-                    {/* Provenance Badge */}
+                    {/* Factual Data Provenance Tag (No decorative badge) */}
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                         sourceKind === 'clarivate'
@@ -449,7 +449,7 @@ export const InputStudio: React.FC<Props> = ({
               </div>
             </div>
 
-            {/* Read-Only Metric Highlights */}
+            {/* Read-Only Metric Highlights with Explicit Years and Sources */}
             {!isEditingMetrics ? (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -870,6 +870,7 @@ export const InputStudio: React.FC<Props> = ({
                 { id: 'all', label: 'English and Chinese' },
                 { id: 'EN', label: 'English only' },
                 { id: 'ZH', label: 'Chinese only' },
+                { id: 'JA', label: 'Japanese (日本語)' },
               ].map((lang) => (
                 <button
                   key={lang.id}

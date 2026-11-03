@@ -3,9 +3,11 @@ import {
   BookOpen,
   BookOpenText,
   Compass,
+  Database,
   Download,
   Layers,
   Layout,
+  ListChecks,
   LogOut,
   Megaphone,
   Menu,
@@ -25,6 +27,8 @@ export type PreviewTab = 'search' | 'display' | 'keywords' | 'weibo' | 'wechat';
 export type AppNavId =
   | 'sign-in'
   | 'studio'
+  | 'bulk'
+  | 'metrics-db'
   | 'facts'
   | 'stage'
   | PreviewTab
@@ -50,6 +54,8 @@ const GROUPS: { label: string; items: NavItem[] }[] = [
       { id: 'studio', label: 'Campaign studio', icon: PenLine },
       { id: 'facts', label: 'Journal facts', icon: BookOpen },
       { id: 'stage', label: 'Stage and page', icon: Compass },
+      { id: 'bulk', label: 'Bulk campaigns', icon: ListChecks },
+      { id: 'metrics-db', label: 'Metrics database', icon: Database },
     ],
   },
   {

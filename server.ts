@@ -19,6 +19,25 @@ import { factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection } from '
 import { withChinaChannels } from './src/china/withChinaChannels';
 import type { ClarivateJournalMetrics, ExtractedPageFacts, PageSourcedFeature } from './src/types';
 import { getMetricsStore } from './src/utils/metricsStore';
+import {
+  buildSitelinks,
+  japaneseDescriptions,
+  japaneseDisplayAd,
+  japaneseHeadlines,
+  japaneseKeywords,
+  localizedCallouts,
+  localizedPeerReviewed,
+  localizedSnippetHeader,
+  type AdLanguage,
+} from './src/server/localizedCopy';
+import {
+  MetricsDatabaseError,
+  applyDatabaseUpdate,
+  loadMetricsDatabaseFile,
+  saveMetricsDatabaseFile,
+  withClarivateMetrics,
+} from './src/server/metricsDatabase';
+import { PlaybookValidationError, applyPlaybookUpdate, loadPlaybookFile, savePlaybookFile } from './src/server/playbook';
 import { loadJournalMetrics } from './src/utils/metricsRefresh';
 import { DEFAULT_STAGE_URL_RULES, parseStageUrlRules } from './src/utils/stageUrlRules';
 import { normalizeIssn } from './src/utils/issn';
@@ -248,7 +267,7 @@ function isCachedJournalExpired(cached: CachedJournal): boolean {
 // CJK Character Double-Width Counting (Google Ads Standard)
 export function countCharacterWidth(text: string): number {
   if (!text) return 0;
-  const cjkChars = (text.match(/[\u4e00-\u9fa5\u3400-\u4dbf\u3000-\u303f\uff01-\uffee]/g) || []).length;
+  const cjkChars = (text.match(/[\u4e00-\u9fa5\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\u3000-\u303f\uff01-\uffee]/g) || []).length;
   const otherChars = text.length - cjkChars;
   return (cjkChars * 2) + otherChars;
 }
@@ -1323,10 +1342,13 @@ interface HeadlineSeed {
 export function generateStageHeadlines(
   facts: any,
   stage: StageCode,
-  outputLanguage: 'all' | 'EN' | 'ZH' = 'all'
+  outputLanguage: AdLanguage = 'all'
 ) {
   facts = withAdIdentity(factsForCopy(facts));
   const jifClaim = formatJifClaim(facts);
+  if (outputLanguage === 'JA') {
+    return japaneseHeadlines(facts, stage, { jifClaim, firstDecisionDays: facts.firstDecisionDays ?? null });
+  }
   const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
   const disciplineShort = (facts.primaryDiscipline || 'Scientific').split('(')[0].trim().slice(0, 14);
   const publishedBy = facts.publisher ? smartClamp(`Published by ${facts.publisher}`, 30) : '';
@@ -1474,7 +1496,11 @@ export function generateStageHeadlines(
 }
 
 // Stage Descriptions with language purity
-export function generateStageDescriptions(facts: any, stage: StageCode, outputLanguage: 'all' | 'EN' | 'ZH' = 'all') {
+export function generateStageDescriptions(facts: any, stage: StageCode, outputLanguage: AdLanguage = 'all') {
+  if (outputLanguage === 'JA') {
+    const f = withAdIdentity(factsForCopy(facts));
+    return japaneseDescriptions(f, stage, { jifClaim: formatJifClaim(f), firstDecisionDays: f.firstDecisionDays ?? null });
+  }
   facts = withAdIdentity(factsForCopy(facts));
   const jifClaim = formatJifClaim(facts);
   const aimsLines = pageFeatureLines(pageFeatureText(facts, 'aims_and_audience'), 90);
@@ -1587,8 +1613,9 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
   return mixedDescriptions(en, zh);
 }
 
-export function generateStageKeywords(facts: any, stage: StageCode) {
+export function generateStageKeywords(facts: any, stage: StageCode, outputLanguage: AdLanguage = 'all'): any {
   facts = withAdIdentity(factsForCopy(facts));
+  if (outputLanguage === 'JA') return japaneseKeywords(facts, stage);
   const shortName = facts.journalName.toLowerCase();
   const disc = (facts.primaryDiscipline || 'science').toLowerCase().split('(')[0].trim();
 
@@ -1649,9 +1676,12 @@ export function generateStageKeywords(facts: any, stage: StageCode) {
   };
 }
 
-export function generateStageDisplayAd(facts: any, stage: StageCode) {
+export function generateStageDisplayAd(facts: any, stage: StageCode, outputLanguage: AdLanguage = 'all'): any {
   facts = withAdIdentity(factsForCopy(facts));
   const jifClaim = formatJifClaim(facts);
+  if (outputLanguage === 'JA') {
+    return japaneseDisplayAd(facts, stage, { jifClaim, firstDecisionDays: facts.firstDecisionDays ?? null });
+  }
   const shortName = facts.journalName.length > 18 ? facts.journalName.slice(0, 18) : facts.journalName;
 
   if (stage === 'AWA') {
@@ -1716,8 +1746,8 @@ export function generateStageDisplayAd(facts: any, stage: StageCode) {
   };
 }
 
-function uniqueSitelinks(
-  links: { title: string; desc: string; urlPath: string }[],
+function uniqueSitelinks<T extends { urlPath: string }>(
+  links: T[],
   landingUrl: string
 ) {
   const seen = new Set<string>();
@@ -1734,14 +1764,14 @@ function uniqueSitelinks(
 export function generateDeterministicCampaign(
   facts: any,
   stage: StageCode,
-  outputLanguage: 'all' | 'EN' | 'ZH' = 'all'
+  outputLanguage: AdLanguage = 'all'
 ) {
   facts = withAdIdentity(facts);
   const stageConfig = STAGE_CONFIGS[stage];
   const headlines = generateStageHeadlines(facts, stage, outputLanguage);
   const descriptions = generateStageDescriptions(facts, stage, outputLanguage);
-  const keywords = generateStageKeywords(facts, stage);
-  const displayAd = generateStageDisplayAd(facts, stage);
+  const keywords = generateStageKeywords(facts, stage, outputLanguage);
+  const displayAd = generateStageDisplayAd(facts, stage, outputLanguage);
 
   displayAd.shortHeadlineCharCount = displayAd.shortHeadline.length;
   displayAd.longHeadlineCharCount = displayAd.longHeadline.length;
@@ -1749,33 +1779,10 @@ export function generateDeterministicCampaign(
 
   const copyFacts = factsForCopy(facts);
   const destinationUrl = stageDestinationUrl(facts, stage);
-  const sitelink = (title: string, desc: string, role: Parameters<typeof resolveCampaignUrl>[1]) => ({
-    title,
-    desc,
-    urlPath: resolveCampaignUrl(facts, role),
-  });
-
+  // Sitelink text <= 25, descriptions <= 35 (CJK counts 2). URLs come only from
+  // resolveCampaignUrl roles, so no path is invented.
   const sitelinks = uniqueSitelinks(
-    stage === 'AWA'
-      ? [
-          sitelink('Journal Overview & Scope', 'Explore research fields and mission', 'about'),
-          sitelink('Browse Latest Articles', 'Read recent peer-reviewed discoveries', 'articles'),
-          sitelink('Editorial Leadership', 'Meet the international editorial board', 'editors'),
-          sitelink('Research Collections', 'Curated thematic paper collections', 'collections'),
-        ]
-      : stage === 'CON'
-      ? [
-          sitelink('Aims & Scope Evaluation', 'Check topical alignment and criteria', 'aims'),
-          sitelink('Article Types & Formats', 'Accepted original research and reviews', 'articles'),
-          sitelink('Journal Metrics & Indexing', 'Indexing and journal metrics', 'landing'),
-          sitelink('Publishing Options & Fees', 'Transparent APC and OA publishing', 'fees'),
-        ]
-      : [
-          sitelink('Author Guidelines', 'Manuscript preparation and style guide', 'guidelines'),
-          sitelink('Submission Checklist', 'Required documentation before submitting', 'checklist'),
-          sitelink('APC & Waiver Criteria', 'Fee policy and funding guidelines', 'fees'),
-          sitelink('Online Submission Portal', 'Submit paper for peer review', 'submission'),
-        ],
+    buildSitelinks(stage, outputLanguage, (role) => resolveCampaignUrl(facts, role)),
     campaignLandingUrl(facts)
   );
 
@@ -1792,6 +1799,14 @@ export function generateDeterministicCampaign(
       : stage === 'CON'
       ? [formatJifClaim(copyFacts) || impactCallout, copyFacts.casZone ? copyFacts.casZone.slice(0, 14) : 'Peer-Reviewed Quality', copyFacts.firstDecisionDays ? `1st Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Transparent Policies']
       : ['Author Guidelines Ready', 'Standard Preparation Checklist', copyFacts.firstDecisionDays ? `First Decision: ${copyFacts.firstDecisionDays} Days` : 'Editorial Standards', 'Official Submission Portal'];
+  const localizedCalloutList =
+    outputLanguage === 'ZH' || outputLanguage === 'JA'
+      ? localizedCallouts(stage, outputLanguage, facts, {
+          jifClaim: formatJifClaim(copyFacts),
+          firstDecisionDays: copyFacts.firstDecisionDays ?? null,
+          casZone: copyFacts.casZone ?? null,
+        })
+      : null;
 
   return withChinaChannels(guardAdCopy({
     funnelStage: stage,
@@ -1810,10 +1825,14 @@ export function generateDeterministicCampaign(
       headlines,
       descriptions,
       sitelinks,
-      callouts,
+      callouts: localizedCalloutList || callouts,
       structuredSnippet: {
-        header: 'Disciplines',
-        values: [(facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim(), facts.publisher, 'Peer-Reviewed Research'].filter(Boolean),
+        header: localizedSnippetHeader(outputLanguage),
+        values: [
+          ...(outputLanguage === 'ZH' || outputLanguage === 'JA' ? [] : [(facts.primaryDiscipline || 'Scientific Research').split('(')[0].trim()]),
+          ...(outputLanguage === 'ZH' || outputLanguage === 'JA' ? [] : [facts.publisher]),
+          localizedPeerReviewed(outputLanguage),
+        ].filter(Boolean),
       },
       recommendedFinalUrl: destinationUrl,
     },
@@ -1825,6 +1844,10 @@ export function generateDeterministicCampaign(
   }, facts));
 }
 
+export function parseOutputLanguage(raw: unknown): AdLanguage {
+  return raw === 'EN' || raw === 'ZH' || raw === 'JA' ? raw : 'all';
+}
+
 // 3. Campaign Generation API
 app.post('/api/generate-campaign', async (req, res) => {
   try {
@@ -1832,12 +1855,13 @@ app.post('/api/generate-campaign', async (req, res) => {
       landingPageUrl,
       channels = ['search', 'display'],
       funnelStage = 'CON',
-      outputLanguage = 'all',
+      outputLanguage: rawOutputLanguage = 'all',
       customPlaybook = '',
       userProvidedFacts = null,
       issn,
       eIssn,
     } = req.body;
+    const outputLanguage = parseOutputLanguage(rawOutputLanguage);
 
     const normalizedStage = normalizeStage(funnelStage);
     const stageConfig = STAGE_CONFIGS[normalizedStage];
@@ -1933,7 +1957,7 @@ ${customPlaybook ? `PLAYBOOK RULES:\n${customPlaybook}\n` : ''}
 GOOGLE ADS REQUIREMENTS:
 1. Search Headlines: 15 items, strictly <=30 visual width.
 2. Search Descriptions: 4 items, strictly <=90 visual width.
-3. Language purity: If language is 'EN', output ZERO Chinese characters. If 'ZH', output ZERO Latin letters.`;
+3. Language purity: If language is 'EN', output ZERO Chinese characters. If 'ZH', output ZERO Latin letters. If 'JA', write natural Japanese (kana + kanji) with ZERO Latin letters except the journal name.`;
 
       try {
         const timeoutPromise = new Promise<null>((_, reject) =>
@@ -2066,7 +2090,8 @@ GOOGLE ADS REQUIREMENTS:
 // 4. API: Compare All 3 Stages (AWA, CON, DEC) Side-by-Side
 app.post('/api/compare-stages', async (req, res) => {
   try {
-    const { landingPageUrl, outputLanguage = 'all', issn, eIssn } = req.body;
+    const { landingPageUrl, outputLanguage: rawOutputLanguage = 'all', issn, eIssn } = req.body;
+    const outputLanguage = parseOutputLanguage(rawOutputLanguage);
     const requestedIssn = typeof issn === 'string' && issn.trim() ? issn : typeof eIssn === 'string' ? eIssn : undefined;
     const facts = withAdIdentity(await lookupClarivateFacts(landingPageUrl, false, requestedIssn));
 
@@ -2091,6 +2116,136 @@ app.post('/api/compare-stages', async (req, res) => {
     console.error('Compare stages failed:', err);
     res.status(500).json({ error: err.message || 'Failed to compare stages' });
   }
+});
+
+// --- Ported from AI Studio: admin playbook, metrics database, bulk campaigns ---
+
+const PLAYBOOK_PATH = process.env.PLAYBOOK_PATH || path.resolve(__dirname, 'admin-playbook.json');
+const METRICS_DATABASE_PATH = process.env.METRICS_DATABASE_PATH || path.resolve(__dirname, 'metrics-database.json');
+export const BULK_MAX_URLS = 25;
+
+function editorEmail(res: express.Response): string {
+  return getRequestSession(res)?.user?.email || 'unknown';
+}
+
+app.get('/api/playbook', (_req, res) => {
+  res.json({ playbook: loadPlaybookFile(PLAYBOOK_PATH) });
+});
+
+app.post('/api/playbook', requireAdmin, (req, res) => {
+  try {
+    const next = applyPlaybookUpdate(loadPlaybookFile(PLAYBOOK_PATH), req.body, editorEmail(res));
+    savePlaybookFile(PLAYBOOK_PATH, next);
+    res.json({ success: true, playbook: next });
+  } catch (err) {
+    if (err instanceof PlaybookValidationError) return res.status(400).json({ error: err.message });
+    console.error('Playbook save failed:', err);
+    res.status(500).json({ error: 'Could not save playbook' });
+  }
+});
+
+/** One metrics model: supplementary fields from the file, IF/5-year IF/quartile only from the Clarivate store. */
+app.get('/api/database/journals', async (_req, res) => {
+  try {
+    const records = loadMetricsDatabaseFile(METRICS_DATABASE_PATH);
+    const store = await getMetricsStore();
+    const journals = await Promise.all(
+      records.map(async (record) => {
+        const key = normalizeJournalUrl(record.canonicalUrl).canonical;
+        const entry = JOURNAL_CATALOG.find((j) => normalizeJournalUrl(j.url).canonical === key);
+        const issn = (entry as any)?.issn || (entry as any)?.eIssn;
+        const latest = issn ? await store.getLatestByIssn(issn) : null;
+        return withClarivateMetrics(
+          record,
+          latest ? ({ ...latest.metrics, jcrYear: latest.jcrYear } as any) : null,
+          latest?.retrievedAt
+        );
+      })
+    );
+    res.json({ journals });
+  } catch (err) {
+    console.error('Metrics database read failed:', err);
+    res.status(500).json({ error: 'Could not read the metrics database' });
+  }
+});
+
+app.post('/api/database/journal', requireAdmin, (req, res) => {
+  try {
+    const journal = req.body?.journal ?? req.body;
+    const key = normalizeJournalUrl(String(journal?.canonicalUrl || '')).canonical;
+    if (!key) return res.status(400).json({ error: 'A journal canonicalUrl is required' });
+    if (rejectedJournalHost(res, key)) return;
+    const records = loadMetricsDatabaseFile(METRICS_DATABASE_PATH);
+    const idx = records.findIndex((r) => normalizeJournalUrl(r.canonicalUrl).canonical === key);
+    const updated = applyDatabaseUpdate(idx >= 0 ? records[idx] : null, { ...journal, canonicalUrl: key }, editorEmail(res));
+    if (idx >= 0) records[idx] = updated;
+    else records.push(updated);
+    saveMetricsDatabaseFile(METRICS_DATABASE_PATH, records);
+    res.json({ success: true, journal: updated });
+  } catch (err) {
+    if (err instanceof MetricsDatabaseError) return res.status(err.status).json({ error: err.message });
+    if (err instanceof LandingPageError) return res.status(400).json({ error: err.message });
+    console.error('Metrics database save failed:', err);
+    res.status(500).json({ error: 'Could not save the journal' });
+  }
+});
+
+/** Validate a bulk URL list: 1..BULK_MAX_URLS strings. Returns null after sending a 400. */
+function bulkUrls(res: express.Response, raw: unknown): string[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    res.status(400).json({ error: 'Provide a non-empty list of journal URLs' });
+    return null;
+  }
+  if (raw.length > BULK_MAX_URLS) {
+    res.status(400).json({ error: `At most ${BULK_MAX_URLS} URLs per batch` });
+    return null;
+  }
+  if (!raw.every((u) => typeof u === 'string' && u.trim().length > 0 && u.length <= 2048)) {
+    res.status(400).json({ error: 'Every URL must be a non-empty string' });
+    return null;
+  }
+  return raw.map((u) => (u as string).trim());
+}
+
+/** Runs one URL at a time against the trusted lookup. Client-supplied facts are never accepted. */
+async function bulkLookup(url: string) {
+  const canonical = normalizeJournalUrl(url).canonical;
+  if (!canonical) throw new LandingPageError('Not a valid journal URL', 'ssrf');
+  parseAllowedJournalUrl(canonical);
+  return withAdIdentity(await lookupClarivateFacts(canonical));
+}
+
+app.post('/api/batch-check-metrics', async (req, res) => {
+  const urls = bulkUrls(res, req.body?.urls);
+  if (!urls) return;
+  const items = [];
+  for (const url of urls) {
+    try {
+      const facts = await bulkLookup(url);
+      items.push({ url, status: 'success', facts });
+    } catch (err: any) {
+      items.push({ url, status: 'error', error: err instanceof LandingPageError ? err.message : 'Lookup failed' });
+    }
+  }
+  res.json({ success: true, items });
+});
+
+app.post('/api/batch-generate-campaigns', async (req, res) => {
+  const rawItems = req.body?.items;
+  const urls = bulkUrls(res, Array.isArray(rawItems) ? rawItems.map((i: any) => (typeof i === 'string' ? i : i?.url)) : rawItems);
+  if (!urls) return;
+  const stage = normalizeStage(req.body?.stage || 'AWA');
+  const outputLanguage = parseOutputLanguage(req.body?.outputLanguage);
+  const results = [];
+  for (const url of urls) {
+    try {
+      const facts = await bulkLookup(url);
+      results.push({ url, status: 'success', facts, campaign: generateDeterministicCampaign(facts, stage, outputLanguage) });
+    } catch (err: any) {
+      results.push({ url, status: 'error', error: err instanceof LandingPageError ? err.message : 'Generation failed' });
+    }
+  }
+  res.json({ success: true, stage, outputLanguage, results });
 });
 
 app.use('/api', (_req, res) => {

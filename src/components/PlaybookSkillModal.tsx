@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   HelpCircle,
 } from 'lucide-react';
+import { apiFetch } from '../auth/api';
 
 interface Props {
   isOpen: boolean;
@@ -132,8 +133,22 @@ export const PlaybookSkillModal: React.FC<Props> = ({
     setUploadedFileName(null);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     onSavePlaybook(playbookText);
+    try {
+      await apiFetch('/api/playbook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customPromptInstructions: playbookText,
+          activePreset,
+          lastModified: new Date().toISOString(),
+          modifiedBy: 'Admin (UI Editor)',
+        }),
+      });
+    } catch (e) {
+      console.warn('Failed to persist playbook to server:', e);
+    }
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);

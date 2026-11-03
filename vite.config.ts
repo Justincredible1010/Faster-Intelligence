@@ -2,9 +2,15 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
+import {resolveBuildInfo} from './src/utils/buildInfo';
 
 export default defineConfig(() => {
+  const build = resolveBuildInfo();
   return {
+    define: {
+      __APP_COMMIT__: JSON.stringify(build.commit),
+      __APP_BUILD_DATE__: JSON.stringify(build.buildDate),
+    },
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
