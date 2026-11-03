@@ -210,6 +210,9 @@ export interface GoogleSearchHeadline {
   category?: 'Journal Identity' | 'Scope & Community' | 'Evaluation & Metrics' | 'Author Guidance' | 'Call to Action' | string;
   positionRecommendation?: string; // e.g. 'Position 1', 'Position 2', 'Any Position'
   strayChars?: string[];
+  /** False when the QA gate could not make this line ad-ready. */
+  qaReady?: boolean;
+  qaIssues?: string[];
   isPurityValid?: boolean;
 }
 
@@ -221,6 +224,9 @@ export interface GoogleSearchDescription {
   language: 'EN' | 'ZH' | 'JA';
   theme?: 'Scope & Relevance' | 'Evaluation & Peer Review' | 'Author Checklist' | 'Publishing Options' | string;
   strayChars?: string[];
+  /** False when the QA gate could not make this line ad-ready. */
+  qaReady?: boolean;
+  qaIssues?: string[];
   isPurityValid?: boolean;
 }
 
@@ -382,6 +388,8 @@ export interface WeChatAd extends WeChatAdFields {
 }
 
 export interface GeneratedAdCampaign {
+  /** Final copy QA gate result. ready=false means some text must not be shown as final. */
+  copyQa?: { ready: boolean; checked: number; repaired: number; replaced: number; issues: { field: string; text: string; issues: string[] }[] };
   funnelStage: StageCode;
   legacyStage?: 'TOFU' | 'MOFU' | 'BOFU';
   clarivateFacts: ClarivateJournalMetrics;
@@ -562,5 +570,9 @@ export interface AdminPlaybookConfig {
   customPromptInstructions: string;
   lastModified: string;
   modifiedBy: string;
+  /** Rules learned from approved user proposals. Set only by proposal approval. */
+  learnedRules?: string[];
+  /** Approved copy corrections (before -> after), applied to generated copy. */
+  copyCorrections?: { before: string; after: string; language?: 'EN' | 'ZH' | 'JA' }[];
 }
 
