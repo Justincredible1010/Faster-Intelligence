@@ -384,7 +384,12 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
     },
     nature
   );
-  assert.deepStrictEqual(guarded.searchAds?.sitelinks, [{ title: 'today', desc: 'Version 2.0 guide' }]);
+  // "JIF 50 today" would be cut to the fragment "today": the whole sitelink is replaced by a complete one.
+  assert.deepStrictEqual(guarded.searchAds?.sitelinks, [{ title: 'Aims and Scope', desc: 'See the topics the journal covers' }]);
+  assert(!guarded.searchAds?.sitelinks?.some((link) => link.title === 'today'));
+  // Search ads are backfilled to Google's minimum of 3 headlines.
+  assert(guarded.searchAds!.headlines!.length >= 3);
+  assert.strictEqual(guarded.searchAds!.headlines![0].text, 'Safe headline');
   assert.deepStrictEqual(
     guarded.keywords?.englishSearchKeywords?.map((item) => item.keyword),
     ['nature scope']

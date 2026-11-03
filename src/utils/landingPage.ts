@@ -482,8 +482,21 @@ export function cleanFinalUrl(raw: string): string {
   }
 }
 
+const MULTI_LABEL_PUBLIC_SUFFIXES = new Set([
+  'co.uk', 'ac.uk', 'org.uk', 'gov.uk', 'com.cn', 'edu.cn', 'org.cn', 'net.cn', 'gov.cn', 'ac.cn',
+  'co.jp', 'ac.jp', 'or.jp', 'ne.jp', 'go.jp', 'com.au', 'edu.au', 'org.au', 'co.nz', 'com.hk', 'com.tw',
+  'co.in', 'com.br', 'com.sg', 'co.kr', 'github.io', 'vercel.app', 'appspot.com', 'web.app',
+]);
+
+/** True when a Set-Cookie Domain is a bare TLD or a public suffix (e.g. "com", "co.uk"). */
+export function isPublicSuffixDomain(domain: string): boolean {
+  const d = domain.replace(/^\./, '').toLowerCase();
+  if (!d.includes('.')) return true;
+  return MULTI_LABEL_PUBLIC_SUFFIXES.has(d);
+}
+
 /** Minimal per-fetch cookie jar keyed by registrable host suffix. Cookies never leave the allowed hosts. */
-class CookieJar {
+export class CookieJar {
   private cookies = new Map<string, { domain: string; value: string }>();
 
   store(url: URL, header: string | string[] | undefined) {
@@ -498,6 +511,8 @@ class CookieJar {
       const domain = (domainAttr ? domainAttr.slice(7) : url.hostname).replace(/^\./, '').toLowerCase();
       const host = url.hostname.toLowerCase();
       if (host !== domain && !host.endsWith(`.${domain}`)) continue;
+      // Domain=com / Domain=co.uk would send the cookie to every site under that suffix.
+      if (domainAttr && domain !== host && isPublicSuffixDomain(domain)) continue;
       this.cookies.set(`${domain}|${name}`, { domain, value: `${name}=${value}` });
     }
   }

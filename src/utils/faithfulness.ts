@@ -96,7 +96,9 @@ const SUPERLATIVES: Array<{ re: RegExp; label: string }> = [
 ];
 
 const INDEX_CLAIMS: Array<{ re: RegExp; label: string; supportedBy: RegExp }> = [
-  { re: /\bSCIE\b|Science Citation Index/i, label: 'SCIE', supportedBy: /SCIE|Science Citation Index Expanded/i },
+  { re: /\bSCIE\b|(?<!Social\s)Science Citation Index/i, label: 'SCIE', supportedBy: /SCIE|Science Citation Index Expanded/i },
+  // Bare "SCI" ("SCI收录", "SCI期刊") is the common Chinese form of the same claim.
+  { re: /(?<![A-Za-z])SCI(?![A-Za-z])/, label: 'SCI', supportedBy: /SCIE|(?<![A-Za-z])SCI(?![A-Za-z])|(?<!Social\s)Science Citation Index/i },
   { re: /\bSSCI\b|Social Science Citation Index/i, label: 'SSCI', supportedBy: /SSCI|Social Science Citation Index/i },
   { re: /\bScopus\b/i, label: 'Scopus', supportedBy: /Scopus/i },
   { re: /\bPubMed\b|\bMedline\b/i, label: 'PubMed/Medline', supportedBy: /PubMed|Medline/i },
@@ -107,7 +109,12 @@ const INDEX_CLAIMS: Array<{ re: RegExp; label: string; supportedBy: RegExp }> = 
 
 const OTHER_PUBLISHERS = /\b(Elsevier|Wiley|Taylor\s*&\s*Francis|MDPI|Frontiers|IEEE|SAGE|Oxford University Press|Cambridge University Press|PLOS|Hindawi)\b/i;
 
-export function checkFaithfulness(text: string, facts: Facts): FaithfulnessResult {
+export interface FaithfulnessOptions {
+  /** Keywords are search queries people type ("best medical journals"), not claims: skip superlative/publisher checks. */
+  keyword?: boolean;
+}
+
+export function checkFaithfulness(text: string, facts: Facts, opts: FaithfulnessOptions = {}): FaithfulnessResult {
   const problems: string[] = [];
   if (!text || !text.trim()) return { ok: true, problems };
   const line = fold(text);
@@ -127,22 +134,24 @@ export function checkFaithfulness(text: string, facts: Facts): FaithfulnessResul
     const before = line.slice(0, m.index ?? 0);
     const after = line.slice((m.index ?? 0) + m[0].length);
     if (/Q$/i.test(before) && !m[2] && !m[3]) {
-      if (String(facts?.jcrQuartile || '').toUpperCase() === `Q${m[1]}`) continue;
+      // Rankings only count when they come from a trusted metrics source (not a catalog snapshot or AI guess).
+      if (metricsAreTrusted(facts) && String(facts?.jcrQuartile || '').toUpperCase() === `Q${m[1]}`) continue;
       problems.push(`Quartile "Q${m[1]}" is not on the journal record`);
       continue;
     }
     if (/^\s*区/.test(after) && !m[2] && !m[3]) {
-      if (String(facts?.casZone || '').includes(m[1])) continue;
+      if (metricsAreTrusted(facts) && String(facts?.casZone || '').includes(m[1])) continue;
       problems.push(`CAS zone "${m[1]}区" is not on the journal record`);
       continue;
     }
     const unit = (m[2] || '').toLowerCase();
     const value = unit ? base * (MULTIPLIERS[unit] ?? 1) : base;
-    if (allowed.some((a) => close(value, a) || close(base, a))) continue;
+    // A bare number may match a fact; "3 million" must match as 3,000,000, never as 3.
+    if (allowed.some((a) => close(value, a) || (!unit && close(base, a)))) continue;
     problems.push(m[3] ? `Percentage "${raw}" is not on the journal record` : `Number "${raw}" is not on the journal record`);
   }
 
-  for (const { re, label } of SUPERLATIVES) {
+  for (const { re, label } of opts.keyword ? [] : SUPERLATIVES) {
     const hit = line.match(re);
     if (hit && label === '#1 claim' && metricsAreTrusted(facts) && ((facts?.jifRanks || []) as Array<{ rank?: string }>).some((e) => /^\s*1\s*\//.test(e.rank || ''))) continue;
     if (hit && !new RegExp(hit[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(source)) {
@@ -154,7 +163,7 @@ export function checkFaithfulness(text: string, facts: Facts): FaithfulnessResul
     if (re.test(line) && !supportedBy.test(indexing)) problems.push(`Indexing claim "${label}" is not on the journal record`);
   }
 
-  const publisher = line.match(OTHER_PUBLISHERS);
+  const publisher = opts.keyword ? null : line.match(OTHER_PUBLISHERS);
   if (publisher && !new RegExp(publisher[1], 'i').test(source)) {
     problems.push(`Mentions another publisher "${publisher[1]}"`);
   }
