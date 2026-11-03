@@ -736,12 +736,20 @@ function chooseAims(html: string, jsonLd: { description?: string } | null): stri
   return wholeSentences(pool.sort((a, b) => b.length - a.length)[0]);
 }
 
-/** Meta descriptions are often cut mid-sentence. Keep only complete sentences. */
-export function wholeSentences(text: string): string {
+const SENTENCE_ABBREVIATIONS = /(?:\b(?:e\.g|i\.e|et al|etc|vs|cf|approx|incl|no|vol|fig|Dr|Prof|Mr|Mrs|Ms|St|Inc|Ltd|Co)|\b[A-Z])\.$/i;
+
+/** Meta descriptions are often cut mid-sentence. Keep only complete sentences, or nothing. */
+export function wholeSentences(text: string): string | null {
   const trimmed = text.replace(/\s*(?:\.\.\.|…)$/, '').trim();
-  if (/[.!?。！？]$/.test(trimmed)) return trimmed;
-  const lastStop = Math.max(...['. ', '! ', '? ', '。', '！', '？'].map((mark) => trimmed.lastIndexOf(mark)));
-  return lastStop > 20 ? trimmed.slice(0, lastStop + 1).trim() : trimmed;
+  const endsAt = (index: number) => !SENTENCE_ABBREVIATIONS.test(trimmed.slice(0, index + 1));
+  if (/[!?。！？]$/.test(trimmed) || (/\.$/.test(trimmed) && endsAt(trimmed.length - 1))) return trimmed;
+  let best = -1;
+  for (let i = 0; i < trimmed.length - 1; i += 1) {
+    const ch = trimmed[i];
+    if ('。！？'.includes(ch)) best = i;
+    else if ('.!?'.includes(ch) && /\s/.test(trimmed[i + 1]) && (ch !== '.' || endsAt(i))) best = i;
+  }
+  return best > 20 ? trimmed.slice(0, best + 1).trim() : null;
 }
 
 function submissionPortal(pageAnchors: Anchor[], pageUrl: string): string | null {

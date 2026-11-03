@@ -620,6 +620,8 @@ export function mergeClarivateOverLanding(landing: JCRJournalEntry, api: Clariva
   // IF, 5-year IF and quartile come only from Clarivate. Drop any other figure the API did not confirm.
   for (const key of ['impactFactor', 'fiveYearImpactFactor', 'jcrQuartile'] as const) {
     if (filled((api as unknown as Record<string, unknown>)[key])) continue;
+    // A value the user typed stays (labelled user_provided, so never cited as Clarivate).
+    if (landing.provenanceMap?.[key]?.source === 'user_provided') continue;
     (merged as unknown as Record<string, unknown>)[key] = null;
     delete provenance[key];
   }
@@ -1100,7 +1102,7 @@ function sameFactValue(left: unknown, right: unknown): boolean {
  * Keep the cached label on every field the edit did not change.
  * A field the user actually changed becomes user_provided.
  */
-function restoredProvenance(
+export function restoredProvenance(
   facts: JCRJournalEntry,
   cached: JCRJournalEntry
 ): NonNullable<JCRJournalEntry['provenanceMap']> {

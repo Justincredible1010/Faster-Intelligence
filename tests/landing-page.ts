@@ -286,7 +286,8 @@ export async function runLandingPageTests() {
     assert.equal(ncomms.journalTitle.value, 'Nature Communications');
     assert.equal(ncomms.issnElectronic.value, '2041-1723');
     assert.equal(ncomms.issnPrint.value, null);
-    assert.match(ncomms.aimsAndScopeSummary.value || '', /biological, health/);
+    // Its meta description is one cut-off sentence, so no aims text is better than half a sentence.
+    assert.doesNotMatch(ncomms.aimsAndScopeSummary.value || '', /health, ?\.*$/);
     const impact = ncomms.pageMetrics.find((metric) => metric.kind === 'impact_factor');
     assert.equal(impact?.numericValue, 18.1);
     assert.equal(impact?.year, 2025);
@@ -304,7 +305,7 @@ export async function runLandingPageTests() {
     assert.equal(ncomms.articleProcessingChargeUsd.value, null);
     const ncommsFeatures = ncomms.pageFeatures;
     assert.ok(ncommsFeatures.every((feature) => feature.provenance === 'page-sourced'));
-    assert.match(ncommsFeatures.find((feature) => feature.kind === 'aims_and_audience')?.text || '', /biological, health/);
+    assert.doesNotMatch(ncommsFeatures.find((feature) => feature.kind === 'aims_and_audience')?.text || '', /biological, health, ?(\.\.\.|…)/); // cut-off meta sentence is dropped
     assert.match(ncommsFeatures.find((feature) => feature.kind === 'article_types')?.text || '', /Research articles/);
     assert.match(ncommsFeatures.find((feature) => feature.kind === 'article_types')?.text || '', /Reviews & Analysis/);
     assert.equal(ncommsFeatures.find((feature) => feature.kind === 'publishing_model')?.text, 'Open Access Fees and Funding');
@@ -510,7 +511,7 @@ export async function runLandingPageTests() {
     assert.equal(ncomms.provenanceMap?.articleDownloads?.source, 'page_sourced');
     assert.equal(ncomms.provenanceMap?.articleDownloads?.year, undefined);
     assert.equal(ncomms.fullTextViews ?? null, null);
-    assert.match(ncomms.aimsAndScopeSummary || '', /biological, health/);
+    assert.doesNotMatch(ncomms.aimsAndScopeSummary || '', /biological, health, ?(\.\.\.|…)/); // cut-off meta sentence is dropped
     assert.notEqual(ncomms.verificationStatus, 'source_verified');
     assert.equal(ncomms.isVerifiedClarivate, false);
     assert.doesNotMatch(ncomms.sourceAttribution, /Verified via Clarivate/);
@@ -580,8 +581,8 @@ export async function runLandingPageTests() {
     assert.match(ncommsPrompt, /counts/);
     assert.doesNotMatch(ncommsPrompt, /16\.2/);
     const ncommsPagePrompt = formatLandingPagePromptSection(ncomms);
-    assert.match(ncommsPagePrompt, /Aims and audience/);
-    assert.match(ncommsPagePrompt, /biological, health/);
+    assert.doesNotMatch(ncommsPagePrompt, /Aims and audience: [^\n]*(\.\.\.|…)/);
+    assert.doesNotMatch(ncommsPagePrompt, /biological, health, ?(\.\.\.|…)/); // cut-off meta sentence is dropped
     assert.match(ncommsPagePrompt, /Open Access Fees and Funding/);
     assert.match(ncommsPagePrompt, /9 days to first decision/);
     assert.match(ncommsPagePrompt, /Article downloads data year: 2025/);
@@ -593,7 +594,7 @@ export async function runLandingPageTests() {
     assert.match(ncommsText, /Research articles/);
     assert.match(ncommsText, /Reviews & Analysis/);
     assert.match(ncommsText, /Open Access Fees and Funding/);
-    assert.match(ncommsText, /biological, health/);
+    assert.doesNotMatch(ncommsText, /biological, health, ?(\.\.\.|…)/); // cut-off meta sentence is dropped
     assert.match(ncommsText, /Article downloads data year: 2025 \(journal website\)/);
     assert.doesNotMatch(ncommsText, /download date/i);
     assert.doesNotMatch(ncommsText, /114M/);
