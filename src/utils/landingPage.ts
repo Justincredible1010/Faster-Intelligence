@@ -801,7 +801,23 @@ function chooseAims(html: string, jsonLd: { description?: string } | null): stri
   const withoutMetrics = candidates.filter((value) => !/impact factor/i.test(value));
   const pool = withoutMetrics.length > 0 ? withoutMetrics : candidates;
   if (pool.length === 0) return null;
-  return pool.sort((a, b) => b.length - a.length)[0].replace(/\s*\.\.\.$/, '').trim();
+  return wholeSentences(pool.sort((a, b) => b.length - a.length)[0]);
+}
+
+const SENTENCE_ABBREVIATIONS = /(?:\b(?:e\.g|i\.e|et al|etc|vs|cf|approx|incl|no|vol|fig|Dr|Prof|Mr|Mrs|Ms|St|Inc|Ltd|Co)|\b[A-Z])\.$/i;
+
+/** Meta descriptions are often cut mid-sentence. Keep only complete sentences, or nothing. */
+export function wholeSentences(text: string): string | null {
+  const trimmed = text.replace(/\s*(?:\.\.\.|…)$/, '').trim();
+  const endsAt = (index: number) => !SENTENCE_ABBREVIATIONS.test(trimmed.slice(0, index + 1));
+  if (/[!?。！？]$/.test(trimmed) || (/\.$/.test(trimmed) && endsAt(trimmed.length - 1))) return trimmed;
+  let best = -1;
+  for (let i = 0; i < trimmed.length - 1; i += 1) {
+    const ch = trimmed[i];
+    if ('。！？'.includes(ch)) best = i;
+    else if ('.!?'.includes(ch) && /\s/.test(trimmed[i + 1]) && (ch !== '.' || endsAt(i))) best = i;
+  }
+  return best > 20 ? trimmed.slice(0, best + 1).trim() : null;
 }
 
 function submissionPortal(pageAnchors: Anchor[], pageUrl: string): string | null {
@@ -1152,7 +1168,9 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
       provenance: 'page-sourced',
     });
   } else {
-    const prose = html.match(/2-year impact factor(?:\s+of|:)\s*([\d.]+)\s*\((\d{4})\)/i);
+    const prose =
+      html.match(/2-year impact factor(?:\s+of|:)\s*([\d.]+)\s*\((\d{4})\)/i) ||
+      html.match(/(?<!5-year\s)(?<!-)\bJournal Impact Factor:\s*([\d.]+)\s*\((\d{4})\)/i);
     if (prose) {
       pushMetric(metrics, {
         label: '2-year impact factor',
@@ -1218,7 +1236,8 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
     const withoutMeta = html.replace(/<meta\b[^>]*>/gi, ' ');
     const prose =
       withoutMeta.match(/(\d+)\s+days?(?:\s+\(median\))?\s+from submission to the first editorial decision/i) ||
-      withoutMeta.match(/(\d+)\s+days?\s+to first decision/i);
+      withoutMeta.match(/(\d+)\s+days?\s+to first decision/i) ||
+      withoutMeta.match(/Submission to first editorial decision\s*\(median days\):\s*(\d+)/i);
     if (prose) {
       pushMetric(metrics, {
         label: 'First editorial decision',
@@ -1251,6 +1270,7 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
   };
   const downloadRaw =
     dataTestValue(html, 'metrics-downloads-value') ||
+    prose.match(/\bDownloads:\s*([\d,]+)/i)?.[1] ||
     prose.match(new RegExp(`article downloads of\\s+(${usageCount})`, 'i'))?.[1] ||
     prose.match(new RegExp(`(${usageCount})\\s+(?:annual\\s+)?(?:article\\s+)?downloads\\b`, 'i'))?.[1] ||
     null;
@@ -1294,7 +1314,9 @@ export function extractLandingPageFacts(html: string, pageUrl: string): Extracte
   const specialIssue = /calls for papers|data-test=["']submission-status["'][^>]*>\s*Open for submissions/i.test(html);
   const aims = chooseAims(html, jsonLd);
   const decision = metrics.find((metric) => metric.kind === 'first_decision_days');
-  const indexing = indexedIn(html);
+  const listed = indexedIn(html);
+  // nature.com /journal-information uses a <br>/<p> list instead of <li> items.
+  const indexing = listed.length ? listed : prioritiseIndexing(indexedInList(html));
 
   const facts: ExtractedPageFacts = {
     journalTitle: field(journalTitle, journalTitle ? 0.9 : 0),
@@ -1367,6 +1389,64 @@ function attachProvenance(facts: ExtractedPageFacts, sourceUrl: string, evidence
   }
 }
 
+const INDEX_NAMES: Array<[RegExp, string]> = [
+  [/science citation index expanded|\bSCIE\b/i, 'SCIE'],
+  [/social sciences citation index|\bSSCI\b/i, 'SSCI'],
+  [/\bscopus\b/i, 'Scopus'],
+  [/\bmedline\b/i, 'MEDLINE'],
+  [/pubmed central/i, 'PubMed Central'],
+  [/\bpubmed\b(?! central)/i, 'PubMed'],
+  [/\bDOAJ\b|directory of open access journals/i, 'DOAJ'],
+];
+
+/** Reads an "Abstracted/indexed in" list (nature.com journal-information, Springer, BMC). */
+export function indexedInList(html: string): string[] {
+  const m = html.match(/Abstracted\s*(?:\/|and)\s*indexed in:?\s*(?:<\/[^>]+>)?([\s\S]{0,4000}?)(?:<\/p>|<\/ul>|<h\d)/i);
+  if (!m) return [];
+  const items = m[1]
+    .split(/<br\s*\/?>|<\/li>/i)
+    .map((part) => part.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const found: string[] = [];
+  for (const [pattern, name] of INDEX_NAMES) {
+    if (items.some((item) => pattern.test(item)) && !found.includes(name)) found.push(name);
+  }
+  return found;
+}
+
+/** Fill gaps in a journal home page extraction from a second page (nature.com /journal-information). */
+export function combineExtractedPages(primary: ExtractedPageFacts, secondary: ExtractedPageFacts | null): ExtractedPageFacts {
+  if (!secondary) return primary;
+  const out: ExtractedPageFacts = { ...primary };
+  const rec = out as unknown as Record<string, unknown>;
+  for (const [key, value] of Object.entries(secondary)) {
+    const mine = rec[key] as { value?: unknown; confidence?: number } | undefined;
+    const theirs = value as { value?: unknown; confidence?: number } | undefined;
+    if (theirs && typeof theirs === 'object' && 'confidence' in theirs && mine && typeof mine === 'object' && 'confidence' in mine) {
+      const empty = mine.value == null || (Array.isArray(mine.value) && mine.value.length === 0);
+      if (empty && theirs.value != null) rec[key] = theirs;
+    }
+  }
+  const kinds = new Set(primary.pageMetrics.map((item) => item.kind));
+  out.pageMetrics = [...primary.pageMetrics, ...secondary.pageMetrics.filter((item) => !kinds.has(item.kind))];
+  const featureKinds = new Set(primary.pageFeatures.map((item) => item.kind));
+  out.pageFeatures = [...primary.pageFeatures, ...secondary.pageFeatures.filter((item) => !featureKinds.has(item.kind))];
+  return out;
+}
+
+/** nature.com keeps metrics, speed and indexing on /{journal}/journal-information, not the home page. */
+export function natureJournalInfoUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (!/(^|\.)nature\.com$/i.test(parsed.hostname)) return null;
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    if (parts.length !== 1) return null;
+    return `https://www.nature.com/${parts[0]}/journal-information`;
+  } catch {
+    return null;
+  }
+}
+
 function metric(page: ExtractedPageFacts, kind: PageSourcedMetric['kind']): PageSourcedMetric | undefined {
   return page.pageMetrics.find((item) => item.kind === kind);
 }
@@ -1391,7 +1471,7 @@ function isHardcodedCatalogRecord(base: MergeableJournalFacts): boolean {
   );
 }
 
-function writeNumber(result: MergeableJournalFacts, factKey: NumberFactKey, value: number) {
+function writeNumber(result: MergeableJournalFacts, factKey: NumberFactKey, value: number | null) {
   if (factKey === 'impactFactor') result.impactFactor = value;
   if (factKey === 'fiveYearImpactFactor') result.fiveYearImpactFactor = value;
   if (factKey === 'firstDecisionDays') result.firstDecisionDays = value;
@@ -1418,12 +1498,20 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
   const provenance: Record<string, Provenance> = { ...(result.provenanceMap || {}) };
 
   if (catalogSnapshot) {
+    // A snapshot never supplies IF, 5-year IF or quartile. Those come from Clarivate only.
+    for (const key of ['impactFactor', 'fiveYearImpactFactor'] as const) {
+      if (base[key] != null) {
+        provenance[`${key}CatalogSnapshot`] = { source: 'catalog_snapshot', confidence: 0.5, note: `Catalog snapshot value ${base[key]} is not shown.` };
+      }
+      writeNumber(result, key, null);
+    }
+    (result as unknown as Record<string, unknown>).jcrQuartile = null;
     result.verificationStatus = 'catalog_snapshot';
     result.provenanceSource = 'catalog_snapshot';
     result.isVerifiedClarivate = false;
     result.reportingYear = base.reportingYear && /catalog snapshot/i.test(base.reportingYear) ? base.reportingYear : 'Catalog snapshot';
     result.sourceAttribution = base.sourceAttribution && /catalog snapshot/i.test(base.sourceAttribution) ? base.sourceAttribution : CATALOG_SNAPSHOT_NOTE;
-    for (const factKey of ['impactFactor', 'fiveYearImpactFactor', 'firstDecisionDays', 'apcUsd'] as const) {
+    for (const factKey of ['firstDecisionDays', 'apcUsd'] as const) {
       const existing = base[factKey];
       if (existing === null || existing === undefined) continue;
       const prior = base.provenanceMap?.[factKey];
@@ -1438,9 +1526,9 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
     if (!provenance.journalName || provenance.journalName.source === 'Clarivate' || provenance.journalName.source === 'Clarivate JCR') {
       provenance.journalName = { source: 'catalog_snapshot', confidence: 0.5, note: CATALOG_SNAPSHOT_NOTE };
     }
-    if (base.jcrQuartile) {
-      provenance.jcrQuartile = { source: 'catalog_snapshot', confidence: 0.5, note: CATALOG_SNAPSHOT_NOTE };
-    }
+    delete provenance.impactFactor;
+    delete provenance.fiveYearImpactFactor;
+    delete provenance.jcrQuartile;
     if (base.casZone) {
       provenance.casZone = { source: 'catalog_snapshot', confidence: 0.5, note: CATALOG_SNAPSHOT_NOTE };
     }
@@ -1531,8 +1619,29 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
   const fiveYear = metric(page, 'five_year_impact_factor');
   const decision = metric(page, 'first_decision_days');
   const apc = metric(page, 'apc');
-  applyNumber('impactFactor', impact?.numericValue, impact?.year, 'page-sourced');
-  applyNumber('fiveYearImpactFactor', fiveYear?.numericValue, fiveYear?.year, 'page-sourced');
+  // Impact factors come only from the Clarivate API (or a person's labelled override).
+  // What the page states is kept as a reference note, never as the displayed figure.
+  if (userProvided) {
+    for (const key of ['impactFactor', 'fiveYearImpactFactor'] as const) {
+      if (base[key] != null) provenance[key] = { source: 'user_provided', confidence: 0.85, year: provenance[key]?.year, note: 'Entered by a person. Unverified.' };
+    }
+  }
+  if (impact?.numericValue != null) {
+    provenance.impactFactorPageStated = {
+      source: 'page_sourced',
+      confidence: 0.6,
+      year: impact.year ?? undefined,
+      note: `Journal page states ${impact.numericValue}${impact.year ? ` (${impact.year})` : ''}. Reference only, not Clarivate-verified.`,
+    };
+  }
+  if (fiveYear?.numericValue != null) {
+    provenance.fiveYearImpactFactorPageStated = {
+      source: 'page_sourced',
+      confidence: 0.6,
+      year: fiveYear.year ?? undefined,
+      note: `Journal page states ${fiveYear.numericValue}${fiveYear.year ? ` (${fiveYear.year})` : ''}. Reference only, not Clarivate-verified.`,
+    };
+  }
   applyNumber('firstDecisionDays', decision?.numericValue, decision?.year, 'page-sourced');
   applyNumber('apcUsd', apc?.numericValue, apc?.year, 'page-sourced');
   const downloads = metric(page, 'downloads');
@@ -1549,7 +1658,7 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
       result.verificationStatus = 'page_sourced';
       result.provenanceSource = 'page_sourced';
       result.missingFields = undefined;
-      result.reportingYear = impact?.year ? `Page-sourced (${impact.year})` : 'Page-sourced';
+      result.reportingYear = 'Page-sourced';
       result.sourceAttribution = provenance.impactFactorCatalogSnapshot
         ? 'Page-sourced from the journal landing page. The catalog snapshot figure is kept only in provenance and is not Clarivate-verified.'
         : 'Page-sourced from the journal landing page. Not Clarivate-verified.';
