@@ -24,13 +24,15 @@ export function readCookies(req: Request): Record<string, string> {
 export function serializeCookie(
   name: string,
   value: string,
-  options: { httpOnly?: boolean; secure?: boolean; maxAge?: number; path?: string }
+  options: { httpOnly?: boolean; secure?: boolean; maxAge?: number; path?: string; sameSite?: 'Lax' | 'None' }
 ): string {
   const parts = [`${name}=${encodeURIComponent(value)}`, `Path=${options.path ?? '/'}`];
   if (options.maxAge !== undefined) parts.push(`Max-Age=${Math.max(0, Math.floor(options.maxAge))}`);
   if (options.httpOnly) parts.push('HttpOnly');
-  if (options.secure) parts.push('Secure');
-  parts.push('SameSite=Lax');
+  // SameSite=None is only valid with Secure, so it always forces Secure.
+  const sameSite = options.sameSite === 'None' ? 'None' : 'Lax';
+  if (options.secure || sameSite === 'None') parts.push('Secure');
+  parts.push(`SameSite=${sameSite}`);
   return parts.join('; ');
 }
 

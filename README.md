@@ -381,6 +381,17 @@ The dev bypass is not a fourth production option. It is registered only when `NO
 | `AUTH_DEV_USER_EMAIL` | No | Default `dev.user@springernature.com`. Must pass the domain check. |
 | `AUTH_DEV_USER_NAME` | No | Display name for the dev user. |
 
+### AI Studio preview sign-in (temporary — remove before publishing)
+
+The AI Studio preview runs inside a cross-site iframe, so the browser drops the `SameSite=Lax` session cookie and every POST fails the CSRF check. For preview testing only, set two secrets:
+
+| Secret | Value |
+|---|---|
+| `AUTH_PREVIEW_BYPASS` | `true` (exactly) |
+| `AUTH_PREVIEW_ALLOWED_EMAIL` | one `@springernature.com` address; only this address can sign in |
+
+While both are set, "Continue as a test user" signs in that one address, the cookie is sent as `SameSite=None; Secure`, and the SPA also carries the session in an in-memory `X-Session-Token` header so it works even when third-party cookies are blocked. This works under any `NODE_ENV`, and the server logs a warning when it is on in production. **Delete both secrets before publishing or deploying.** With either one missing, the header is ignored and `/api/auth/dev-login` keeps its old development-only behaviour.
+
 Redirect URI for both OAuth providers: `{APP_URL}/api/auth/callback`.
 
 ### Google sign-in

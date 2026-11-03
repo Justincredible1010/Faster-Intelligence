@@ -35,6 +35,31 @@ export function isDevBypassEnabled(env: NodeJS.ProcessEnv = process.env): boolea
   return env.NODE_ENV === 'development' && env.AUTH_DEV_BYPASS === 'true';
 }
 
+/**
+ * AI Studio preview bypass. Off unless AUTH_PREVIEW_BYPASS is exactly "true" AND
+ * AUTH_PREVIEW_ALLOWED_EMAIL names one allowed-domain address. Works under any
+ * NODE_ENV because AI Studio may not run the server in development mode.
+ * REMOVE BOTH SECRETS BEFORE PUBLISHING.
+ */
+export function previewBypassEmail(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.AUTH_PREVIEW_BYPASS !== 'true') return null;
+  const email = normalizeEmail(env.AUTH_PREVIEW_ALLOWED_EMAIL || '');
+  if (!email) return null;
+  const domains = hostList(env.AUTH_ALLOWED_EMAIL_DOMAINS, [DEFAULT_DOMAIN]);
+  const domain = email.slice(email.lastIndexOf('@') + 1);
+  if (!domains.includes(domain)) return null;
+  return email;
+}
+
+export function isPreviewBypassEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return previewBypassEmail(env) !== null;
+}
+
+/** Either the local dev bypass or the explicit AI Studio preview bypass. */
+export function isAnyBypassEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isDevBypassEnabled(env) || isPreviewBypassEnabled(env);
+}
+
 function intEnv(name: string, fallback: number, min: number, max: number, env: NodeJS.ProcessEnv): number {
   const raw = env[name];
   if (!raw) return fallback;
@@ -178,6 +203,9 @@ export function assertProductionAuthConfig(env: NodeJS.ProcessEnv = process.env)
   }
   if (config.provider === 'oidc' && !providerSettings(config)) {
     throw new Error('OIDC_ISSUER, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET are required when AUTH_PROVIDER=oidc');
+  }
+  if (isPreviewBypassEnabled(env)) {
+    console.warn('[auth] AUTH_PREVIEW_BYPASS is ON in production. Remove AUTH_PREVIEW_BYPASS and AUTH_PREVIEW_ALLOWED_EMAIL before publishing.');
   }
   if (env.AUTH_DEV_BYPASS === 'true') {
     console.warn('[auth] AUTH_DEV_BYPASS is set but ignored because NODE_ENV is production');

@@ -1,5 +1,5 @@
 import type { Express, Request } from 'express';
-import { isDevBypassEnabled, loadAuthConfig, providerSettings } from './config';
+import { isAnyBypassEnabled, isDevBypassEnabled, isPreviewBypassEnabled, loadAuthConfig, previewBypassEmail, providerSettings } from './config';
 import { isEmailDomainAllowed, normalizeEmail } from './domain';
 import { AUTH_ERROR_CODES, AuthFlowError, mapIdentityProviderError, safeAuthError, type AuthErrorCode } from './errors';
 import { getRequestSession } from './guard';
@@ -18,6 +18,7 @@ import {
   saveOauthTransaction,
   writeSessionCookie,
   ensureSession,
+  sealSessionId,
   type SessionRecord,
 } from './session';
 
@@ -60,8 +61,10 @@ function sessionPayload(session: SessionRecord) {
     csrfToken: session.csrfToken,
     provider: config.provider,
     allowedDomains: config.allowedDomains,
-    devBypass: isDevBypassEnabled(),
+    devBypass: isAnyBypassEnabled(),
     admin: user ? isAdminEmail(user.email, config) : false,
+    // Preview only: lets the framed AI Studio preview work without third-party cookies.
+    ...(isPreviewBypassEnabled() ? { sessionToken: sealSessionId(session.id, config.sessionSecret) } : {}),
   };
 }
 
@@ -198,7 +201,7 @@ export function registerAuthRoutes(app: Express): void {
   });
 
   app.post('/api/auth/dev-login', (req, res) => {
-    if (!isDevBypassEnabled()) {
+    if (!isAnyBypassEnabled()) {
       res.status(404).json({ error: 'Not found' });
       return;
     }
@@ -207,7 +210,8 @@ export function registerAuthRoutes(app: Express): void {
       return;
     }
     const config = loadAuthConfig();
-    const email = normalizeEmail(config.devUserEmail);
+    // The preview bypass signs in only the one listed address; the dev bypass keeps its old behaviour.
+    const email = isDevBypassEnabled() ? normalizeEmail(config.devUserEmail) : previewBypassEmail();
     if (!email || !isEmailDomainAllowed(email, config.allowedDomains, config.allowedSubdomains)) {
       res.status(400).json({ error: 'AUTH_DEV_USER_EMAIL is not an allowed email domain' });
       return;
@@ -215,7 +219,7 @@ export function registerAuthRoutes(app: Express): void {
     const session = rotateSession(
       res,
       {
-        sub: 'dev-bypass',
+        sub: isDevBypassEnabled() ? 'dev-bypass' : 'preview-bypass',
         email,
         name: config.devUserName,
         emailVerified: true,
@@ -223,7 +227,7 @@ export function registerAuthRoutes(app: Express): void {
       },
       getRequestSession(res)
     );
-    console.info(`[auth] development bypass sign-in for ${email}`);
+    console.info(`[auth] ${isDevBypassEnabled() ? 'development' : 'AI Studio preview'} bypass sign-in for ${email}`);
     res.json(sessionPayload(session));
   });
 
