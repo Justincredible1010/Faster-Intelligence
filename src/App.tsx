@@ -538,7 +538,7 @@ ${chinaChannelsExportSection(campaign)}
       return;
     }
     setActiveView('single');
-    if (id === 'search' || id === 'display' || id === 'weibo' || id === 'wechat' || id === 'keywords') {
+    if (id === 'search' || id === 'display' || id === 'weibo' || id === 'wechat' || id === 'china_search' || id === 'keywords') {
       setPreviewTab(id);
       setPinnedNav(null);
       setObservedNav(id);

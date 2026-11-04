@@ -4,7 +4,7 @@ import { ComplianceIssue } from '../types';
 
 interface Props {
   issues: ComplianceIssue[];
-  channel: 'Weibo' | 'WeChat';
+  channel: 'Weibo' | 'WeChat' | 'Baidu' | '360';
 }
 
 /** Shows China Advertising Law warnings for one channel. Copy is left as generated. */

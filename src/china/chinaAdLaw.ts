@@ -4,7 +4,7 @@ import { ComplianceIssue, GeneratedAdCampaign } from '../types';
  * China Advertising Law notices. These flag a line. They do not rewrite it.
  * Article 9 prohibits absolute terms such as “国家级”, “最高级”, and “最佳”.
  */
-const CHINA_AD_LAW_TERMS: { term: string; pattern: RegExp }[] = [
+export const CHINA_AD_LAW_TERMS: { term: string; pattern: RegExp }[] = [
   { term: '国家级', pattern: /国家级/ },
   { term: '最高级', pattern: /最高级/ },
   { term: '世界级', pattern: /世界级/ },
@@ -84,10 +84,22 @@ export function chinaChannelLines(campaign: GeneratedAdCampaign): ChinaCopyLine[
       lines.push({ fieldLocation: 'WeChat English CTA', text: wechat.englishOption.cta });
     }
   }
+  for (const [key, label] of [['baiduSearchAd', 'Baidu'], ['so360SearchAd', '360 Search']] as const) {
+    const sa = campaign[key];
+    if (!sa) continue;
+    lines.push({ fieldLocation: `${label} title`, text: sa.title });
+    lines.push({ fieldLocation: `${label} description 1`, text: sa.description1 });
+    if (sa.description2) lines.push({ fieldLocation: `${label} description 2`, text: sa.description2 });
+  }
+  const disp = campaign.so360DisplayAd;
+  if (disp) {
+    (disp.titles || []).forEach((t, i) => lines.push({ fieldLocation: `360 Display title ${i + 1}`, text: t }));
+    lines.push({ fieldLocation: '360 Display description', text: disp.description });
+  }
   return lines;
 }
 
-function termsIn(text: string): string[] {
+export function termsIn(text: string): string[] {
   const found = CHINA_AD_LAW_TERMS.filter((entry) => entry.pattern.test(text)).map((entry) => entry.term);
   return found.filter((term) => !SHORTER_WHEN.some((rule) => rule.drop === term && found.includes(rule.coveredBy)));
 }

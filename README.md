@@ -640,3 +640,25 @@ NODE_ENV=production npm start
 ## 12. Ethical & Academic Integrity Statement
 
 OmniFact is designed to uphold the highest standards of scientific publishing ethics. It does not support or generate deceptive claims, artificial review acceleration guarantees, or ungrounded promotional hype. All campaigns generated through this engine are grounded in verified journal indexing criteria and adhere to the **Committee on Publication Ethics (COPE)** guidelines and **Google Ads Advertising Policies**.
+
+## Baidu Search and 360 (So360) ad rules
+
+OmniFact writes Chinese copy for Baidu Search (百度推广), 360 Search (360推广) and 360 Display. The final copy check (`qaCampaignCopy` in `src/utils/adCopyQa.ts`) applies the rules in `src/china/platformRules.ts`. If a line breaks a rule, the check first tries a repair that never shortens the text, such as unwrapping 【】 or collapsing repeated punctuation. If that fails, it swaps in a complete alternative line, and if none is left it drops the line. A line is never truncated. If a required field ends up empty, the campaign is marked not ready.
+
+| Rule | Baidu Search | 360 Search | 360 Display |
+|---|---|---|---|
+| Width (汉字 and full-width punctuation count 2) | title ≤ 50, each description ≤ 80 | title ≤ 50, description ≤ 80; one `^` break, ≤ 40 on each side | 2–10 titles of 15–60, description 15–120 |
+| Symbols | no 【】『』, no URLs, no repeated or leading punctuation | title: no `@ $ *` 【】『』○●△▲◎☆★◇◆□■▽▼⊙¤; description: the same set without `@ $ *` | same as 360 Search |
+| Absolute terms (极限词: 最好, 第一, 唯一, 顶级 …) | blocked unless the line is a sourced fact (for example the Clarivate JCR quartile line) | same | same |
+| Claims | no promises (保证录用, 包发表, 秒审 …); an impact factor or quartile must name Clarivate/JCR or its source | same | same |
+
+Sources:
+- Baidu length and width counting: https://sem.baidu.com/news/sem/569.html
+- Baidu symbols and URLs in copy: https://esm.baidu.com/problem/yingxiao/4060.html , http://so.baidu.com/wiki/help/1179.html
+- 360 Search limits and `^` rule: https://open.e.360.cn/api/limit.html
+- 360 forbidden characters: https://open.e.360.cn/api/specialCharacter.html
+- 360 Display: https://open.e.360.cn/displayapi/banner_add.html , http://yingxiao.360.cn/Uploads/202205/20/ue_1653013659756115.pdf
+- Advertising Law Art. 9(3) and Art. 11: https://www.gov.cn/guoqing/2021-10/29/content_5647620.htm
+- SAMR 绝对化用语执法指南 (2023): https://www.samr.gov.cn/ggjgs/tzgg/art/2023/art_183b5cb48d9e4f0dba67f9f912a913ba.html
+
+360 Display documents its range in 字符 without saying how 汉字 are counted, so a title or description must meet the 15-character minimum both ways: byte width (汉字 = 2) and plain character count. Not enforced, because no page confirms it: a rule that 360 Display titles may contain only 汉字, digits and letters, and a minimum length for Baidu titles. An impact factor or quartile figure must name Clarivate or JCR; a generic 来源 or 官网 does not count. A `^` is allowed only in a 360 Search description.

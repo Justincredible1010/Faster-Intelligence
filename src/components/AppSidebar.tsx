@@ -22,7 +22,7 @@ import {
   X,
 } from 'lucide-react';
 
-export type PreviewTab = 'search' | 'display' | 'keywords' | 'weibo' | 'wechat';
+export type PreviewTab = 'search' | 'display' | 'keywords' | 'weibo' | 'wechat' | 'china_search';
 
 export type AppNavId =
   | 'sign-in'
@@ -65,6 +65,7 @@ const GROUPS: { label: string; items: NavItem[] }[] = [
       { id: 'display', label: 'Display ads', icon: Layout },
       { id: 'weibo', label: 'Weibo', icon: MessageCircle },
       { id: 'wechat', label: 'WeChat', icon: Megaphone },
+      { id: 'china_search', label: 'Baidu / 360', icon: Megaphone },
       { id: 'keywords', label: 'Keywords', icon: Target },
     ],
   },
