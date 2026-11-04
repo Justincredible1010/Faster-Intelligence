@@ -19,7 +19,7 @@ import {
   unbalancedMarks,
 } from './textUtils';
 import { CHINA_PLATFORM_LIMITS, ChinaPlatform, PlatformIssue, checkPlatformText, finalizePlatformText } from '../china/platformRules';
-import { zhQuartileCandidates } from '../china/searchAds';
+import { sameFact, zhQuartileCandidates } from '../china/searchAds';
 
 /**
  * Platform limits (visual width, CJK counts 2). Baidu and 360 rules and their sources
@@ -269,7 +269,10 @@ export function qaCampaignCopy<T extends AnyCampaign>(
     const used = new Set<string>();
     const d1 = platformGate(`${key}.description1`, platform, 'description', ad.description1 || '', (alt.description || []).concat(ad.description2 ? [ad.description2] : []), true);
     used.add(d1);
-    const d2 = ad.description2 ? platformGate(`${key}.description2`, platform, 'description', used.has(ad.description2) ? '' : ad.description2, (alt.description || []).filter((t: string) => !used.has(t)), false) : '';
+    // Description 2 must add a new fact: the original and any alternative are held to the same-fact rule.
+    const d2Original = ad.description2 && !used.has(ad.description2) && !sameFact(ad.description2, d1) ? ad.description2 : '';
+    const d2Pool = (alt.description || []).filter((t: string) => !used.has(t) && !sameFact(t, d1));
+    const d2 = ad.description2 ? platformGate(`${key}.description2`, platform, 'description', d2Original || d2Pool[0] || '', d2Original ? d2Pool : d2Pool.slice(1), false) : '';
     out[key] = { ...ad, title, description1: d1, description2: d2 === d1 ? '' : d2 };
   }
   const disp = campaign.so360DisplayAd;

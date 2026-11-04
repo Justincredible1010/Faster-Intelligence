@@ -70,6 +70,12 @@ function passing(lines: string[], platform: ChinaPlatform, field: 'title' | 'des
   return [...new Set(lines.map((l) => l.trim()).filter(Boolean))].filter((l) => !checkPlatformText(l, platform, field).length);
 }
 
+/** True when two lines state the same fact, so description 2 would only repeat description 1. */
+export function sameFact(a: string, b: string): boolean {
+  const kinds = [/分区|\bQ[1-4]\b/, /影响因子/, /首次决定/, /文章处理费/, /^(了解|核对|查看)/];
+  return kinds.some((k) => k.test(a) && k.test(b));
+}
+
 export function generateChinaSearchAd(
   platform: 'baidu' | 'so360',
   facts: ChinaCopyFacts,
@@ -82,7 +88,6 @@ export function generateChinaSearchAd(
   const title = titles[0] || '';
   const description1 = descs[0] || '';
   // Second line must add something new: skip variants of the same fact.
-  const sameFact = (a: string, b: string) => (/分区/.test(a) && /分区/.test(b)) || (/影响因子/.test(a) && /影响因子/.test(b)) || (/^(了解|核对|查看)/.test(a) && /^(了解|核对|查看)/.test(b));
   const description2 = descs.find((d) => d !== description1 && !sameFact(d, description1)) || '';
   const limits = CHINA_PLATFORM_LIMITS[platform];
   return {
@@ -101,6 +106,16 @@ export function generateChinaSearchAd(
   };
 }
 
+/**
+ * Generic display titles of 15+ characters even when counted one per 汉字, so 360 Display
+ * always has at least two complete titles when a journal name fails the generic checks.
+ */
+const DISPLAY_TITLES: Record<string, string[]> = {
+  AWA: ['了解期刊的研究范围、文章类型与近期论文', '期刊介绍：研究范围、文章类型与出版方式'],
+  CON: ['选刊参考：核对收稿范围、文章类型与出版方式', '核对收稿范围、同行评审流程与出版方式'],
+  DEC: ['投稿前查看作者须知、投稿清单与评审流程', '查看作者须知与投稿清单，准备好再投稿'],
+};
+
 export function generateSo360DisplayAd(
   facts: ChinaCopyFacts,
   raw: Partial<ClarivateJournalMetrics> | null | undefined,
@@ -108,7 +123,7 @@ export function generateSo360DisplayAd(
   landingUrl: string
 ): So360DisplayAd {
   const spec = CHINA_PLATFORM_LIMITS.so360Display;
-  const titleCandidates = [...titleLines(stage, facts), ...scopeLines(stage, facts).map((l) => l.replace(/。$/, ''))];
+  const titleCandidates = [...titleLines(stage, facts), ...scopeLines(stage, facts).map((l) => l.replace(/。$/, '')), ...DISPLAY_TITLES[stage]];
   const titles = passing(titleCandidates, 'so360Display', 'title');
   const descs = passing([...factLines(stage, facts, raw), ...scopeLines(stage, facts)], 'so360Display', 'description');
   return {

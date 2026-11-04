@@ -7,8 +7,10 @@ import { StageCode } from '../src/types';
 
 const codes = (t: string, p: any, f: any, o?: any) => checkPlatformText(t, p, f, o).map((i: any) => (typeof i === 'string' ? i : i.code));
 
-const ONCOGENE = { journalName: 'Oncogene', publisher: 'Springer Nature', impactFactor: 7.3, jcrYear: 2025, jcrQuartile: 'Q1', jcrQuartileCategory: 'ONCOLOGY', url: 'https://www.nature.com/onc/' };
-const BMC = { journalName: 'BMC Medicine', publisher: 'BioMed Central', impactFactor: 8.3, jcrYear: 2025, jcrQuartile: 'Q1', jcrQuartileCategory: 'MEDICINE, GENERAL & INTERNAL', url: 'https://bmcmedicine.biomedcentral.com/' };
+// EXAMPLE DATA ONLY. These metric values are made-up test fixtures, not real Clarivate
+// figures. Journal names are used for realism; do not quote these numbers.
+const ONCOGENE = { journalName: 'Oncogene', publisher: 'Springer Nature', impactFactor: 7.3 /* example */, jcrYear: 2025, jcrQuartile: 'Q1', jcrQuartileCategory: 'ONCOLOGY', url: 'https://www.nature.com/onc/' };
+const BMC = { journalName: 'BMC Medicine', publisher: 'BioMed Central', impactFactor: 8.3 /* example */, jcrYear: 2025, jcrQuartile: 'Q1', jcrQuartileCategory: 'MEDICINE, GENERAL & INTERNAL', url: 'https://bmcmedicine.biomedcentral.com/' };
 
 function campaign(j: any, stage: StageCode): any {
   return withChinaChannels({
@@ -62,7 +64,7 @@ describe('finalizePlatformText never truncates', () => {
   it('repairs symbols without shortening the words', () => {
     const r = finalizePlatformText('【Oncogene】期刊介绍！！', 'baidu', 'title', []);
     assert.equal(r.outcome, 'repaired');
-    assert.equal(r.text, 'Oncogene 期刊介绍！');
+    assert.equal(r.text, 'Oncogene期刊介绍！');
   });
   it('swaps in a complete alternative, or drops the line', () => {
     const long = '了解' + '期'.repeat(40);
@@ -114,5 +116,41 @@ describe('generated Baidu / 360 copy', () => {
     out = qaCampaignCopy(c2);
     assert.equal(out.baiduSearchAd.description1, '');
     assert.equal(out.copyQa.ready, false);
+  });
+});
+
+describe('review follow-ups', () => {
+  it('unwraps 【】 without a space between CJK, and spaces only Latin that would touch', () => {
+    assert.equal(finalizePlatformText('肿瘤学【期刊】介绍', 'baidu', 'title', []).text, '肿瘤学期刊介绍');
+    assert.equal(finalizePlatformText('About【BMC】Medicine', 'baidu', 'title', []).text, 'About BMC Medicine');
+    assert.equal(finalizePlatformText('【BMC Medicine】期刊介绍', 'baidu', 'title', []).text, 'BMC Medicine期刊介绍');
+  });
+  it('catches metric numbers with words between label and number, and requires Clarivate/JCR', () => {
+    for (const t of ['本刊影响因子为 7.3。', '影响因子达7.3', '本刊位列肿瘤学 Q1 分区', 'IF 高达 7.3']) {
+      assert.ok(codes(t, 'baidu', 'description').includes('unsourced_claim'), t);
+    }
+    assert.ok(codes('影响因子为 7.3，来源：官网。', 'baidu', 'description').includes('unsourced_claim'));
+    assert.ok(codes('影响因子为 7.3，来源：期刊页面。', 'so360', 'description').includes('unsourced_claim'));
+    assert.deepEqual(codes('据 JCR 2025，影响因子为 7.3。', 'baidu', 'description'), []);
+    assert.deepEqual(codes('首次决定约30天，来源：期刊页面。', 'baidu', 'description'), []);
+  });
+  it('flags a ^ in a 360 Search title; allows one in a 360 description', () => {
+    assert.ok(codes('期刊介绍^研究范围', 'so360', 'title').includes('bad_line_break'));
+    assert.deepEqual(codes('了解研究范围^查看作者须知', 'so360', 'description'), []);
+  });
+  it('360 Display minimum holds under both counting methods (unconfirmed rule)', () => {
+    // 8 汉字 = 16 bytes but only 8 characters: fails the plain-character reading.
+    assert.ok(codes('期刊介绍研究范围', 'so360Display', 'title').includes('under_length'));
+    assert.deepEqual(codes('期刊介绍与研究范围及收稿方向说明', 'so360Display', 'title'), []);
+  });
+  it('a swapped-in description 2 never repeats description 1\'s fact', () => {
+    const c = campaign(ONCOGENE, 'CON');
+    const ad = c.baiduSearchAd;
+    ad.description2 = '本刊影响因子为 7.3。'; // unsourced, must go
+    ad.alternatives.description = ['Clarivate JCR 2025：Oncology 学科 Q1 分区', '核对收稿范围与出版方式。'];
+    const out: any = qaCampaignCopy(c);
+    assert.match(out.baiduSearchAd.description1, /分区/);
+    assert.doesNotMatch(out.baiduSearchAd.description2, /分区/);
+    assert.equal(out.baiduSearchAd.description2, '核对收稿范围与出版方式。');
   });
 });

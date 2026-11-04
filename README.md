@@ -661,4 +661,4 @@ Sources:
 - Advertising Law Art. 9(3) and Art. 11: https://www.gov.cn/guoqing/2021-10/29/content_5647620.htm
 - SAMR 绝对化用语执法指南 (2023): https://www.samr.gov.cn/ggjgs/tzgg/art/2023/art_183b5cb48d9e4f0dba67f9f912a913ba.html
 
-Not enforced, because the published pages don't confirm them: a rule that 360 Display titles may contain only 汉字, digits and letters, and a minimum length for Baidu titles. The code also assumes 360 Display counts 汉字 as 2 characters, since the manual's 15–30 字 matches the API's 15–60.
+360 Display documents its range in 字符 without saying how 汉字 are counted, so a title or description must meet the 15-character minimum both ways: byte width (汉字 = 2) and plain character count. Not enforced, because no page confirms it: a rule that 360 Display titles may contain only 汉字, digits and letters, and a minimum length for Baidu titles. An impact factor or quartile figure must name Clarivate or JCR; a generic 来源 or 官网 does not count. A `^` is allowed only in a 360 Search description.

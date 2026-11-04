@@ -63,8 +63,10 @@ const URL_LIKE = /(https?:\/\/|www\.|\b[a-z0-9-]+\.(com|cn|net|org)\b)/i;
 /** Academic-publishing promises regulators treat as false or unprovable claims. */
 const PROMISE = /(保证录用|包录用|包发表|稳过|必中|秒审|快速录用|内部渠道|100\s*%\s*录用|百分之百录用)/;
 /** A metric number cited without its source (Art. 11). */
-const METRIC_NUMBER = /(影响因子|IF|JIF|分区)\s*[:：]?\s*(Q[1-4]|\d)/;
-const METRIC_SOURCE = /(Clarivate|JCR|来源|期刊页面|官网)/;
+/** Allows a few words between the label and the number: 影响因子为 7.3, 影响因子达7.3, IF of 7.3, Q1 分区. */
+const METRIC_NUMBER = /((影响因子|\bJ?IF\b|分区|impact factor)[^\d。；;\n]{0,8}?(Q[1-4]|\d)|\bQ[1-4]\b\s*(区|分区)?)/i;
+/** IF and quartile figures must name Clarivate/JCR; a generic 来源 or 官网 is not enough. */
+const METRIC_SOURCE = /(Clarivate|科睿唯安|\bJCR\b)/i;
 
 export interface PlatformCheckOptions {
   /** Exact phrases already backed by a sourced fact; absolute terms inside them are allowed. */
@@ -84,11 +86,15 @@ export function checkPlatformText(
   const parts = platform === 'so360' && field === 'description' ? t.split('^') : [t];
   const width = platformWidth(parts.join(''));
   if (width > spec.max) issues.push('over_length');
-  if (spec.min && width < spec.min) issues.push('under_length');
+  // 360 Display documents its range in 字符 without saying how 汉字 count
+  // (https://open.e.360.cn/displayapi/banner_add.html). Unconfirmed, so a line must
+  // meet the minimum under both methods: byte width (汉字 = 2) and plain character count.
+  if (spec.min && Math.min(width, Array.from(parts.join('')).length) < spec.min) issues.push('under_length');
   if (platform === 'so360' && field === 'description' && (parts.length > 2 || (parts.length === 2 && parts.some((p) => platformWidth(p) > (spec.breakSide || 40) || !p.trim())))) {
     issues.push('bad_line_break');
   }
-  if (platform !== 'so360' && t.includes('^')) issues.push('bad_line_break');
+  // Only a 360 Search description may contain one "^"; a title or any other platform may not.
+  if (t.includes('^') && !(platform === 'so360' && field === 'description')) issues.push('bad_line_break');
   const special = platform === 'so360' && field === 'title' ? SPECIAL_TITLE_360 : SPECIAL_DESC;
   if (special.test(t)) issues.push('special_symbol');
   if (REPEATED_PUNCT.test(t)) issues.push('repeated_punctuation');
@@ -111,7 +117,15 @@ export function repairPlatformText(text: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/([!！?？。，,、.~～;；:：\-—_])\1+/g, '$1')
-    .replace(/[【『]([^】』]*)[】』]/g, '$1 ')
+    .replace(/[【『]([^】』]*)[】』]/g, (_m, inner: string, offset: number, all: string) => {
+      // No space between CJK characters; one space only where Latin text would otherwise touch.
+      const before = all[offset - 1] || '';
+      const after = all[offset + _m.length] || '';
+      const latin = /[A-Za-z0-9]/;
+      const lead = before && latin.test(before) && latin.test(inner[0] || '') ? ' ' : '';
+      const tail = after && latin.test(after) && latin.test(inner[inner.length - 1] || '') ? ' ' : '';
+      return lead + inner + tail;
+    })
     .replace(/[○●△▲◎☆★◇◆□■▽▼⊙¤]/g, '')
     .replace(/^[\s!！?？。，,、.~～;；:：\-—_)）]+/, '')
     .replace(/\s{2,}/g, ' ')
