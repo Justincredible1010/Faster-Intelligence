@@ -297,9 +297,15 @@ function sameNumber(claimed: string, trusted: number | null): boolean {
   return Number.isFinite(value) && Math.abs(value - trusted) < 0.001;
 }
 
-/** Full-width digits and punctuation (U+FF01–U+FF5E) become ASCII before matching. */
+/**
+ * Full-width letters, digits and number symbols (Ｑ１, ３．８, ＄, ％, ／) become ASCII
+ * so claims can be checked. Chinese punctuation (，。：；！？) is kept, except a
+ * full-width comma or point inside a number (１，２３４ / ３．８).
+ */
 function foldFullwidth(text: string): string {
-  return text.replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
+  return text
+    .replace(/[\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A\uFF04\uFF05\uFF0F]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .replace(/(\d)[\uFF0C\uFF0E](?=\d)/g, (_m, d, offset, whole) => d + (whole[offset + 1] === '\uFF0C' ? ',' : '.'));
 }
 
 const CLAIM_NUMBER = String.raw`(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)`;

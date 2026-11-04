@@ -122,3 +122,15 @@ describe('Chinese quartile line', () => {
     assert.equal(zhQuartileLine({ ...facts, jcrQuartileCategory: 'X'.repeat(200), jifRanks: [] }, 30), null);
   });
 });
+
+describe('Chinese punctuation survives the copy guard', () => {
+  it('keeps ，。： and still folds full-width numbers', () => {
+    const zh = '据 Clarivate JCR 2025，本刊位列 Information Science & Library Science 学科 Q1 分区。投稿须知：请查阅作者指南。';
+    const out = guardMetricClaims(zh, facts).text;
+    assert.equal(out, zh);
+    assert.ok(/，/.test(out) && /。/.test(out) && /：/.test(out));
+    assert.match(guardMetricClaims('影响因子３．８。', facts).text, /影响因子3\.8。/);
+    const line = zhQuartileLine(facts, 90)!;
+    assert.ok(line.includes('，') && line.endsWith('。'));
+  });
+});
