@@ -409,6 +409,7 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
     impactFactor: 6.9,
     fiveYearImpactFactor: null,
     jcrQuartile: 'Q1',
+    jcrQuartileCategory: 'Multidisciplinary Sciences',
     casZone: null,
     firstDecisionDays: 23,
     apcUsd: null,
@@ -416,7 +417,7 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   };
   assert.strictEqual(factsForCopy(trusted).impactFactor, null);
   assert(!metricPromptSection(trusted).includes('6.9'));
-  const kept = guardMetricClaims('IF 6.9 and First Decision in 23 Days. Q1. Clarivate IF 50.5.', trusted);
+  const kept = guardMetricClaims('IF 6.9 and First Decision in 23 Days. Q1 in Multidisciplinary Sciences. Clarivate IF 50.5.', trusted);
   assert(!kept.text.includes('6.9'));
   assert(kept.text.includes('23 Days'));
   assert(kept.text.includes('Q1'));
@@ -596,7 +597,7 @@ console.log('\n[Test Suite 6] Canonical URLs and untrusted metric claims...');
   assert(wosPrompt.includes('56.1'));
   assert(wosPrompt.includes('clarivate_wos_journals_api'));
   assert(wosPrompt.includes('JCR 2025'));
-  const wosCopy = guardMetricClaims('Clarivate IF 56.1. JCR quartile Q1.', fromApi);
+  const wosCopy = guardMetricClaims('Clarivate IF 56.1. JCR quartile Q1 in Multidisciplinary Sciences.', fromApi);
   assert(wosCopy.text.includes('56.1'));
   assert(wosCopy.text.includes('Q1'));
   assert(/clarivate/i.test(wosCopy.text));

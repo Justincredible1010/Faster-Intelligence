@@ -11,6 +11,7 @@ export const EDITABLE_JOURNAL_FACT_FIELDS = [
   'impactFactor',
   'fiveYearImpactFactor',
   'jcrQuartile',
+  'jcrQuartileCategory',
   'casZone',
   'firstDecisionDays',
   'indexing',
