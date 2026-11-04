@@ -8,6 +8,7 @@ import { GoogleDisplayPreview } from './GoogleDisplayPreview';
 import { TargetingViewer } from './TargetingViewer';
 import { WeiboPreview } from './WeiboPreview';
 import { WeChatAdPreview } from './WeChatAdPreview';
+import { ChinaSearchAdsPreview } from './ChinaSearchAdsPreview';
 import type { PreviewTab } from './AppSidebar';
 
 interface Props {
@@ -108,6 +109,19 @@ export const ChannelSuite: React.FC<Props> = ({
           >
             <Megaphone className="w-3.5 h-3.5" />
             <span>WeChat Ads</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('china_search')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition ${
+              activeTab === 'china_search'
+                ? 'bg-[#002d62] text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Search className="w-3.5 h-3.5" />
+            <span>Baidu / 360</span>
           </button>
         </div>
 
@@ -231,6 +245,10 @@ export const ChannelSuite: React.FC<Props> = ({
           ) : (
             <p className="text-sm text-slate-500">Generate the campaign again to include the WeChat ad.</p>
           )
+        )}
+
+        {activeTab === 'china_search' && (
+          <ChinaSearchAdsPreview campaign={campaign} issues={campaign.complianceReport?.issues || []} />
         )}
       </div>
     </div>

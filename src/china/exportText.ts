@@ -1,3 +1,4 @@
+import { platformWidth } from './platformRules';
 import { GeneratedAdCampaign, STAGE_CONFIGS, normalizeStage } from '../types';
 
 function cell(value: string | number | undefined | null): string {
@@ -47,6 +48,21 @@ export function generateChinaChannelsCsv(campaign: GeneratedAdCampaign): string 
     }
   }
 
+  for (const [key, label] of [['baiduSearchAd', 'Baidu Search ad (百度推广)'], ['so360SearchAd', '360 Search ad (360推广)']] as const) {
+    const sa = campaign[key];
+    if (!sa) continue;
+    const notes = (sa.factNotes || []).join(' ');
+    push(label, 'Title', 'ZH', sa.title, sa.landingUrl, notes);
+    push(label, 'Description 1', 'ZH', sa.description1, sa.landingUrl, notes);
+    if (sa.description2) push(label, 'Description 2', 'ZH', sa.description2, sa.landingUrl, notes);
+  }
+  const disp = campaign.so360DisplayAd;
+  if (disp) {
+    const notes = (disp.factNotes || []).join(' ');
+    (disp.titles || []).forEach((t, i) => push('360 Display ad', `Title ${i + 1}`, 'ZH', t, disp.landingUrl, notes));
+    push('360 Display ad', 'Description', 'ZH', disp.description, disp.landingUrl, notes);
+  }
+
   return [headers.join(','), ...rows.map((row) => row.map((value) => cell(value)).join(','))].join('\n');
 }
 
@@ -90,6 +106,7 @@ Not an organic post.
 - Landing URL: ${ad?.landingUrl || '(no landing URL resolved)'}
 ${englishAd}
 
+${searchAdsSection(campaign)}
 ### Fact notes
 ${(weibo?.factNotes || ad?.factNotes || ['No China-channel fact notes.']).map((note) => `- ${note}`).join('\n')}
 
@@ -101,4 +118,18 @@ ${lawLines}
 ${generateChinaChannelsCsv(campaign)}
 \`\`\`
 `;
+}
+
+function searchAdsSection(campaign: GeneratedAdCampaign): string {
+  const out: string[] = [];
+  for (const [key, label] of [['baiduSearchAd', 'Baidu Search (百度推广)'], ['so360SearchAd', '360 Search (360推广)']] as const) {
+    const sa = campaign[key];
+    if (!sa) continue;
+    out.push(`### ${label}\nWidth counts 汉字 and full-width punctuation as 2.\n- Title (${platformWidth(sa.title)}/${sa.titleLimit}): ${sa.title}\n- Description 1 (${platformWidth(sa.description1)}/${sa.descriptionLimit}): ${sa.description1}${sa.description2 ? `\n- Description 2 (${platformWidth(sa.description2)}/${sa.descriptionLimit}): ${sa.description2}` : ''}\n- Landing URL: ${sa.landingUrl || '(no landing URL resolved)'}\n`);
+  }
+  const d = campaign.so360DisplayAd;
+  if (d) {
+    out.push(`### 360 Display (展示推广)\n${(d.titles || []).map((t, i) => `- Title ${i + 1} (${platformWidth(t)}, ${d.titleRange[0]}–${d.titleRange[1]}): ${t}`).join('\n')}\n- Description (${platformWidth(d.description)}, ${d.descriptionRange[0]}–${d.descriptionRange[1]}): ${d.description}\n`);
+  }
+  return out.join('\n');
 }

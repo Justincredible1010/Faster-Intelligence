@@ -114,6 +114,8 @@ export interface ClarivateJournalMetrics {
   impactFactor: number | null;
   fiveYearImpactFactor?: number | null;
   jcrQuartile?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | string | null;
+  /** JCR category of jcrQuartile (the best quartile when there are several). Ads must name it. */
+  jcrQuartileCategory?: string | null;
   casZone?: string | null; // e.g. "中科院综合性期刊1区 Top", "中科院医学1区"
   firstDecisionDays?: number | null;
   indexing?: string[]; // e.g. ["SCIE", "PubMed Central", "Scopus", "DOAJ"]
@@ -393,6 +395,32 @@ export interface WeChatAd extends WeChatAdFields {
   factNotes: string[];
 }
 
+/** Text creative for Baidu Search (百度推广) or 360 Search (360推广). Chinese only. */
+export interface ChinaSearchAd {
+  platform: 'baidu' | 'so360';
+  title: string;
+  description1: string;
+  /** Optional second line; empty when no complete line fits the rules. */
+  description2: string;
+  titleLimit: number;
+  descriptionLimit: number;
+  landingUrl: string;
+  /** Complete alternative lines the final check may swap in. Never truncations. */
+  alternatives: { title: string[]; description: string[] };
+  factNotes: string[];
+}
+
+/** 360 Display (展示推广) image-and-text creative: 2–10 titles and one description. */
+export interface So360DisplayAd {
+  titles: string[];
+  description: string;
+  titleRange: [number, number];
+  descriptionRange: [number, number];
+  landingUrl: string;
+  alternatives: { title: string[]; description: string[] };
+  factNotes: string[];
+}
+
 export interface GeneratedAdCampaign {
   /** Final copy QA gate result. ready=false means some text must not be shown as final. */
   copyQa?: { ready: boolean; checked: number; repaired: number; replaced: number; issues: { field: string; text: string; issues: string[] }[] };
@@ -405,6 +433,12 @@ export interface GeneratedAdCampaign {
   weiboPost?: WeiboPost;
   /** Paid WeChat Moments / Official Account ad for this journal and stage. */
   wechatAd?: WeChatAd;
+  /** Baidu Search text creative (百度推广). */
+  baiduSearchAd?: ChinaSearchAd;
+  /** 360 Search text creative (360推广). */
+  so360SearchAd?: ChinaSearchAd;
+  /** 360 Display image-and-text creative. */
+  so360DisplayAd?: So360DisplayAd;
   keywords: AcademicKeywordsPack;
   funnelStrategyNote: string;
   primaryCta: string;

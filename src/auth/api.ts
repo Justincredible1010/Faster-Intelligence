@@ -13,18 +13,38 @@ export interface SessionResponse {
   allowedDomains: string[];
   devBypass: boolean;
   admin: boolean;
+  /** Present only while the server's AI Studio preview bypass is on. */
+  sessionToken?: string;
+  previewPasscodeRequired?: boolean;
 }
 
 let csrfToken: string | null = null;
+// Memory only (never localStorage). Used when the framed preview drops cookies.
+let sessionToken: string | null = null;
+const REQUEST_TIMEOUT_MS = 15000;
+
+function remember(data: Partial<SessionResponse> | null | undefined): void {
+  if (!data) return;
+  if (data.csrfToken) setCsrfToken(data.csrfToken);
+  if (data.sessionToken) sessionToken = data.sessionToken;
+}
+
+async function failureMessage(res: Response, fallback: string): Promise<string> {
+  const data = await res.clone().json().catch(() => null);
+  if (data && typeof data.error === 'string') return data.error;
+  return `${fallback} (HTTP ${res.status})`;
+}
 
 export function setCsrfToken(token: string | null): void {
   csrfToken = token;
 }
 
 export async function loadSession(): Promise<SessionResponse> {
-  const res = await fetch('/api/auth/session', { credentials: 'same-origin' });
+  const headers = new Headers();
+  if (sessionToken) headers.set('X-Session-Token', sessionToken);
+  const res = await fetch('/api/auth/session', { credentials: 'include', headers });
   const data = (await res.json()) as SessionResponse;
-  if (data.csrfToken) setCsrfToken(data.csrfToken);
+  remember(data);
   return data;
 }
 
@@ -37,10 +57,11 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   if (method !== 'GET' && method !== 'HEAD' && csrfToken) {
     headers.set('X-CSRF-Token', csrfToken);
   }
+  if (sessionToken) headers.set('X-Session-Token', sessionToken);
   const res = await fetch(input, {
     ...init,
     headers,
-    credentials: 'same-origin',
+    credentials: 'include',
   });
   if (res.status === 401 && !input.includes('/api/auth/')) {
     window.dispatchEvent(new Event('auth:expired'));
@@ -64,22 +85,39 @@ export async function verifyMagicLink(token: string): Promise<SessionResponse & 
     body: JSON.stringify({ token }),
   });
   const data = await res.json().catch(() => ({}));
-  if (data.csrfToken) setCsrfToken(data.csrfToken);
+  remember(data);
   if (!res.ok) return { ...data, authenticated: false, error: data.error || 'This sign-in link is invalid or has expired.' };
   return data;
 }
 
-export async function devLogin(): Promise<SessionResponse & { error?: string }> {
-  const res = await apiFetch('/api/auth/dev-login', { method: 'POST', body: '{}' });
+export async function devLogin(passcode?: string): Promise<SessionResponse & { error?: string }> {
+  let res: Response;
+  try {
+    res = await apiFetch('/api/auth/dev-login', {
+      method: 'POST',
+      body: JSON.stringify(passcode ? { passcode } : {}),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const name = err instanceof Error ? err.name : '';
+    const error = name === 'TimeoutError' || name === 'AbortError'
+      ? 'Test sign-in timed out after 15 seconds. Reload the preview and try again.'
+      : 'Network error: could not reach the server. Check your connection and reload the preview.';
+    return { authenticated: false, error } as SessionResponse & { error: string };
+  }
+  if (!res.ok) {
+    const error = await failureMessage(res, 'Development sign-in is unavailable');
+    return { authenticated: false, error } as SessionResponse & { error: string };
+  }
   const data = await res.json().catch(() => ({}));
-  if (data.csrfToken) setCsrfToken(data.csrfToken);
-  if (!res.ok) return { ...data, authenticated: false, error: data.error || 'Development sign-in is unavailable' };
+  remember(data);
   return data;
 }
 
 export async function logout(): Promise<SessionResponse> {
   const res = await apiFetch('/api/auth/logout', { method: 'POST', body: '{}' });
   const data = (await res.json()) as SessionResponse;
-  if (data.csrfToken) setCsrfToken(data.csrfToken);
+  sessionToken = null;
+  remember(data);
   return data;
 }

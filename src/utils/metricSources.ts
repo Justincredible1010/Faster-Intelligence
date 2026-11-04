@@ -1,3 +1,5 @@
+import { displayJournalName } from './journalDisplayName';
+import { bestJifRank } from './jcrQuartile';
 import { ClarivateJournalMetrics, MetricProvenanceSource, PageSourcedFeature, WosJifRank } from '../types';
 import { normalizeIssn } from './issn';
 
@@ -281,14 +283,17 @@ async function lookupOnce(
 
   const retrieved = retrievedAt.toISOString();
   const ranks = Array.isArray(report.ranks?.jif) ? report.ranks.jif : [];
-  const quartile = ranks.find((rank) => rank?.quartile)?.quartile || null;
+  const best = bestJifRank(ranks, { titles: [profile.jcrTitle, profile.isoTitle, profile.title, profile.wosName] });
+  const quartile = best?.quartile || ranks.find((rank) => rank?.quartile)?.quartile || null;
+  const quartileCategory = best?.category || null;
   const printIssn = normalizeIssn(profile.issn) || cleaned;
   const electronicIssn = normalizeIssn(profile.eIssn) || undefined;
 
   return {
     kind: 'metrics',
     metrics: {
-      journalName: profile.jcrTitle?.trim() || profile.isoTitle?.trim() || profile.title?.trim() || profile.wosName?.trim() || journalId,
+      // Full Web of Science title, title-cased. Never the JCR/ISO abbreviation ("BMC MED").
+      journalName: displayJournalName({ jcrTitle: profile.jcrTitle, isoTitle: profile.isoTitle, wosName: profile.wosName || profile.title }) || journalId,
       jcrTitle: profile.jcrTitle,
       isoTitle: profile.isoTitle,
       wosName: profile.wosName,
@@ -301,6 +306,7 @@ async function lookupOnce(
       immediacyIndex: parseJif(impact?.immediacyIndex),
       journalCitationIndicator: parseJif(impact?.jci),
       jcrQuartile: quartile,
+      jcrQuartileCategory: quartileCategory,
       jifRanks: ranks,
       casZone: null,
       firstDecisionDays: null,

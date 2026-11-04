@@ -1,3 +1,4 @@
+import { displayJournalName } from '../utils/journalDisplayName';
 import { ClarivateJournalMetrics } from '../types';
 import { CLARIVATE_WOS_JOURNALS_SOURCE } from '../utils/metricSources';
 
@@ -144,7 +145,7 @@ export function chinaCopyFacts(facts: FactRecord): ChinaCopyFacts {
     factNotes.push('First-decision time omitted. Only a page fact, or a value supplied for this campaign, can be cited, and it must keep its source.');
   }
   return {
-    journalName: (facts?.journalName || '').trim() || '本期刊',
+    journalName: displayJournalName(facts as any).replace(/^Journal$/, '') || '本期刊',
     publisher: (facts?.publisher || '').trim() || 'Springer Nature',
     disciplineZh: chineseDiscipline(facts?.primaryDiscipline),
     impact,

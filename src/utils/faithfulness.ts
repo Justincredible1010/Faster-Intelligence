@@ -7,6 +7,7 @@
  * ad never shows a half-stripped sentence.
  */
 import type { ClarivateJournalMetrics } from '../types';
+import { textNamesQuartileCategory } from './jcrQuartile';
 import {
   metricsAreTrusted,
   trustedApcUsd,
@@ -135,7 +136,11 @@ export function checkFaithfulness(text: string, facts: Facts, opts: Faithfulness
     const after = line.slice((m.index ?? 0) + m[0].length);
     if (/Q$/i.test(before) && !m[2] && !m[3]) {
       // Rankings only count when they come from a trusted metrics source (not a catalog snapshot or AI guess).
-      if (metricsAreTrusted(facts) && String(facts?.jcrQuartile || '').toUpperCase() === `Q${m[1]}`) continue;
+      if (metricsAreTrusted(facts) && String(facts?.jcrQuartile || '').toUpperCase() === `Q${m[1]}`) {
+        if (textNamesQuartileCategory(line, facts)) continue;
+        problems.push(`Quartile "Q${m[1]}" must name its JCR category`);
+        continue;
+      }
       problems.push(`Quartile "Q${m[1]}" is not on the journal record`);
       continue;
     }

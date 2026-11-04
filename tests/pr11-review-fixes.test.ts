@@ -75,8 +75,9 @@ describe('PR #11 review fixes', () => {
     const snapshot = { ...facts, verificationStatus: 'catalog_snapshot', jcrQuartile: 'Q1', casZone: '1区' };
     assert.equal(checkFaithfulness('JCR Q1 journal', snapshot).ok, false);
     assert.equal(checkFaithfulness('中科院1区期刊', snapshot).ok, false);
-    const api = { ...snapshot, verificationStatus: 'clarivate_api' };
-    assert.equal(checkFaithfulness('JCR Q1 journal', api).ok, true);
+    const api = { ...snapshot, verificationStatus: 'clarivate_api', jcrQuartileCategory: 'Oncology' };
+    assert.equal(checkFaithfulness('JCR Q1 in Oncology', api).ok, true);
+    assert.equal(checkFaithfulness('JCR Q1 journal', api).ok, false, 'a bare quartile must name its category');
     assert.equal(checkFaithfulness('中科院1区期刊', api).ok, true);
   });
 

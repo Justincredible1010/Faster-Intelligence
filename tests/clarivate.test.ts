@@ -447,9 +447,11 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
       sourceAttribution: 'JIF 56.1 (Clarivate JCR 2025)',
     }
   );
-  assert.strictEqual(titled.journalName, 'Nature');
+  // New order: landing-page title beats Clarivate's name.
+  assert.strictEqual(titled.journalName, 'Landing Title');
   assert.strictEqual(titled.publisher, 'Nature Portfolio');
-  assert.strictEqual(displayJournalName({ isoTitle: 'Nature', journalName: 'NATURE' }, 'Landing Title'), 'Nature');
+  assert.strictEqual(displayJournalName({ isoTitle: 'Nature', journalName: 'NATURE' }, 'Landing Title'), 'Landing Title');
+  assert.strictEqual(displayJournalName({ isoTitle: 'Nature', journalName: 'NATURE' }), 'Nature');
 
   const shouty = generateDeterministicCampaign(
     { ...nature, journalName: 'NATURE', publisher: 'Unknown publisher' },
@@ -473,7 +475,7 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   assert.strictEqual(toDisplayCase('IEEE ACCESS'), 'IEEE Access');
   assert.strictEqual(toDisplayCase('PLOS ONE'), 'PLOS One');
   assert.strictEqual(toDisplayCase('ACS NANO'), 'ACS Nano');
-  assert.strictEqual(toDisplayCase('SIAM JOURNAL ON APPLIED MATH'), 'SIAM Journal On Applied Math');
+  assert.strictEqual(toDisplayCase('SIAM JOURNAL ON APPLIED MATH'), 'SIAM Journal on Applied Math');
   assert.strictEqual(displayJournalName({ journalName: 'PLOS ONE', wosName: 'PLOS ONE' }, ''), 'PLOS One');
   assert.strictEqual(toDisplayCase('Nature Portfolio'), 'Nature Portfolio');
 

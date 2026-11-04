@@ -15,7 +15,33 @@ import { JOURNAL_CATALOG } from './src/data/journalCatalog';
 import { NATURE_HOMEPAGE_URL, normalizeJournalUrl, journalUrlsMatch } from './src/utils/journalUrl';
 import { CLARIVATE_WOS_JOURNALS_SOURCE, installClarivateClient, pageFacts } from './src/utils/metricSources';
 import { clarivateWosJournals as clarivateHttpClient } from './src/utils/clarivateHttp';
-import { decisionDaysFromLandingPage, factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection } from './src/utils/metricClaims';
+import { decisionDaysFromLandingPage, factsForCopy, formatJifClaim, guardAdCopy, metricPromptSection, trustedQuartileClaim } from './src/utils/metricClaims';
+import { displayCategory, formatQuartileClaim, quartileCategory } from './src/utils/jcrQuartile';
+
+/** Quartile line that names its JCR category and fits, or null. Never a bare "Q1". */
+function quartileLine(facts: any, maxWidth: number): string | null {
+  const full = trustedQuartileClaim(facts);
+  if (full && full.length <= maxWidth) return full;
+  const short = formatQuartileClaim(facts, { clarivate: false });
+  return short && short.length <= maxWidth ? short : null;
+}
+
+/** Chinese quartile line. The category stays in English, as Clarivate names it. Never truncated. */
+export function zhQuartileLine(facts: any, maxWidth: number): string | null {
+  if (!trustedQuartileClaim(facts)) return null;
+  const q = String(facts.jcrQuartile).trim().toUpperCase();
+  const category = displayCategory(quartileCategory(facts) || '');
+  if (!category) return null;
+  const year = facts.jcrYear ? ` ${facts.jcrYear}` : '';
+  const options = [
+    `据 Clarivate JCR${year}，本刊位列 ${category} 学科 ${q} 分区。`,
+    `Clarivate JCR${year}：${category} 学科 ${q} 分区`,
+    `JCR ${category} 学科 ${q} 分区`,
+  ];
+  // Google Ads counts CJK and full-width characters as two.
+  const width = (t: string) => Array.from(t).reduce((n, ch) => n + (/[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(ch) ? 2 : 1), 0);
+  return options.find((t) => width(t) <= maxWidth) || null;
+}
 import { withChinaChannels } from './src/china/withChinaChannels';
 import type { ClarivateJournalMetrics, ExtractedPageFacts, PageSourcedFeature } from './src/types';
 import { getMetricsStore } from './src/utils/metricsStore';
@@ -128,6 +154,7 @@ export interface JCRJournalEntry {
   impactFactor: number | null;
   fiveYearImpactFactor?: number | null;
   jcrQuartile?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | string | null;
+  jcrQuartileCategory?: string | null;
   casZone?: string | null;
   firstDecisionDays?: number | null;
   indexing?: string[];
@@ -429,52 +456,15 @@ function missingJournalFacts(canonicalUrl: string): JCRJournalEntry {
   };
 }
 
-const PLACEHOLDER_LABEL = /^(unknown journal|unknown publisher)$/i;
-
-function labelText(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  const trimmed = value.trim();
-  if (!trimmed || PLACEHOLDER_LABEL.test(trimmed)) return '';
-  return trimmed;
-}
-
-/** True when every letter is uppercase, as in the Web of Science id NATURE. */
-export function isShoutyLabel(value: string): boolean {
-  const letters = value.replace(/[^A-Za-z]/g, '');
-  return letters.length >= 2 && letters === letters.toUpperCase();
-}
-
-/** Society and publisher acronyms that stay uppercase when an all-caps name is title-cased. */
-const DISPLAY_ACRONYMS = new Set([
-  'ACM',
-  'ACS',
-  'AIP',
-  'AMS',
-  'APS',
-  'ASME',
-  'BMC',
-  'BMJ',
-  'IEEE',
-  'IET',
-  'IOP',
-  'JAMA',
-  'OSA',
-  'PLOS',
-  'PNAS',
-  'RSC',
-  'SIAM',
-  'SPIE',
-]);
-
-/** Title-case an all-caps Clarivate label. Mixed-case text is left as it arrived. */
-export function toDisplayCase(value: string): string {
-  if (!value || !isShoutyLabel(value)) return value;
-  return value.replace(/[A-Za-z0-9]+/g, (word) => {
-    const upper = word.toUpperCase();
-    if (DISPLAY_ACRONYMS.has(upper)) return upper;
-    return upper.charAt(0) + upper.slice(1).toLowerCase();
-  });
-}
+import {
+  DISPLAY_ACRONYMS,
+  displayJournalName as sharedDisplayJournalName,
+  isShoutyLabel,
+  labelText,
+  toDisplayCase,
+} from './src/utils/journalDisplayName';
+export { isShoutyLabel, toDisplayCase };
+void DISPLAY_ACRONYMS;
 
 function filled(value: unknown): boolean {
   if (value == null) return false;
@@ -485,20 +475,15 @@ function filled(value: unknown): boolean {
 }
 
 /**
- * Display title: isoTitle or jcrTitle, then the landing-page name, then the
- * Web of Science name. An all-caps id is title-cased so ads do not say NATURE.
+ * Display title for ad copy. Order: landing-page title, user or catalog full title,
+ * Clarivate full title (title-cased). Never Clarivate's abbreviation.
+ * See src/utils/journalDisplayName.ts.
  */
 export function displayJournalName(
-  api: { jcrTitle?: string; isoTitle?: string; journalName?: string; wosName?: string },
+  api: { jcrTitle?: string; isoTitle?: string; journalName?: string; wosName?: string; [k: string]: any },
   landingName?: string
 ): string {
-  const proper = [api.jcrTitle, api.isoTitle].map(labelText).find((value) => value && !isShoutyLabel(value));
-  if (proper) return proper;
-  const landing = labelText(landingName);
-  if (landing && !isShoutyLabel(landing)) return landing;
-  const raw = labelText(api.journalName) || labelText(api.wosName) || landing;
-  if (!raw) return landing || 'Journal';
-  return toDisplayCase(raw);
+  return sharedDisplayJournalName(api, landingName);
 }
 
 /**
@@ -519,7 +504,7 @@ export function withAdIdentity<T extends { journalName?: string; publisher?: str
 ): T {
   return {
     ...facts,
-    journalName: displayJournalName(facts, facts.journalName),
+    journalName: displayJournalName(facts, (facts as any).landingJournalName ?? facts.journalName),
     publisher: displayPublisher(facts.publisher, facts.publisher),
   };
 }
@@ -627,7 +612,12 @@ export function mergeClarivateOverLanding(landing: JCRJournalEntry, api: Clariva
   }
   const previousName = labelText(landing.journalName);
   const previousPublisher = labelText(landing.publisher);
-  merged.journalName = displayJournalName(api, landing.journalName);
+  // Keep the pre-Clarivate name and its source so later passes can still prefer it.
+  if (previousName) {
+    (merged as any).landingJournalName = previousName;
+    (merged as any).landingJournalNameSource = landing.provenanceMap?.journalName?.source || 'landing_page';
+  }
+  merged.journalName = displayJournalName({ ...api, landingJournalNameSource: (merged as any).landingJournalNameSource }, landing.journalName);
   merged.publisher = displayPublisher(api.publisher, landing.publisher);
   if (merged.journalName && merged.journalName !== previousName) {
     provenance.journalName = clarivateFieldProvenance(api);
@@ -1252,6 +1242,7 @@ app.post('/api/update-journal-metrics', (req, res) => {
       impactFactor: facts.impactFactor,
       fiveYearImpactFactor: facts.fiveYearImpactFactor,
       jcrQuartile: facts.jcrQuartile,
+      jcrQuartileCategory: facts.jcrQuartileCategory,
       casZone: facts.casZone,
       firstDecisionDays: facts.firstDecisionDays,
       indexing: facts.indexing,
@@ -1423,7 +1414,7 @@ export function generateStageHeadlines(
       { text: smartClamp(`Evaluate ${shortName}`, 30), sourceFact: facts.journalName, language: 'EN', category: 'Journal Identity', positionRecommendation: 'Position 1' },
       // Conditional metrics (NO nulls)
       ...(jifClaim ? [{ text: smartClamp(jifClaim, 30), sourceFact: jifClaim, language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
-      ...(facts.jcrQuartile ? [{ text: smartClamp(`Quartile ${facts.jcrQuartile}`, 30), sourceFact: 'JCR quartile', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
+      ...(quartileLine(facts, 30) ? [{ text: quartileLine(facts, 30)!, sourceFact: 'JCR quartile', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       ...(articleTypeHeadline ? [{ text: smartClamp(articleTypeHeadline, 30), sourceFact: 'Article types', language: 'EN' as const, category: 'Scope & Community', positionRecommendation: 'Position 2' }] : []),
       ...(publishingHeadline ? [{ text: smartClamp(publishingHeadline, 30), sourceFact: 'Publishing model', language: 'EN' as const, category: 'Publishing Options', positionRecommendation: 'Position 2' }] : []),
       ...(facts.indexing?.length ? [{ text: smartClamp(`Indexed in ${facts.indexing.slice(0, 2).join(' & ')}`, 30), sourceFact: 'Indexing', language: 'EN' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
@@ -1443,6 +1434,7 @@ export function generateStageHeadlines(
 
     const zh: HeadlineSeed[] = [
       ...(facts.casZone ? [{ text: smartClamp(`${safeShorten(facts.casZone, 22)}评议标准`, 30), sourceFact: facts.casZone, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 1' }] : []),
+      ...(zhQuartileLine(facts, 30) ? [{ text: zhQuartileLine(facts, 30)!, sourceFact: 'JCR quartile', language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       { text: smartClamp(`查阅期刊范围与收稿类型`, 30), sourceFact: 'Scope Check', language: 'ZH', category: 'Scope & Community', positionRecommendation: 'Position 1' },
       ...(facts.firstDecisionDays ? [{ text: smartClamp(decisionDaysFromLandingPage(facts) ? `初审周期中位数${facts.firstDecisionDays}天` : `初审周期约${facts.firstDecisionDays}天`, 30), sourceFact: `${facts.firstDecisionDays}天初审`, language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
       ...(facts.articleDownloads ? [{ text: smartClamp(`文章下载量${formatUsageCount(facts.articleDownloads)}`, 30), sourceFact: 'Article downloads', language: 'ZH' as const, category: 'Evaluation & Metrics', positionRecommendation: 'Position 2' }] : []),
@@ -1588,7 +1580,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
       ...datedLines.map((text) => featureDescription(text, 'Dated usage', 'Evaluation & Metrics')),
       ...(jifClaim ? [featureDescription(jifClaim, 'Clarivate impact factor', 'Evaluation & Peer Review')] : []),
       ...(impactDescription ? [{ text: smartClamp(impactDescription, 90), sourceFact: 'Clarivate impact factor', language: 'EN' as const, theme: 'Evaluation & Peer Review' }] : []),
-      ...(facts.jcrQuartile ? [featureDescription(`Quartile ${facts.jcrQuartile}`, 'JCR quartile', 'Evaluation & Peer Review')] : []),
+      ...(quartileLine(facts, 90) ? [featureDescription(quartileLine(facts, 90)!, 'JCR quartile', 'Evaluation & Peer Review')] : []),
       { text: smartClamp(`Evaluate ${facts.journalName} for your paper. ${facts.indexing?.length ? `indexed in ${facts.indexing.slice(0, 2).join(' & ')}.` : 'Review the aims and scope.'}`, 90), sourceFact: 'Evaluation', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
       ...(downloadsText ? [{ text: smartClamp(downloadsText, 90), sourceFact: facts.articleDownloads ? 'Article downloads' : 'Full-text views', language: 'EN' as const, theme: 'Readership' }] : []),
       { text: smartClamp(`Transparent publishing options and editorial criteria. ${daysText}`, 90), sourceFact: 'Turnaround', language: 'EN' as const, theme: 'Evaluation & Peer Review' },
@@ -1596,6 +1588,7 @@ export function generateStageDescriptions(facts: any, stage: StageCode, outputLa
       { text: smartClamp(`Compare scope, turnaround metrics, and open access models to make an informed choice.`, 90), sourceFact: 'Comparison Evaluation', language: 'EN' as const, theme: 'Comparison & Fit' },
     ];
     const zh = [
+      ...(zhQuartileLine(facts, 90) ? [{ text: zhQuartileLine(facts, 90)!, sourceFact: 'JCR quartile', language: 'ZH' as const, theme: 'Evaluation & Peer Review' }] : []),
       { text: smartClamp(`核对研究范围、同行评审流程与收录指标${casText}，评估稿件学术契合度。`, 90), sourceFact: 'Evaluation', language: 'ZH' as const, theme: 'Evaluation & Peer Review' },
       { text: smartClamp(`提供透明的发表模式与同行评议标准，对比同类学术期刊指标，助您理性选刊。`, 90), sourceFact: 'Comparison Evaluation', language: 'ZH' as const, theme: 'Publishing Options' },
       { text: smartClamp(`查阅作者要求、出版模式及同行评审流程，为您的学术成果选择适宜期刊。`, 90), sourceFact: 'Scope Check', language: 'ZH' as const, theme: 'Evaluation & Peer Review' },

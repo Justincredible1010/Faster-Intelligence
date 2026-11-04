@@ -18,13 +18,21 @@ import {
   stripTrailingFragments,
   unbalancedMarks,
 } from './textUtils';
+import { CHINA_PLATFORM_LIMITS, ChinaPlatform, PlatformIssue, checkPlatformText, finalizePlatformText } from '../china/platformRules';
+import { sameFact, zhQuartileCandidates } from '../china/searchAds';
 
-/** Platform limits (visual width). Baidu/So360 are listed for when those channels are added. */
+/**
+ * Platform limits (visual width, CJK counts 2). Baidu and 360 rules and their sources
+ * live in ../china/platformRules.ts.
+ */
 export const PLATFORM_LIMITS = {
+  baidu: { title: CHINA_PLATFORM_LIMITS.baidu.title.max, description: CHINA_PLATFORM_LIMITS.baidu.description.max },
+  so360: { title: CHINA_PLATFORM_LIMITS.so360.title.max, description: CHINA_PLATFORM_LIMITS.so360.description.max },
+  so360Display: { titleMin: CHINA_PLATFORM_LIMITS.so360Display.title.min, title: CHINA_PLATFORM_LIMITS.so360Display.title.max, descriptionMin: CHINA_PLATFORM_LIMITS.so360Display.description.min, description: CHINA_PLATFORM_LIMITS.so360Display.description.max },
   google: { headline: 30, description: 90, sitelinkText: 25, sitelinkDescription: 35, callout: 25, snippetValue: 25, displayShortHeadline: 30, displayLongHeadline: 90, displayDescription: 90, businessName: 25 },
 } as const;
 
-export type QaIssue = 'empty' | 'unbalanced_brackets' | 'truncated' | 'trailing_fragment' | 'over_length' | 'tone' | 'prohibited_term' | 'too_few_assets';
+export type QaIssue = 'empty' | 'unbalanced_brackets' | 'truncated' | 'trailing_fragment' | 'over_length' | 'tone' | 'prohibited_term' | 'too_few_assets' | PlatformIssue;
 export type QaLanguage = 'EN' | 'ZH' | 'JA' | undefined;
 
 export interface QaOptions {
@@ -229,6 +237,63 @@ export function qaCampaignCopy<T extends AnyCampaign>(
       report.issues.push({ field: 'weiboPost.body', text: c.body, issues: ['unbalanced_brackets'] });
     }
     out[channel] = next;
+  }
+  // Baidu Search, 360 Search and 360 Display: platform policy rules on top of the
+  // generic checks. A failing line is repaired without shortening, swapped for a complete
+  // alternative, or dropped. It is never truncated.
+  const sourcedPhrases = zhQuartileCandidates(campaign.clarivateFacts);
+  const platformGate = (field: string, platform: ChinaPlatform, kind: 'title' | 'description', text: string, alternatives: string[], required: boolean): string => {
+    report.checked++;
+    const generic = (t: string) => checkAdText(t, { language: 'ZH', prohibitedTerms: opts.prohibitedTerms });
+    const pool = alternatives.filter((a) => !generic(a).length);
+    const r = finalizePlatformText(text, platform, kind, pool, { sourcedPhrases });
+    let finalText = r.text;
+    let issues: QaIssue[] = r.issues;
+    if (r.ready && generic(finalText).length) {
+      const alt = pool.find((a) => a !== finalText && !checkPlatformText(a, platform, kind, { sourcedPhrases }).length);
+      if (alt) { finalText = alt; report.replaced++; }
+      else { issues = generic(finalText); finalText = ''; }
+    } else if (r.outcome === 'repaired') report.repaired++;
+    else if (r.outcome === 'alternative') report.replaced++;
+    if (!finalText) {
+      if (text) report.issues.push({ field, text, issues: issues.length ? issues : ['empty'] });
+      if (required) report.ready = false;
+    }
+    return finalText;
+  };
+  for (const [key, platform] of [['baiduSearchAd', 'baidu'], ['so360SearchAd', 'so360']] as const) {
+    const ad = campaign[key];
+    if (!ad || typeof ad !== 'object') continue;
+    const alt = ad.alternatives || { title: [], description: [] };
+    const title = platformGate(`${key}.title`, platform, 'title', ad.title || '', alt.title || [], true);
+    const used = new Set<string>();
+    const d1 = platformGate(`${key}.description1`, platform, 'description', ad.description1 || '', (alt.description || []).concat(ad.description2 ? [ad.description2] : []), true);
+    used.add(d1);
+    // Description 2 must add a new fact: the original and any alternative are held to the same-fact rule.
+    const d2Original = ad.description2 && !used.has(ad.description2) && !sameFact(ad.description2, d1) ? ad.description2 : '';
+    const d2Pool = (alt.description || []).filter((t: string) => !used.has(t) && !sameFact(t, d1));
+    const d2 = ad.description2 ? platformGate(`${key}.description2`, platform, 'description', d2Original || d2Pool[0] || '', d2Original ? d2Pool : d2Pool.slice(1), false) : '';
+    out[key] = { ...ad, title, description1: d1, description2: d2 === d1 ? '' : d2 };
+  }
+  const disp = campaign.so360DisplayAd;
+  if (disp && typeof disp === 'object') {
+    const alt = disp.alternatives || { title: [], description: [] };
+    const used = new Set<string>();
+    const titles = (disp.titles || [])
+      .map((t: string, i: number) => {
+        const r = platformGate(`so360DisplayAd.titles[${i}]`, 'so360Display', 'title', t, (alt.title || []).filter((x: string) => !used.has(x)), false);
+        if (r) used.add(r);
+        return r;
+      })
+      .filter(Boolean)
+      .filter((t: string, i: number, arr: string[]) => arr.indexOf(t) === i)
+      .slice(0, CHINA_PLATFORM_LIMITS.so360Display.maxTitles);
+    if (titles.length < CHINA_PLATFORM_LIMITS.so360Display.minTitles) {
+      report.ready = false;
+      report.issues.push({ field: 'so360DisplayAd.titles', text: `${titles.length} ready titles (360 Display needs at least 2)`, issues: ['too_few_assets'] });
+    }
+    const description = platformGate('so360DisplayAd.description', 'so360Display', 'description', disp.description || '', alt.description || [], true);
+    out.so360DisplayAd = { ...disp, titles, description };
   }
   out.copyQa = report;
   return out as T & { copyQa: CampaignCopyQa };
