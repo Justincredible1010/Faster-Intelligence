@@ -282,7 +282,7 @@ async function lookupOnce(
 
   const retrieved = retrievedAt.toISOString();
   const ranks = Array.isArray(report.ranks?.jif) ? report.ranks.jif : [];
-  const best = bestJifRank(ranks);
+  const best = bestJifRank(ranks, { titles: [profile.jcrTitle, profile.isoTitle, profile.title, profile.wosName] });
   const quartile = best?.quartile || ranks.find((rank) => rank?.quartile)?.quartile || null;
   const quartileCategory = best?.category || null;
   const printIssn = normalizeIssn(profile.issn) || cleaned;

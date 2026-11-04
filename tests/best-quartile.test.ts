@@ -76,3 +76,49 @@ describe('best-category JCR quartile', () => {
     assert.equal(out?.jcrQuartileCategory, 'INFORMATION SCIENCE & LIBRARY SCIENCE');
   });
 });
+
+import { refineQuartileCategory, subjectMatchScore } from '../src/utils/jcrQuartile';
+import { zhQuartileLine } from '../server';
+
+describe('subject-aware tie-break', () => {
+  const oncogeneRanks = [
+    { category: 'CELL BIOLOGY', quartile: 'Q1', jifPercentile: 84.3, rank: '33/207' },
+    { category: 'GENETICS & HEREDITY', quartile: 'Q1', jifPercentile: 94.5, rank: '11/192' },
+    { category: 'ONCOLOGY', quartile: 'Q1', jifPercentile: 88.8, rank: '38/334' },
+    { category: 'BIOCHEMISTRY & MOLECULAR BIOLOGY', quartile: 'Q1', jifPercentile: 90.7, rank: '31/328' },
+  ];
+  it('Oncogene picks Oncology from its title', () => {
+    assert.equal(bestJifRank(oncogeneRanks, { titles: ['ONCOGENE'] })?.category, 'ONCOLOGY');
+  });
+  it('falls back to highest percentile when nothing matches', () => {
+    assert.equal(bestJifRank(oncogeneRanks, { titles: ['Journal X'] })?.category, 'GENETICS & HEREDITY');
+    assert.equal(bestJifRank(oncogeneRanks)?.category, 'GENETICS & HEREDITY');
+  });
+  it('a better quartile still beats a subject match', () => {
+    const r = bestJifRank([{ category: 'ONCOLOGY', quartile: 'Q2', jifPercentile: 70 }, { category: 'CELL BIOLOGY', quartile: 'Q1', jifPercentile: 80 }], { titles: ['Oncology Reports'] });
+    assert.equal(r?.category, 'CELL BIOLOGY');
+  });
+  it('uses landing-page scope when the title says nothing', () => {
+    const r = bestJifRank([{ category: 'CELL BIOLOGY', quartile: 'Q1', jifPercentile: 95 }, { category: 'ONCOLOGY', quartile: 'Q1', jifPercentile: 80 }], { titles: ['Journal X'], scope: ['Publishes research on cancer and tumour biology.'] });
+    assert.equal(r?.category, 'ONCOLOGY');
+    assert.ok(subjectMatchScore('ONCOLOGY', { scope: ['cancer'] }) > 0);
+  });
+  it('refines a stored category with page facts but keeps a user category not in the ranks', () => {
+    const base: any = { journalName: 'Journal X', aimsAndScopeSummary: 'Cancer research', jcrQuartile: 'Q1', jcrQuartileCategory: 'GENETICS & HEREDITY', jifRanks: oncogeneRanks };
+    assert.equal(refineQuartileCategory(base).jcrQuartileCategory, 'ONCOLOGY');
+    assert.equal(quartileCategory(base), 'ONCOLOGY');
+    assert.equal(refineQuartileCategory({ ...base, jcrQuartileCategory: 'My Field' }).jcrQuartileCategory, 'My Field');
+  });
+});
+
+describe('Chinese quartile line', () => {
+  const zhFacts: any = { ...facts };
+  it('names the English category, fits, never truncates', () => {
+    const facts = zhFacts;
+    const line = zhQuartileLine(facts, 90);
+    assert.equal(line, '据 Clarivate JCR 2025，本刊位列 Information Science & Library Science 学科 Q1 分区。');
+    const short = zhQuartileLine(facts, 30);
+    assert.ok(short === null || short.length <= 30);
+    assert.equal(zhQuartileLine({ ...facts, jcrQuartileCategory: 'X'.repeat(200), jifRanks: [] }, 30), null);
+  });
+});
