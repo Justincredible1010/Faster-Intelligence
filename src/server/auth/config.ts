@@ -224,6 +224,11 @@ export function assertProductionAuthConfig(env: NodeJS.ProcessEnv = process.env)
   if ((env.AUTH_PREVIEW_BYPASS || '').trim().toLowerCase() === 'true' && !isPreviewBypassEnabled(env)) {
     throw new Error(`AUTH_PREVIEW_BYPASS=true in production requires AUTH_PREVIEW_ALLOWED_EMAIL (allowed domain) and, if set, AUTH_PREVIEW_PASSCODE of at least ${PREVIEW_PASSCODE_MIN} characters`);
   }
+  if ((env.AUTH_PREVIEW_BYPASS || '').trim().toLowerCase() === 'true' && !previewPasscode(env)) {
+    // A published (NODE_ENV=production) build must never go open via one-click sign-in.
+    // The one-click flow is only for the AI Studio preview, where NODE_ENV is unset.
+    throw new Error(`AUTH_PREVIEW_BYPASS=true in production requires AUTH_PREVIEW_PASSCODE of at least ${PREVIEW_PASSCODE_MIN} characters (one-click test sign-in is preview-only)`);
+  }
   if (isPreviewBypassEnabled(env)) {
     console.warn('[auth] AUTH_PREVIEW_BYPASS is ON in production. Remove the AUTH_PREVIEW_* secrets before publishing.');
   }

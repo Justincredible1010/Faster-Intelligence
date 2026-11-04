@@ -114,11 +114,26 @@ describe('preview bypass over HTTP without cookies (framed iframe)', () => {
 });
 
 describe('preview bypass hardening', () => {
-  it('allows production startup without a passcode (one-click), but not with a too-short one', () => {
+  it('refuses production startup without a passcode or with a too-short one, allows a valid one', () => {
     const prod = { NODE_ENV: 'production', AUTH_SESSION_SECRET: 'x'.repeat(40), APP_URL: 'https://a.test', AUTH_PROVIDER: 'magic_link', AUTH_EMAIL_TRANSPORT: 'brevo', AUTH_PREVIEW_BYPASS: 'true', AUTH_PREVIEW_ALLOWED_EMAIL: 'hong.chen@springernature.com' };
-    assert.doesNotThrow(() => assertProductionAuthConfig(prod));
+    assert.throws(() => assertProductionAuthConfig(prod), /AUTH_PREVIEW_PASSCODE/);
+    assert.throws(() => assertProductionAuthConfig({ ...prod, AUTH_PREVIEW_BYPASS: ' TRUE ' }), /AUTH_PREVIEW_PASSCODE/);
+    assert.throws(() => assertProductionAuthConfig({ ...prod, AUTH_PREVIEW_PASSCODE: '   ' }), /AUTH_PREVIEW_PASSCODE/);
     assert.throws(() => assertProductionAuthConfig({ ...prod, AUTH_PREVIEW_PASSCODE: 'short' }), /AUTH_PREVIEW_PASSCODE/);
     assert.doesNotThrow(() => assertProductionAuthConfig({ ...prod, AUTH_PREVIEW_PASSCODE: PASS }));
+  });
+
+  it('AI Studio preview (NODE_ENV unset) starts with one-click sign-in and no passcode', () => {
+    const preview = { AUTH_SESSION_SECRET: 'x'.repeat(40), AUTH_PROVIDER: 'magic_link', AUTH_EMAIL_TRANSPORT: 'brevo', AUTH_PREVIEW_BYPASS: 'true', AUTH_PREVIEW_ALLOWED_EMAIL: 'hong.chen@springernature.com' };
+    assert.doesNotThrow(() => assertProductionAuthConfig(preview));
+    assert.equal(isPreviewBypassEnabled(preview), true);
+  });
+
+  it('still rate-limits passcode attempts when a passcode is set', async () => {
+    env(PREVIEW);
+    for (let i = 0; i < 10; i++) assert.equal((await previewLogin('wrong-passcode-xx')).res.status, 401);
+    const locked = (await previewLogin()).res;
+    assert.equal(locked.status, 429);
   });
 
   it('one-click test sign-in (Nov 3 flow) when no passcode is set', async () => {
