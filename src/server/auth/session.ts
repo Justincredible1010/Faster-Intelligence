@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
-import { isPreviewBypassEnabled, loadAuthConfig, type AuthConfig } from './config';
+import { isPreviewBypassEnabled, loadAuthConfig, previewBypassEmail, type AuthConfig } from './config';
 import { appendCookie, readCookies, serializeCookie, SESSION_COOKIE } from './cookies';
 import { getOauthStateStore, getSessionStore } from './stores';
 
@@ -124,7 +124,11 @@ export function createSession(user: AuthUser | null, ttlSeconds?: number): Sessi
   return session;
 }
 
+// Signed-out preview tokens. In memory: a restart forgets them, but tokens still expire on their own.
+const revokedPreview = new Set<string>();
+
 export function destroySession(id: string): void {
+  if (id.startsWith('preview:')) revokedPreview.add(id);
   getSessionStore().delete(id);
   getOauthStateStore().delete(id);
 }
@@ -156,17 +160,61 @@ export function readOauthTransaction(session: SessionRecord): OauthTransaction |
   return transaction;
 }
 
-export function readSession(req: Request, config: AuthConfig = loadAuthConfig()): SessionRecord | null {
-  let token = readCookies(req)[SESSION_COOKIE];
-  // Header fallback is accepted only while the explicit preview bypass is on.
-  if (!token && isPreviewBypassEnabled()) {
-    const header = req.get?.(SESSION_HEADER) || '';
-    if (header && header.length <= 256) token = header;
+const PREVIEW_TOKEN_PREFIX = 'pv1.';
+
+/**
+ * Preview only: a self-contained signed token for the one preview user. It needs no
+ * cookie, no browser storage and no shared server memory, so it keeps working when
+ * the AI Studio dev server restarts or a request lands on another instance.
+ */
+export function issuePreviewToken(email: string, csrfToken: string, config: AuthConfig = loadAuthConfig()): string {
+  const payload = Buffer.from(JSON.stringify({ e: email, c: csrfToken, x: Date.now() + config.sessionTtlSeconds * 1000 })).toString('base64url');
+  const body = `${PREVIEW_TOKEN_PREFIX}${payload}`;
+  return `${body}.${sign(body, config.sessionSecret)}`;
+}
+
+export function readPreviewToken(token: string, config: AuthConfig = loadAuthConfig()): SessionRecord | null {
+  if (!token.startsWith(PREVIEW_TOKEN_PREFIX) || token.length > 1024) return null;
+  const allowed = previewBypassEmail();
+  if (!allowed) return null;
+  const idx = token.lastIndexOf('.');
+  const body = token.slice(0, idx);
+  const signature = token.slice(idx + 1);
+  if (!signature || !safeEqual(signature, sign(body, config.sessionSecret))) return null;
+  try {
+    const data = JSON.parse(Buffer.from(body.slice(PREVIEW_TOKEN_PREFIX.length), 'base64url').toString('utf8'));
+    if (data.e !== allowed || typeof data.c !== 'string' || typeof data.x !== 'number' || data.x <= Date.now()) return null;
+    const id = `preview:${createHmac('sha256', config.sessionSecret).update(token).digest('base64url').slice(0, 32)}`;
+    if (revokedPreview.has(id)) return null;
+    return {
+      id,
+      csrfToken: data.c,
+      createdAt: data.x - config.sessionTtlSeconds * 1000,
+      expiresAt: data.x,
+      user: { sub: PREVIEW_BYPASS_SUB, email: allowed, name: config.devUserName, emailVerified: true, provider: 'dev' },
+    };
+  } catch {
+    return null;
   }
-  if (!token) return null;
+}
+
+function sessionFromToken(token: string, config: AuthConfig): SessionRecord | null {
+  if (token.startsWith(PREVIEW_TOKEN_PREFIX)) return readPreviewToken(token, config);
   const id = openSessionId(token, config.sessionSecret);
-  if (!id) return null;
-  return getSession(id);
+  return id ? getSession(id) : null;
+}
+
+export function readSession(req: Request, config: AuthConfig = loadAuthConfig()): SessionRecord | null {
+  const cookie = readCookies(req)[SESSION_COOKIE];
+  const fromCookie = cookie ? sessionFromToken(cookie, config) : null;
+  if (fromCookie) return fromCookie;
+  // Header fallback is accepted only while the explicit preview bypass is on. It is
+  // also tried when a stale or foreign cookie is present, not only when none is sent.
+  if (isPreviewBypassEnabled()) {
+    const header = (req.get?.(SESSION_HEADER) || '').trim();
+    if (header && header.length <= 1024) return sessionFromToken(header, config);
+  }
+  return null;
 }
 
 /** Reuse a live anonymous-or-user session, or issue a new anonymous one and set the cookie. */
@@ -190,6 +238,7 @@ export function rotateSession(res: Response, user: AuthUser, previous?: SessionR
 }
 
 export function clearAllSessions(): void {
+  revokedPreview.clear();
   getSessionStore().clear();
   getOauthStateStore().clear();
 }

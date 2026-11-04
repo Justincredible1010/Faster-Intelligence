@@ -58,11 +58,18 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [linkSent, setLinkSent] = useState(false);
   const [magicToken, setMagicToken] = useState<string | null>(null);
   const [passcode, setPasscode] = useState('');
+  const [showPasscode, setShowPasscode] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = async () => {
     const next = await loadSession();
+    setLoadError(null);
     setSession(next);
     return next;
+  };
+  const retryLoad = () => {
+    setLoadError(null);
+    refresh().catch((err) => setLoadError(err instanceof Error ? err.message : 'Could not reach the sign-in service.'));
   };
 
   useEffect(() => {
@@ -79,7 +86,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       setMagicToken(token);
       clearMagicHash();
     }
-    refresh().catch(() => setError('Could not reach the sign-in service.'));
+    refresh().catch((err) => setLoadError(err instanceof Error ? err.message : 'Could not reach the sign-in service.'));
     const onExpired = () => {
       setSession((current) => (current ? { ...current, authenticated: false, user: null, admin: false } : current));
       refresh().catch(() => undefined);
@@ -97,8 +104,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (!session) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500 text-sm">
-        Checking your session…
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-3 text-slate-500 text-sm px-4">
+        {loadError ? (
+          <>
+            <div role="alert" className="max-w-md rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">{loadError}</div>
+            <button type="button" onClick={retryLoad} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-slate-800 font-semibold">Try again</button>
+          </>
+        ) : 'Checking your session…'}
       </div>
     );
   }
@@ -134,10 +146,15 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     const continueAsDev = async () => {
       setPending(true);
       setError(null);
-      const result = await devLogin(session.previewPasscodeRequired ? passcode : undefined);
+      let result;
+      try {
+        result = await devLogin(session.previewPasscodeRequired ? passcode : undefined);
+      } catch {
+        result = { authenticated: false, user: null, error: 'Something went wrong while signing in. Reload the preview and try again.' };
+      }
       setPending(false);
       if (!result.authenticated || !result.user) {
-        setError(result.error || 'Development sign-in is unavailable');
+        setError(result.error || 'Test sign-in failed. Reload the preview and try again.');
         return;
       }
       setSession(result);
@@ -161,7 +178,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             Only verified <span className="font-semibold">@{domainLabel}</span> email addresses can use this app.
           </p>
           {error && (
-            <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">{error}</div>
+            <div role="alert" aria-live="assertive" className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">{error}</div>
           )}
           {magicToken && (
             <div className="space-y-3">
@@ -220,23 +237,37 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           {session.devBypass && (
             <>
               {session.previewPasscodeRequired && (
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={passcode}
-                  onChange={(e) => setPasscode(e.target.value)}
-                  placeholder="Preview passcode"
-                  aria-label="Preview passcode"
-                  className="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                />
+                <div className="mt-4 flex gap-2">
+                  <input
+                    type={showPasscode ? 'text' : 'password'}
+                    autoComplete="off"
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    value={passcode}
+                    onChange={(e) => setPasscode(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && passcode.trim() && !pending) void continueAsDev(); }}
+                    placeholder="Preview passcode"
+                    aria-label="Preview passcode"
+                    className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPasscode((v) => !v)}
+                    aria-pressed={showPasscode}
+                    className="rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    {showPasscode ? 'Hide passcode' : 'Show passcode'}
+                  </button>
+                </div>
               )}
               <button
                 type="button"
                 onClick={continueAsDev}
-                disabled={pending || !session.csrfToken || (session.previewPasscodeRequired && !passcode)}
+                disabled={pending || (session.previewPasscodeRequired && !passcode.trim())}
                 className="mt-4 w-full rounded-lg border border-slate-300 bg-slate-50 text-slate-800 text-sm font-semibold py-2.5 hover:bg-slate-100 disabled:opacity-60"
               >
-                Continue as a test user
+                {pending ? 'Signing in…' : 'Continue as a test user'}
               </button>
               <p className="mt-2 text-xs text-slate-500 text-center">
                 Local development only. This is not a Springer Nature sign-in.

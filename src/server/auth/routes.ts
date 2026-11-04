@@ -21,6 +21,7 @@ import {
   writeSessionCookie,
   ensureSession,
   sealSessionId,
+  issuePreviewToken,
   type SessionRecord,
 } from './session';
 
@@ -68,7 +69,9 @@ function sessionPayload(session: SessionRecord) {
     admin: user ? isAdminEmail(user.email, config) && !isPreviewBypassUser(user) : false,
     previewPasscodeRequired: !isDevBypassEnabled() && isPreviewBypassEnabled(),
     // Preview only: lets the framed AI Studio preview work without third-party cookies.
-    ...(isPreviewBypassEnabled() ? { sessionToken: sealSessionId(session.id, config.sessionSecret) } : {}),
+    ...(isPreviewBypassEnabled()
+      ? { sessionToken: user && isPreviewBypassUser(user) ? issuePreviewToken(user.email, session.csrfToken, config) : sealSessionId(session.id, config.sessionSecret) }
+      : {}),
   };
 }
 
@@ -78,6 +81,21 @@ function onlyKeys(body: unknown, allowed: string[]): Record<string, unknown> | n
   const keys = Object.keys(record);
   if (keys.some((key) => !allowed.includes(key))) return null;
   return record;
+}
+
+const PASSCODE_MAX_FAILURES = 10;
+const PASSCODE_WINDOW_MS = 15 * 60 * 1000;
+const passcodeFailures = new Map<string, number[]>();
+
+export function clearPasscodeFailures(): void {
+  passcodeFailures.clear();
+}
+
+function recentFailures(ip: string, now = Date.now()): number[] {
+  const list = (passcodeFailures.get(ip) || []).filter((t) => now - t < PASSCODE_WINDOW_MS);
+  if (list.length) passcodeFailures.set(ip, list);
+  else passcodeFailures.delete(ip);
+  return list;
 }
 
 export function registerAuthRoutes(app: Express): void {
@@ -207,29 +225,39 @@ export function registerAuthRoutes(app: Express): void {
 
   app.post('/api/auth/dev-login', (req, res) => {
     if (!isAnyBypassEnabled()) {
-      res.status(404).json({ error: 'Not found' });
+      res.status(404).json({ error: 'Test sign-in is not configured on this server.', code: 'not_configured' });
       return;
     }
     const devMode = isDevBypassEnabled();
-    const body = onlyKeys(req.body ?? {}, devMode ? [] : ['passcode']);
+    const body = onlyKeys(req.body ?? {}, ['passcode']);
     if (!body) {
-      res.status(400).json({ error: 'Unexpected fields in request' });
+      res.status(400).json({ error: 'Unexpected fields in request', code: 'bad_request' });
       return;
     }
     const config = loadAuthConfig();
     if (!devMode) {
-      const expected = previewPasscode() || '';
-      const given = typeof body.passcode === 'string' ? body.passcode : '';
-      if (!expected || !given || !safeEqual(given, expected)) {
-        console.warn('[auth] preview bypass sign-in rejected: wrong passcode');
-        res.status(401).json({ error: 'Wrong preview passcode' });
+      const ip = requestClientIp(req);
+      const failures = recentFailures(ip);
+      if (failures.length >= PASSCODE_MAX_FAILURES) {
+        res.status(429).json({ error: 'Too many wrong passcodes. Wait 15 minutes, then try again.', code: 'too_many_attempts' });
         return;
       }
+      const expected = previewPasscode() || '';
+      // Pasted values often carry spaces or a trailing newline.
+      const given = typeof body.passcode === 'string' ? body.passcode.trim() : '';
+      if (!expected || !given || !safeEqual(given, expected)) {
+        failures.push(Date.now());
+        passcodeFailures.set(ip, failures);
+        console.warn('[auth] preview bypass sign-in rejected: wrong passcode');
+        res.status(401).json({ error: 'Wrong preview passcode. Copy AUTH_PREVIEW_PASSCODE from this app\'s Secrets and try again.', code: 'wrong_passcode' });
+        return;
+      }
+      passcodeFailures.delete(ip);
     }
     // The preview bypass signs in only the one listed address; the dev bypass keeps its old behaviour.
     const email = devMode ? normalizeEmail(config.devUserEmail) : previewBypassEmail();
     if (!email || !isEmailDomainAllowed(email, config.allowedDomains, config.allowedSubdomains)) {
-      res.status(400).json({ error: devMode ? 'AUTH_DEV_USER_EMAIL is not an allowed email domain' : 'AUTH_PREVIEW_ALLOWED_EMAIL is not an allowed email domain' });
+      res.status(400).json({ error: devMode ? 'AUTH_DEV_USER_EMAIL is not an allowed email domain' : 'AUTH_PREVIEW_ALLOWED_EMAIL is not an allowed email domain', code: 'not_configured' });
       return;
     }
     const session = rotateSession(

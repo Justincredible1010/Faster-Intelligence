@@ -1,4 +1,4 @@
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { isSubdomainOfAllowedApex, isValidHost, normalizeEmail } from './domain';
 
 export type AuthProviderName = 'google' | 'magic_link' | 'oidc';
@@ -50,12 +50,12 @@ export function previewPasscode(env: NodeJS.ProcessEnv = process.env): string | 
 }
 
 export function previewBypassEmail(env: NodeJS.ProcessEnv = process.env): string | null {
-  if (env.AUTH_PREVIEW_BYPASS !== 'true') return null;
+  if ((env.AUTH_PREVIEW_BYPASS || '').trim().toLowerCase() !== 'true') return null;
   if (!previewPasscode(env)) return null;
-  const email = normalizeEmail(env.AUTH_PREVIEW_ALLOWED_EMAIL || '');
+  const email = normalizeEmail((env.AUTH_PREVIEW_ALLOWED_EMAIL || '').trim().toLowerCase());
   if (!email) return null;
   const domains = hostList(env.AUTH_ALLOWED_EMAIL_DOMAINS, [DEFAULT_DOMAIN]);
-  const domain = email.slice(email.lastIndexOf('@') + 1);
+  const domain = email.slice(email.lastIndexOf('@') + 1).toLowerCase();
   if (!domains.includes(domain)) return null;
   return email;
 }
@@ -111,6 +111,12 @@ function sessionSecret(env: NodeJS.ProcessEnv): string {
   if (configured.length >= 32) return configured;
   if (env.NODE_ENV === 'production') {
     throw new Error('AUTH_SESSION_SECRET must be at least 32 characters in production');
+  }
+  // AI Studio preview: derive a stable secret from the passcode so tokens survive
+  // dev-server restarts and multiple preview instances (an ephemeral secret does not).
+  const passcode = previewPasscode(env);
+  if ((env.AUTH_PREVIEW_BYPASS || '').trim().toLowerCase() === 'true' && passcode) {
+    return createHash('sha256').update(`omnifact-preview-session|${passcode}`).digest('base64url');
   }
   if (!ephemeralSecret) {
     ephemeralSecret = randomBytes(32).toString('base64url');
@@ -213,7 +219,7 @@ export function assertProductionAuthConfig(env: NodeJS.ProcessEnv = process.env)
   if (config.provider === 'oidc' && !providerSettings(config)) {
     throw new Error('OIDC_ISSUER, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET are required when AUTH_PROVIDER=oidc');
   }
-  if (env.AUTH_PREVIEW_BYPASS === 'true' && !isPreviewBypassEnabled(env)) {
+  if ((env.AUTH_PREVIEW_BYPASS || '').trim().toLowerCase() === 'true' && !isPreviewBypassEnabled(env)) {
     throw new Error(`AUTH_PREVIEW_BYPASS=true in production requires AUTH_PREVIEW_ALLOWED_EMAIL (allowed domain) and AUTH_PREVIEW_PASSCODE (at least ${PREVIEW_PASSCODE_MIN} characters)`);
   }
   if (isPreviewBypassEnabled(env)) {
