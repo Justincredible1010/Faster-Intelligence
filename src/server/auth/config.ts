@@ -131,7 +131,7 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
   if (env.AUTH_PROVIDER && !provider) {
     console.warn(`[auth] Unknown AUTH_PROVIDER "${env.AUTH_PROVIDER}". Sign-in is disabled.`);
   }
-  const appUrl = (env.APP_URL || '').trim().replace(/\/+$/, '') || null;
+  const appUrl = (env.APP_URL || env.APP_BASE_URL || '').trim().replace(/\/+$/, '') || null;
   return {
     provider,
     allowedDomains: hostList(env.AUTH_ALLOWED_EMAIL_DOMAINS, [DEFAULT_DOMAIN]),

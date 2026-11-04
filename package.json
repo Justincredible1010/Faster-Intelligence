@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/unit-tests.ts && tsx tests/clarivate.test.ts && tsx --test --test-concurrency=1 tests/auth-domain.test.ts tests/metrics-validation.test.ts tests/china-channels.test.ts tests/auth-http.test.ts tests/aistudio-port.test.ts tests/copy-quality.test.ts tests/playbook-learning.test.ts tests/landing-facts-live.test.ts tests/pr11-review-fixes.test.ts tests/preview-bypass.test.ts tests/best-quartile.test.ts tests/china-search-platforms.test.ts tests/journal-display-name.test.ts",
+    "test": "tsx tests/unit-tests.ts && tsx tests/clarivate.test.ts && tsx --test --test-concurrency=1 tests/auth-domain.test.ts tests/metrics-validation.test.ts tests/china-channels.test.ts tests/auth-http.test.ts tests/aistudio-port.test.ts tests/copy-quality.test.ts tests/playbook-learning.test.ts tests/landing-facts-live.test.ts tests/pr11-review-fixes.test.ts tests/preview-bypass.test.ts tests/best-quartile.test.ts tests/china-search-platforms.test.ts tests/journal-display-name.test.ts tests/auth-email-brevo.test.ts",
     "verify:clarivate": "tsx scripts/verify-clarivate.ts"
   },
   "dependencies": {

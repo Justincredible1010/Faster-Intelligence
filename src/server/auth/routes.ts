@@ -1,3 +1,4 @@
+import { EmailConfigError } from './email';
 import type { Express, Request } from 'express';
 import { isAnyBypassEnabled, isDevBypassEnabled, isPreviewBypassEnabled, loadAuthConfig, previewBypassEmail, previewPasscode, providerSettings } from './config';
 import { isEmailDomainAllowed, normalizeEmail } from './domain';
@@ -29,7 +30,8 @@ export function resolveAppUrl(req: Request): string {
   const configured = loadAuthConfig().appUrl;
   if (configured) return configured;
   // Outside production, never trust X-Forwarded-Host (or Host). Links stay on this process.
-  if (process.env.NODE_ENV !== 'production') {
+  // TRUST_PROXY=true opts in to forwarded headers (AI Studio / Cloud Run preview proxies).
+  if (process.env.NODE_ENV !== 'production' && process.env.TRUST_PROXY !== 'true') {
     const port = req.socket?.localPort || Number(process.env.PORT) || 3000;
     return `http://localhost:${port}`;
   }
@@ -166,8 +168,9 @@ export function registerAuthRoutes(app: Express): void {
         res.status(err.status).json({ error: err.message });
         return;
       }
-      console.error('[auth] magic link send failed', err instanceof Error ? err.message : err);
-      res.status(502).json({ error: 'The sign-in email could not be sent' });
+      const code = err instanceof EmailConfigError ? 'not_configured' : 'email_send_failed';
+      console.error(`[auth] magic link send failed (${code})`, err instanceof Error ? err.message : err);
+      res.status(code === 'not_configured' ? 503 : 502).json({ error: 'The sign-in email could not be sent', code });
     }
   });
 
