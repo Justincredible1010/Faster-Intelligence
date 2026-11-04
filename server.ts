@@ -456,52 +456,15 @@ function missingJournalFacts(canonicalUrl: string): JCRJournalEntry {
   };
 }
 
-const PLACEHOLDER_LABEL = /^(unknown journal|unknown publisher)$/i;
-
-function labelText(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  const trimmed = value.trim();
-  if (!trimmed || PLACEHOLDER_LABEL.test(trimmed)) return '';
-  return trimmed;
-}
-
-/** True when every letter is uppercase, as in the Web of Science id NATURE. */
-export function isShoutyLabel(value: string): boolean {
-  const letters = value.replace(/[^A-Za-z]/g, '');
-  return letters.length >= 2 && letters === letters.toUpperCase();
-}
-
-/** Society and publisher acronyms that stay uppercase when an all-caps name is title-cased. */
-const DISPLAY_ACRONYMS = new Set([
-  'ACM',
-  'ACS',
-  'AIP',
-  'AMS',
-  'APS',
-  'ASME',
-  'BMC',
-  'BMJ',
-  'IEEE',
-  'IET',
-  'IOP',
-  'JAMA',
-  'OSA',
-  'PLOS',
-  'PNAS',
-  'RSC',
-  'SIAM',
-  'SPIE',
-]);
-
-/** Title-case an all-caps Clarivate label. Mixed-case text is left as it arrived. */
-export function toDisplayCase(value: string): string {
-  if (!value || !isShoutyLabel(value)) return value;
-  return value.replace(/[A-Za-z0-9]+/g, (word) => {
-    const upper = word.toUpperCase();
-    if (DISPLAY_ACRONYMS.has(upper)) return upper;
-    return upper.charAt(0) + upper.slice(1).toLowerCase();
-  });
-}
+import {
+  DISPLAY_ACRONYMS,
+  displayJournalName as sharedDisplayJournalName,
+  isShoutyLabel,
+  labelText,
+  toDisplayCase,
+} from './src/utils/journalDisplayName';
+export { isShoutyLabel, toDisplayCase };
+void DISPLAY_ACRONYMS;
 
 function filled(value: unknown): boolean {
   if (value == null) return false;
@@ -512,20 +475,15 @@ function filled(value: unknown): boolean {
 }
 
 /**
- * Display title: isoTitle or jcrTitle, then the landing-page name, then the
- * Web of Science name. An all-caps id is title-cased so ads do not say NATURE.
+ * Display title for ad copy. Order: landing-page title, user or catalog full title,
+ * Clarivate full title (title-cased). Never Clarivate's abbreviation.
+ * See src/utils/journalDisplayName.ts.
  */
 export function displayJournalName(
-  api: { jcrTitle?: string; isoTitle?: string; journalName?: string; wosName?: string },
+  api: { jcrTitle?: string; isoTitle?: string; journalName?: string; wosName?: string; [k: string]: any },
   landingName?: string
 ): string {
-  const proper = [api.jcrTitle, api.isoTitle].map(labelText).find((value) => value && !isShoutyLabel(value));
-  if (proper) return proper;
-  const landing = labelText(landingName);
-  if (landing && !isShoutyLabel(landing)) return landing;
-  const raw = labelText(api.journalName) || labelText(api.wosName) || landing;
-  if (!raw) return landing || 'Journal';
-  return toDisplayCase(raw);
+  return sharedDisplayJournalName(api, landingName);
 }
 
 /**
@@ -546,7 +504,7 @@ export function withAdIdentity<T extends { journalName?: string; publisher?: str
 ): T {
   return {
     ...facts,
-    journalName: displayJournalName(facts, facts.journalName),
+    journalName: displayJournalName(facts, (facts as any).landingJournalName ?? facts.journalName),
     publisher: displayPublisher(facts.publisher, facts.publisher),
   };
 }
@@ -654,7 +612,12 @@ export function mergeClarivateOverLanding(landing: JCRJournalEntry, api: Clariva
   }
   const previousName = labelText(landing.journalName);
   const previousPublisher = labelText(landing.publisher);
-  merged.journalName = displayJournalName(api, landing.journalName);
+  // Keep the pre-Clarivate name and its source so later passes can still prefer it.
+  if (previousName) {
+    (merged as any).landingJournalName = previousName;
+    (merged as any).landingJournalNameSource = landing.provenanceMap?.journalName?.source || 'landing_page';
+  }
+  merged.journalName = displayJournalName({ ...api, landingJournalNameSource: (merged as any).landingJournalNameSource }, landing.journalName);
   merged.publisher = displayPublisher(api.publisher, landing.publisher);
   if (merged.journalName && merged.journalName !== previousName) {
     provenance.journalName = clarivateFieldProvenance(api);
