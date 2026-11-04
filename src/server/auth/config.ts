@@ -43,7 +43,7 @@ export function isDevBypassEnabled(env: NodeJS.ProcessEnv = process.env): boolea
  */
 export const PREVIEW_PASSCODE_MIN = 12;
 
-/** Passcode the test sign-in must present. Required for the preview bypass in every environment. */
+/** Passcode the test sign-in must present. Optional: when unset, the preview test sign-in is one click. */
 export function previewPasscode(env: NodeJS.ProcessEnv = process.env): string | null {
   const value = (env.AUTH_PREVIEW_PASSCODE || '').trim();
   return value.length >= PREVIEW_PASSCODE_MIN ? value : null;
@@ -51,7 +51,9 @@ export function previewPasscode(env: NodeJS.ProcessEnv = process.env): string | 
 
 export function previewBypassEmail(env: NodeJS.ProcessEnv = process.env): string | null {
   if ((env.AUTH_PREVIEW_BYPASS || '').trim().toLowerCase() !== 'true') return null;
-  if (!previewPasscode(env)) return null;
+  // A set-but-too-short passcode is a misconfiguration: keep the bypass off.
+  // An absent passcode means one-click test sign-in (the Nov 3 experience).
+  if ((env.AUTH_PREVIEW_PASSCODE || '').trim() && !previewPasscode(env)) return null;
   const email = normalizeEmail((env.AUTH_PREVIEW_ALLOWED_EMAIL || '').trim().toLowerCase());
   if (!email) return null;
   const domains = hostList(env.AUTH_ALLOWED_EMAIL_DOMAINS, [DEFAULT_DOMAIN]);
@@ -220,7 +222,7 @@ export function assertProductionAuthConfig(env: NodeJS.ProcessEnv = process.env)
     throw new Error('OIDC_ISSUER, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET are required when AUTH_PROVIDER=oidc');
   }
   if ((env.AUTH_PREVIEW_BYPASS || '').trim().toLowerCase() === 'true' && !isPreviewBypassEnabled(env)) {
-    throw new Error(`AUTH_PREVIEW_BYPASS=true in production requires AUTH_PREVIEW_ALLOWED_EMAIL (allowed domain) and AUTH_PREVIEW_PASSCODE (at least ${PREVIEW_PASSCODE_MIN} characters)`);
+    throw new Error(`AUTH_PREVIEW_BYPASS=true in production requires AUTH_PREVIEW_ALLOWED_EMAIL (allowed domain) and, if set, AUTH_PREVIEW_PASSCODE of at least ${PREVIEW_PASSCODE_MIN} characters`);
   }
   if (isPreviewBypassEnabled(env)) {
     console.warn('[auth] AUTH_PREVIEW_BYPASS is ON in production. Remove the AUTH_PREVIEW_* secrets before publishing.');
