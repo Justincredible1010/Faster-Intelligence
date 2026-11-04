@@ -93,7 +93,8 @@ export function clearPasscodeFailures(): void {
 
 function recentFailures(ip: string, now = Date.now()): number[] {
   const list = (passcodeFailures.get(ip) || []).filter((t) => now - t < PASSCODE_WINDOW_MS);
-  passcodeFailures.set(ip, list);
+  if (list.length) passcodeFailures.set(ip, list);
+  else passcodeFailures.delete(ip);
   return list;
 }
 
@@ -246,6 +247,7 @@ export function registerAuthRoutes(app: Express): void {
       const given = typeof body.passcode === 'string' ? body.passcode.trim() : '';
       if (!expected || !given || !safeEqual(given, expected)) {
         failures.push(Date.now());
+        passcodeFailures.set(ip, failures);
         console.warn('[auth] preview bypass sign-in rejected: wrong passcode');
         res.status(401).json({ error: 'Wrong preview passcode. Copy AUTH_PREVIEW_PASSCODE from this app\'s Secrets and try again.', code: 'wrong_passcode' });
         return;

@@ -115,7 +115,7 @@ function sessionSecret(env: NodeJS.ProcessEnv): string {
   // AI Studio preview: derive a stable secret from the passcode so tokens survive
   // dev-server restarts and multiple preview instances (an ephemeral secret does not).
   const passcode = previewPasscode(env);
-  if (env.AUTH_PREVIEW_BYPASS === 'true' && passcode) {
+  if ((env.AUTH_PREVIEW_BYPASS || '').trim().toLowerCase() === 'true' && passcode) {
     return createHash('sha256').update(`omnifact-preview-session|${passcode}`).digest('base64url');
   }
   if (!ephemeralSecret) {
