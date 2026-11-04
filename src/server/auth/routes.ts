@@ -67,7 +67,7 @@ function sessionPayload(session: SessionRecord) {
     allowedDomains: config.allowedDomains,
     devBypass: isAnyBypassEnabled(),
     admin: user ? isAdminEmail(user.email, config) && !isPreviewBypassUser(user) : false,
-    previewPasscodeRequired: !isDevBypassEnabled() && isPreviewBypassEnabled(),
+    previewPasscodeRequired: !isDevBypassEnabled() && isPreviewBypassEnabled() && previewPasscode() !== null,
     // Preview only: lets the framed AI Studio preview work without third-party cookies.
     ...(isPreviewBypassEnabled()
       ? { sessionToken: user && isPreviewBypassUser(user) ? issuePreviewToken(user.email, session.csrfToken, config) : sealSessionId(session.id, config.sessionSecret) }
@@ -235,7 +235,7 @@ export function registerAuthRoutes(app: Express): void {
       return;
     }
     const config = loadAuthConfig();
-    if (!devMode) {
+    if (!devMode && previewPasscode()) {
       const ip = requestClientIp(req);
       const failures = recentFailures(ip);
       if (failures.length >= PASSCODE_MAX_FAILURES) {
