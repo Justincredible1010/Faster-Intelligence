@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import { loadAuthConfig } from './config';
+import { isPreviewBypassEnabled, loadAuthConfig } from './config';
 import { isPreviewBypassUser, readSession, safeEqual, type SessionRecord } from './session';
 
 const PUBLIC_GET = new Set(['/api/auth/session', '/api/auth/login', '/api/auth/callback']);
@@ -111,7 +111,7 @@ export function requireCsrf(req: Request, res: Response, next: NextFunction): vo
   const session = getRequestSession(res);
   const header = req.get('x-csrf-token') || '';
   if (!session || !header || !safeEqual(header, session.csrfToken)) {
-    res.status(403).json({ error: 'Invalid CSRF token' });
+    res.status(403).json({ error: 'Invalid CSRF token', code: 'csrf' });
     return;
   }
   next();
@@ -164,6 +164,13 @@ export function apiGuard(req: Request, res: Response, next: NextFunction): void 
 
   if (!isPublic && !session?.user) {
     res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  // Preview passcode sign-in with no live session (server restarted, other instance,
+  // or cookies and storage blocked): the passcode itself is the secret, so skip CSRF.
+  if (method === 'POST' && path === '/api/auth/dev-login' && !session && isPreviewBypassEnabled()) {
+    next();
     return;
   }
 
