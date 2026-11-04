@@ -33,7 +33,7 @@ import { createCopyEditQueue } from './utils/playbookProposals';
 const copyEditQueue = createCopyEditQueue();
 import { pickEditableJournalFacts } from './utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from './utils/journalUrl';
-import { formatJifClaim, trustedApcUsd, trustedCasZone, trustedQuartile } from './utils/metricClaims';
+import { formatJifClaim, trustedApcUsd, trustedCasZone, trustedQuartile, trustedQuartileClaim } from './utils/metricClaims';
 import { DEFAULT_STAGE_URL_RULES, type StageUrlRules } from './utils/stageUrlRules';
 
 interface GeneratedFor {
@@ -427,7 +427,7 @@ export default function App() {
 **Author Mindset:** ${cfg.authorMindset}
 **Campaign Objective:** ${cfg.campaignObjective}
 **Impact factor:** ${formatJifClaim(campaign.clarivateFacts) ?? 'omitted'}
-**Quartile:** ${trustedQuartile(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
+**Quartile:** ${trustedQuartileClaim(campaign.clarivateFacts) ?? (trustedQuartile(campaign.clarivateFacts) ? 'omitted (no JCR category on record)' : 'omitted (no trusted value)')}
 **CAS zone:** ${trustedCasZone(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **APC (USD):** ${trustedApcUsd(campaign.clarivateFacts) ?? 'omitted (no trusted value)'}
 **Primary Call-to-Action:** "${campaign.primaryCta || cfg.primaryCta}"

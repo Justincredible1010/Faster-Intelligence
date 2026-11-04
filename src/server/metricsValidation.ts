@@ -5,6 +5,7 @@ const ALLOWED_FACT_FIELDS = [
   'impactFactor',
   'fiveYearImpactFactor',
   'jcrQuartile',
+  'jcrQuartileCategory',
   'casZone',
   'firstDecisionDays',
   'indexing',
@@ -84,6 +85,7 @@ export interface SanitizedJournalMetrics {
   impactFactor: number | null;
   fiveYearImpactFactor: number | null;
   jcrQuartile: string | null;
+  jcrQuartileCategory: string | null;
   casZone: string | null;
   firstDecisionDays: number | null;
   indexing: string[];
@@ -233,6 +235,7 @@ export function sanitizeUserProvidedFacts(facts: unknown): SanitizedJournalMetri
     impactFactor: readNumber(facts.impactFactor, 'impactFactor', { min: 0, max: 500 }),
     fiveYearImpactFactor: readNumber(facts.fiveYearImpactFactor, 'fiveYearImpactFactor', { min: 0, max: 500 }),
     jcrQuartile: readString(facts.jcrQuartile, 'jcrQuartile', 40),
+    jcrQuartileCategory: readString(facts.jcrQuartileCategory, 'jcrQuartileCategory', 200),
     casZone: readString(facts.casZone, 'casZone', 120),
     firstDecisionDays: readNumber(facts.firstDecisionDays, 'firstDecisionDays', { min: 0, max: 3650, integer: true }),
     indexing: readIndexing(facts.indexing),

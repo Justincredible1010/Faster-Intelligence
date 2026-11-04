@@ -928,7 +928,7 @@ describe('authenticated http api', { concurrency: 1 }, () => {
         funnelStage: 'CON',
         channels: ['search'],
         outputLanguage: 'EN',
-        userProvidedFacts: { ...edited, jcrQuartile: 'Q2' },
+        userProvidedFacts: { ...edited, jcrQuartile: 'Q2', jcrQuartileCategory: 'Multidisciplinary Sciences' },
       },
     });
     const changedBody = await changedQuartile.json();
@@ -937,7 +937,8 @@ describe('authenticated http api', { concurrency: 1 }, () => {
     assert.equal(changedBody.campaign.clarivateFacts.provenanceMap?.casZone?.source, 'catalog_snapshot');
     assert.equal(changedBody.campaign.clarivateFacts.provenanceMap?.indexing?.source, 'catalog_snapshot');
     const changedCopy = campaignText(changedBody.campaign);
-    assert.match(changedCopy, /Q2/);
+    assert.match(changedCopy, /Q2 in Multidisciplinary Sciences/);
+    assert.doesNotMatch(changedCopy.replace(/Q2 in Multidisciplinary Sciences/g, ''), /\bQ2\b/);
     assert.doesNotMatch(changedCopy, /1区/);
     assert.doesNotMatch(changedCopy, /SCIE/);
   });

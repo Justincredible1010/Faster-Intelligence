@@ -114,6 +114,8 @@ export interface ClarivateJournalMetrics {
   impactFactor: number | null;
   fiveYearImpactFactor?: number | null;
   jcrQuartile?: 'Q1' | 'Q2' | 'Q3' | 'Q4' | string | null;
+  /** JCR category of jcrQuartile (the best quartile when there are several). Ads must name it. */
+  jcrQuartileCategory?: string | null;
   casZone?: string | null; // e.g. "中科院综合性期刊1区 Top", "中科院医学1区"
   firstDecisionDays?: number | null;
   indexing?: string[]; // e.g. ["SCIE", "PubMed Central", "Scopus", "DOAJ"]
