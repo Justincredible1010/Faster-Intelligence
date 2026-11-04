@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import type { Request, Response } from 'express';
-import { loadAuthConfig, type AuthConfig } from './config';
+import { isPreviewBypassEnabled, loadAuthConfig, type AuthConfig } from './config';
 import { appendCookie, readCookies, serializeCookie, SESSION_COOKIE } from './cookies';
 import { getOauthStateStore, getSessionStore } from './stores';
 
@@ -69,6 +69,14 @@ export function cookieSecure(): boolean {
   return (process.env.APP_URL || '').trim().toLowerCase().startsWith('https://');
 }
 
+/** Header used by the framed AI Studio preview, where third-party cookies are dropped. */
+export const SESSION_HEADER = 'x-session-token';
+
+/** Preview only: a cross-site iframe needs SameSite=None; Secure for the cookie to be kept. */
+function cookieSameSite(): 'Lax' | 'None' {
+  return isPreviewBypassEnabled() ? 'None' : 'Lax';
+}
+
 function ttlFor(session: SessionRecord, config: AuthConfig): number {
   if (session.user) return config.sessionTtlSeconds;
   return 30 * 60;
@@ -81,6 +89,7 @@ export function writeSessionCookie(res: Response, session: SessionRecord, config
     serializeCookie(SESSION_COOKIE, token, {
       httpOnly: true,
       secure: cookieSecure(),
+      sameSite: cookieSameSite(),
       maxAge: ttlFor(session, config),
       path: '/',
     })
@@ -93,6 +102,7 @@ export function clearSessionCookie(res: Response): void {
     serializeCookie(SESSION_COOKIE, '', {
       httpOnly: true,
       secure: cookieSecure(),
+      sameSite: cookieSameSite(),
       maxAge: 0,
       path: '/',
     })
@@ -147,7 +157,12 @@ export function readOauthTransaction(session: SessionRecord): OauthTransaction |
 }
 
 export function readSession(req: Request, config: AuthConfig = loadAuthConfig()): SessionRecord | null {
-  const token = readCookies(req)[SESSION_COOKIE];
+  let token = readCookies(req)[SESSION_COOKIE];
+  // Header fallback is accepted only while the explicit preview bypass is on.
+  if (!token && isPreviewBypassEnabled()) {
+    const header = req.get?.(SESSION_HEADER) || '';
+    if (header && header.length <= 256) token = header;
+  }
   if (!token) return null;
   const id = openSessionId(token, config.sessionSecret);
   if (!id) return null;
@@ -177,6 +192,13 @@ export function rotateSession(res: Response, user: AuthUser, previous?: SessionR
 export function clearAllSessions(): void {
   getSessionStore().clear();
   getOauthStateStore().clear();
+}
+
+export const PREVIEW_BYPASS_SUB = 'preview-bypass';
+
+/** Preview-bypass sessions are never admins, whatever AUTH_ADMIN_EMAILS says. */
+export function isPreviewBypassUser(user: AuthUser | null | undefined): boolean {
+  return !!user && user.provider === 'dev' && user.sub === PREVIEW_BYPASS_SUB;
 }
 
 export function isAdminEmail(email: string, config: AuthConfig = loadAuthConfig()): boolean {

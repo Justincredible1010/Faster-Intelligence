@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { loadAuthConfig } from './config';
-import { readSession, safeEqual, type SessionRecord } from './session';
+import { isPreviewBypassUser, readSession, safeEqual, type SessionRecord } from './session';
 
 const PUBLIC_GET = new Set(['/api/auth/session', '/api/auth/login', '/api/auth/callback']);
 const PUBLIC_POST = new Set([
@@ -124,7 +124,7 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
     return;
   }
   const config = loadAuthConfig();
-  if (!config.adminEmails.includes(session.user.email)) {
+  if (isPreviewBypassUser(session.user) || !config.adminEmails.includes(session.user.email)) {
     res.status(403).json({ error: 'Admin access required' });
     return;
   }

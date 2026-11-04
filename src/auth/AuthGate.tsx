@@ -57,6 +57,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [pending, setPending] = useState(false);
   const [linkSent, setLinkSent] = useState(false);
   const [magicToken, setMagicToken] = useState<string | null>(null);
+  const [passcode, setPasscode] = useState('');
 
   const refresh = async () => {
     const next = await loadSession();
@@ -133,7 +134,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     const continueAsDev = async () => {
       setPending(true);
       setError(null);
-      const result = await devLogin();
+      const result = await devLogin(session.previewPasscodeRequired ? passcode : undefined);
       setPending(false);
       if (!result.authenticated || !result.user) {
         setError(result.error || 'Development sign-in is unavailable');
@@ -218,10 +219,21 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           )}
           {session.devBypass && (
             <>
+              {session.previewPasscodeRequired && (
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={passcode}
+                  onChange={(e) => setPasscode(e.target.value)}
+                  placeholder="Preview passcode"
+                  aria-label="Preview passcode"
+                  className="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                />
+              )}
               <button
                 type="button"
                 onClick={continueAsDev}
-                disabled={pending || !session.csrfToken}
+                disabled={pending || !session.csrfToken || (session.previewPasscodeRequired && !passcode)}
                 className="mt-4 w-full rounded-lg border border-slate-300 bg-slate-50 text-slate-800 text-sm font-semibold py-2.5 hover:bg-slate-100 disabled:opacity-60"
               >
                 Continue as a test user
