@@ -1,0 +1,604 @@
+{
+  "https://www.nature.com": {
+    "journalId": "nature",
+    "journalName": "Nature",
+    "publisher": "Nature Portfolio",
+    "canonicalUrl": "https://www.nature.com",
+    "slugs": ["nature", "flagship", "default", ""],
+    "metrics": {
+      "impactFactor": {
+        "value": 56.1,
+        "year": 2025,
+        "period": "JCR 2025 Release (2024 citation window)",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "fiveYearImpactFactor": {
+        "value": 56.7,
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "jcrQuartile": {
+        "value": "Q1 (Rank 1/134, Multidisciplinary Sciences)",
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "casZone": {
+        "value": "中科院综合性期刊1区 Top",
+        "year": 2024,
+        "period": "2024 中科院文献情报中心升级版 (Dec 2024)",
+        "source": "CAS Literature & Information Center",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "firstDecisionDays": {
+        "value": 32,
+        "year": 2026,
+        "period": "Q3 2026 Editorial Turnaround",
+        "source": "Springer Nature Editorial Production API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "apcUsd": {
+        "value": 11690,
+        "year": 2026,
+        "period": "2026 Price List",
+        "source": "Springer Nature APC Schedule",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "openAccessType": {
+        "value": "Hybrid Open Access",
+        "year": 2026,
+        "period": "Active Policy",
+        "source": "Nature Portfolio Policy",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "indexing": {
+        "value": ["SCIE", "PubMed Central", "MEDLINE", "Scopus"],
+        "year": 2026,
+        "period": "Active Indexing",
+        "source": "Clarivate Web of Science Master Journal List & NLM",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      }
+    },
+    "aimsAndScopeSummary": "The world's premier multidisciplinary science journal publishing the finest peer-reviewed research across all areas of science and technology.",
+    "primaryDiscipline": "Multidisciplinary Sciences (综合性科学)",
+    "submissionPortalUrl": "https://www.nature.com/nature/for-authors",
+    "lastUpdated": "2026-10-04T06:59:21.000Z",
+    "lastAccess": "2026-11-03T03:50:00.000Z"
+  },
+  "https://www.nature.com/ncomms": {
+    "journalId": "ncomms",
+    "journalName": "Nature Communications",
+    "publisher": "Nature Portfolio",
+    "canonicalUrl": "https://www.nature.com/ncomms",
+    "slugs": ["ncomms", "nature-communications"],
+    "metrics": {
+      "impactFactor": {
+        "value": 14.7,
+        "year": 2025,
+        "period": "JCR 2025 Release (2024 citation window)",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "fiveYearImpactFactor": {
+        "value": 16.3,
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "jcrQuartile": {
+        "value": "Q1 (Rank 6/134, Multidisciplinary Sciences)",
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "casZone": {
+        "value": "中科院综合性期刊1区 Top",
+        "year": 2024,
+        "period": "2024 中科院文献情报中心升级版",
+        "source": "CAS Literature & Information Center",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "firstDecisionDays": {
+        "value": 41,
+        "year": 2026,
+        "period": "Q3 2026 Editorial Turnaround",
+        "source": "Springer Nature Editorial Production API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "apcUsd": {
+        "value": 6790,
+        "year": 2026,
+        "period": "2026 Price List",
+        "source": "Springer Nature APC Schedule",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "openAccessType": {
+        "value": "Gold Open Access",
+        "year": 2026,
+        "period": "Active Policy",
+        "source": "Nature Portfolio Policy",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "indexing": {
+        "value": ["SCIE", "PubMed Central", "MEDLINE", "Scopus", "DOAJ"],
+        "year": 2026,
+        "period": "Active Indexing",
+        "source": "Clarivate Web of Science Master Journal List",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      }
+    },
+    "aimsAndScopeSummary": "A leading multidisciplinary Open Access journal publishing high-quality research across natural sciences, physics, chemistry, and biology.",
+    "primaryDiscipline": "Multidisciplinary Sciences (综合性科学)",
+    "submissionPortalUrl": "https://www.nature.com/ncomms/for-authors",
+    "lastUpdated": "2026-10-04T06:59:21.000Z",
+    "lastAccess": "2026-11-03T03:50:00.000Z"
+  },
+  "https://www.nature.com/aps": {
+    "journalId": "aps",
+    "journalName": "Acta Pharmacologica Sinica",
+    "publisher": "Nature Portfolio",
+    "canonicalUrl": "https://www.nature.com/aps",
+    "slugs": ["aps", "acta-pharmacologica-sinica"],
+    "metrics": {
+      "impactFactor": {
+        "value": 6.9,
+        "year": 2025,
+        "period": "JCR 2025 Release (2024 citation window)",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "fiveYearImpactFactor": {
+        "value": 6.8,
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "jcrQuartile": {
+        "value": "Q1 (Pharmacology & Pharmacy)",
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "casZone": {
+        "value": "中科院医学1区 Top / 药学1区",
+        "year": 2024,
+        "period": "2024 中科院文献情报中心升级版",
+        "source": "CAS Literature & Information Center",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "firstDecisionDays": {
+        "value": 23,
+        "year": 2026,
+        "period": "Q3 2026 Editorial Turnaround",
+        "source": "Springer Nature Editorial Production API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "apcUsd": {
+        "value": 3790,
+        "year": 2026,
+        "period": "2026 Price List",
+        "source": "Springer Nature APC Schedule",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "openAccessType": {
+        "value": "Hybrid Open Access",
+        "year": 2026,
+        "period": "Active Policy",
+        "source": "Nature Portfolio Policy",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "indexing": {
+        "value": ["SCIE", "PubMed Central", "MEDLINE", "Scopus", "CAS"],
+        "year": 2026,
+        "period": "Active Indexing",
+        "source": "Clarivate Web of Science Master Journal List",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      }
+    },
+    "aimsAndScopeSummary": "Publishes high-impact findings in pharmacology, experimental therapeutics, drug discovery, target validation, and molecular pharmacology.",
+    "primaryDiscipline": "Pharmacology & Pharmacy (药理学与毒理学)",
+    "submissionPortalUrl": "https://www.nature.com/aps/for-authors",
+    "lastUpdated": "2026-10-04T06:59:21.000Z",
+    "lastAccess": "2026-11-03T03:50:00.000Z"
+  },
+  "https://www.nature.com/cr": {
+    "journalId": "cr",
+    "journalName": "Cell Research",
+    "publisher": "Nature Portfolio",
+    "canonicalUrl": "https://www.nature.com/cr",
+    "slugs": ["cr", "cell-research"],
+    "metrics": {
+      "impactFactor": {
+        "value": 28.1,
+        "year": 2025,
+        "period": "JCR 2025 Release (2024 citation window)",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "fiveYearImpactFactor": {
+        "value": 31.2,
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "jcrQuartile": {
+        "value": "Q1 (Cell Biology)",
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "casZone": {
+        "value": "中科院生物学1区 Top / 细胞生物学1区",
+        "year": 2024,
+        "period": "2024 中科院文献情报中心升级版",
+        "source": "CAS Literature & Information Center",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "firstDecisionDays": {
+        "value": 18,
+        "year": 2026,
+        "period": "Q3 2026 Editorial Turnaround",
+        "source": "Springer Nature Editorial Production API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "apcUsd": {
+        "value": 5290,
+        "year": 2026,
+        "period": "2026 Price List",
+        "source": "Springer Nature APC Schedule",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "openAccessType": {
+        "value": "Gold Open Access",
+        "year": 2026,
+        "period": "Active Policy",
+        "source": "Nature Portfolio Policy",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "indexing": {
+        "value": ["SCIE", "PubMed Central", "MEDLINE", "Scopus", "DOAJ"],
+        "year": 2026,
+        "period": "Active Indexing",
+        "source": "Clarivate Web of Science Master Journal List",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      }
+    },
+    "aimsAndScopeSummary": "A premier international life science journal focusing on molecular and cell biology, cancer genetics, immunology, and stem cell biology.",
+    "primaryDiscipline": "Cell Biology (细胞生物学)",
+    "submissionPortalUrl": "https://www.nature.com/cr/for-authors",
+    "lastUpdated": "2026-10-04T06:59:21.000Z",
+    "lastAccess": "2026-11-03T03:50:00.000Z"
+  },
+  "https://www.nature.com/onc": {
+    "journalId": "onc",
+    "journalName": "Oncogene",
+    "publisher": "Springer Nature",
+    "canonicalUrl": "https://www.nature.com/onc",
+    "slugs": ["onc", "oncogene"],
+    "metrics": {
+      "impactFactor": {
+        "value": 6.9,
+        "year": 2025,
+        "period": "JCR 2025 Release (2024 citation window)",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "fiveYearImpactFactor": {
+        "value": 7.7,
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "jcrQuartile": {
+        "value": "Q1 (Oncology)",
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "casZone": {
+        "value": "中科院医学1区 Top / 肿瘤学1区",
+        "year": 2024,
+        "period": "2024 中科院文献情报中心升级版",
+        "source": "CAS Literature & Information Center",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "firstDecisionDays": {
+        "value": 24,
+        "year": 2026,
+        "period": "Q3 2026 Editorial Turnaround",
+        "source": "Springer Nature Editorial Production API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "apcUsd": {
+        "value": 4990,
+        "year": 2026,
+        "period": "2026 Price List",
+        "source": "Springer Nature APC Schedule",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "openAccessType": {
+        "value": "Hybrid Open Access",
+        "year": 2026,
+        "period": "Active Policy",
+        "source": "Springer Nature Policy",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "indexing": {
+        "value": ["SCIE", "PubMed Central", "MEDLINE", "Scopus"],
+        "year": 2026,
+        "period": "Active Indexing",
+        "source": "Clarivate Web of Science Master Journal List",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      }
+    },
+    "aimsAndScopeSummary": "Leading international cancer research journal publishing molecular pathways of disease, metastasis, and targeted therapies.",
+    "primaryDiscipline": "Oncology (肿瘤学)",
+    "submissionPortalUrl": "https://www.nature.com/onc/for-authors",
+    "lastUpdated": "2026-10-04T06:59:21.000Z",
+    "lastAccess": "2026-11-03T03:50:00.000Z"
+  },
+  "https://bmcbiol.biomedcentral.com": {
+    "journalId": "bmcbiol",
+    "journalName": "BMC Biology",
+    "publisher": "BMC (Part of Springer Nature)",
+    "canonicalUrl": "https://bmcbiol.biomedcentral.com",
+    "slugs": ["bmc-biology", "bmcbiol"],
+    "metrics": {
+      "impactFactor": {
+        "value": 5.4,
+        "year": 2025,
+        "period": "JCR 2025 Release (2024 citation window)",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "fiveYearImpactFactor": {
+        "value": 6.2,
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "jcrQuartile": {
+        "value": "Q1 (Biology)",
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "casZone": {
+        "value": "中科院生物学1区 Top",
+        "year": 2024,
+        "period": "2024 中科院文献情报中心升级版",
+        "source": "CAS Literature & Information Center",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "firstDecisionDays": {
+        "value": 29,
+        "year": 2026,
+        "period": "Q3 2026 Editorial Turnaround",
+        "source": "BMC Editorial Production API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "apcUsd": {
+        "value": 3690,
+        "year": 2026,
+        "period": "2026 Price List",
+        "source": "BMC APC Schedule",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "openAccessType": {
+        "value": "Gold Open Access",
+        "year": 2026,
+        "period": "Active Policy",
+        "source": "BMC Open Access Policy",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "indexing": {
+        "value": ["SCIE", "PubMed Central", "Scopus", "DOAJ"],
+        "year": 2026,
+        "period": "Active Indexing",
+        "source": "Clarivate Web of Science Master Journal List",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      }
+    },
+    "aimsAndScopeSummary": "Flagship biology journal of BMC, publishing research of broad interest across all areas of biological science.",
+    "primaryDiscipline": "Biological Sciences (生物科学)",
+    "submissionPortalUrl": "https://bmcbiol.biomedcentral.com/submission-guidelines",
+    "lastUpdated": "2026-10-04T06:59:21.000Z",
+    "lastAccess": "2026-11-03T03:50:00.000Z"
+  },
+  "https://www.nature.com/srep": {
+    "journalId": "srep",
+    "journalName": "Scientific Reports",
+    "publisher": "Nature Portfolio",
+    "canonicalUrl": "https://www.nature.com/srep",
+    "slugs": ["srep", "scientific-reports"],
+    "metrics": {
+      "impactFactor": {
+        "value": 3.8,
+        "year": 2025,
+        "period": "JCR 2025 Release (2024 citation window)",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "fiveYearImpactFactor": {
+        "value": 4.3,
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "jcrQuartile": {
+        "value": "Q2 (Multidisciplinary Sciences)",
+        "year": 2025,
+        "period": "JCR 2025 Release",
+        "source": "Clarivate Journal Citation Reports API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "casZone": {
+        "value": "中科院综合性期刊3区",
+        "year": 2024,
+        "period": "2024 中科院文献情报中心升级版",
+        "source": "CAS Literature & Information Center",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "firstDecisionDays": {
+        "value": 48,
+        "year": 2026,
+        "period": "Q3 2026 Editorial Turnaround",
+        "source": "Springer Nature Editorial Production API",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "apcUsd": {
+        "value": 2690,
+        "year": 2026,
+        "period": "2026 Price List",
+        "source": "Springer Nature APC Schedule",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2026-12-31T23:59:59.000Z",
+        "status": "verified"
+      },
+      "openAccessType": {
+        "value": "Gold Open Access",
+        "year": 2026,
+        "period": "Active Policy",
+        "source": "Nature Portfolio Policy",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      },
+      "indexing": {
+        "value": ["SCIE", "PubMed Central", "Scopus", "DOAJ"],
+        "year": 2026,
+        "period": "Active Indexing",
+        "source": "Clarivate Web of Science Master Journal List",
+        "verifiedAt": "2026-10-04T06:59:21.000Z",
+        "expireAt": "2027-06-30T23:59:59.000Z",
+        "status": "verified"
+      }
+    },
+    "aimsAndScopeSummary": "An open access journal publishing original research from all areas of the natural sciences, psychology, medicine and engineering.",
+    "primaryDiscipline": "Multidisciplinary Sciences (综合性科学)",
+    "submissionPortalUrl": "https://www.nature.com/srep/for-authors",
+    "lastUpdated": "2026-10-04T06:59:21.000Z",
+    "lastAccess": "2026-11-03T03:50:00.000Z"
+  }
+}
