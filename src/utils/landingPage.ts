@@ -1511,17 +1511,19 @@ export function mergeLandingPageFacts<T extends MergeableJournalFacts>(
     result.isVerifiedClarivate = false;
     result.reportingYear = base.reportingYear && /catalog snapshot/i.test(base.reportingYear) ? base.reportingYear : 'Catalog snapshot';
     result.sourceAttribution = base.sourceAttribution && /catalog snapshot/i.test(base.sourceAttribution) ? base.sourceAttribution : CATALOG_SNAPSHOT_NOTE;
-    for (const factKey of ['firstDecisionDays', 'apcUsd'] as const) {
+    for (const factKey of ['firstDecisionDays', 'apcUsd', 'articleDownloads', 'fullTextViews'] as const) {
       const existing = base[factKey];
       if (existing === null || existing === undefined) continue;
       const prior = base.provenanceMap?.[factKey];
       const labelledClarivate = prior?.source === 'Clarivate' || prior?.source === 'Clarivate JCR';
-      provenance[factKey] = {
+      provenance[`${factKey}CatalogSnapshot`] = {
         source: 'catalog_snapshot',
         confidence: 0.5,
         year: labelledClarivate ? undefined : prior?.year,
-        note: CATALOG_SNAPSHOT_NOTE,
+        note: `Catalog snapshot value ${existing} is not shown.`,
       };
+      writeNumber(result, factKey, null);
+      delete provenance[factKey];
     }
     if (!provenance.journalName || provenance.journalName.source === 'Clarivate' || provenance.journalName.source === 'Clarivate JCR') {
       provenance.journalName = { source: 'catalog_snapshot', confidence: 0.5, note: CATALOG_SNAPSHOT_NOTE };

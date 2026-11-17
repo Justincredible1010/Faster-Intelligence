@@ -72,6 +72,8 @@ interface Props {
   hasCustomPlaybook?: boolean;
   isLoading: boolean;
   isFetchingFacts: boolean;
+  checkingLabel?: string;
+  lookupError?: string | null;
   stageUrlRules?: StageUrlRules | null;
 }
 
@@ -124,6 +126,8 @@ export const InputStudio: React.FC<Props> = ({
   hasCustomPlaybook,
   isLoading,
   isFetchingFacts,
+  checkingLabel,
+  lookupError,
   stageUrlRules,
 }) => {
   const [isEditingMetrics, setIsEditingMetrics] = useState(false);
@@ -301,7 +305,7 @@ export const InputStudio: React.FC<Props> = ({
               {isFetchingFacts ? (
                 <>
                   <div className="w-3.5 h-3.5 border-2 border-slate-400 border-t-slate-800 rounded-full animate-spin" />
-                  <span>Looking up…</span>
+                  <span>{checkingLabel ? `Checking ${checkingLabel}...` : 'Checking...'}</span>
                 </>
               ) : (
                 <>
@@ -342,8 +346,19 @@ export const InputStudio: React.FC<Props> = ({
           ))}
         </div>
 
+        {lookupError ? (
+          <p className="text-xs text-slate-700 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5" role="status">
+            {lookupError}
+          </p>
+        ) : null}
+
         <div id="journal-facts" className="scroll-mt-20 space-y-3">
-          {!clarivateFacts && (
+          {isFetchingFacts && !clarivateFacts && (
+            <p className="text-xs text-slate-600 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3">
+              Checking {checkingLabel || 'this link'}...
+            </p>
+          )}
+          {!clarivateFacts && !isFetchingFacts && !lookupError && (
             <p className="text-xs text-slate-500 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3">
               Journal figures show up here after you look up a page.
             </p>
@@ -500,15 +515,16 @@ export const InputStudio: React.FC<Props> = ({
                   <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{otherFactCaption(clarivateFacts, 'casZone')}</span>
                 </div>
 
+                {clarivateFacts.provenanceMap?.firstDecisionDays?.source === 'page_sourced' &&
+                typeof clarivateFacts.firstDecisionDays === 'number' ? (
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                   <span className="text-[10px] text-slate-400 font-semibold uppercase block">First decision</span>
                   <span className="text-sm font-bold text-slate-900">
-                    {typeof clarivateFacts.firstDecisionDays === 'number'
-                      ? `${clarivateFacts.firstDecisionDays} days`
-                      : shownFigure(clarivateFacts.firstDecisionDays, sourceKind)}
+                    {`${clarivateFacts.firstDecisionDays} days`}
                   </span>
                   <span className="text-[10px] text-slate-500 block mt-1 leading-snug">{otherFactCaption(clarivateFacts, 'firstDecisionDays')}</span>
                 </div>
+                ) : null}
 
                 <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                   <span className="text-[10px] text-slate-400 font-semibold uppercase block">Publishing fee</span>
@@ -528,7 +544,10 @@ export const InputStudio: React.FC<Props> = ({
                 </div>
               </div>
             ) : null}
-            {!isEditingMetrics && (clarivateFacts.articleDownloads || clarivateFacts.fullTextViews) ? (
+            {!isEditingMetrics && (
+              (clarivateFacts.provenanceMap?.articleDownloads?.source === 'page_sourced' && clarivateFacts.articleDownloads) ||
+              (clarivateFacts.provenanceMap?.fullTextViews?.source === 'page_sourced' && clarivateFacts.fullTextViews)
+            ) ? (
               <div className="mt-2.5 bg-white p-2.5 rounded-lg border border-slate-200">
                 <span className="text-[10px] text-slate-400 font-semibold uppercase block">Usage</span>
                 <span className="text-sm font-bold text-slate-900">
