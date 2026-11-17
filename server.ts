@@ -525,21 +525,26 @@ export function resolveJournalIssn(input: {
   cached?: { issn?: string | null; eIssn?: string | null } | null;
   catalog?: { issn?: string | null; eIssn?: string | null } | null;
 }): string {
-  const candidates = [
-    input.requested,
-    input.pagePrintIssn,
-    input.pageElectronicIssn,
-    input.pageIssn,
-    input.cached?.issn,
-    input.cached?.eIssn,
-    input.catalog?.issn,
-    input.catalog?.eIssn,
-  ];
-  for (const candidate of candidates) {
-    const normalized = normalizeIssn(typeof candidate === 'string' ? candidate : '');
-    if (normalized) return normalized;
+  const asIssn = (value: unknown): string =>
+    normalizeIssn(typeof value === 'string' ? value : '');
+  const pageIssns = [input.pagePrintIssn, input.pageElectronicIssn, input.pageIssn]
+    .map(asIssn)
+    .filter(Boolean);
+  const requested = asIssn(input.requested);
+  // A client-supplied ISSN is only used when it belongs to this page (or the
+  // page has not given an ISSN yet). Otherwise a previous journal's ISSN would
+  // keep the first journal's Clarivate figures after the user switches URLs.
+  if (requested && (pageIssns.length === 0 || pageIssns.includes(requested))) {
+    return requested;
   }
-  return '';
+  const candidates = [
+    ...pageIssns,
+    asIssn(input.cached?.issn),
+    asIssn(input.cached?.eIssn),
+    asIssn(input.catalog?.issn),
+    asIssn(input.catalog?.eIssn),
+  ];
+  return candidates.find(Boolean) || '';
 }
 
 const CLARIVATE_OVERLAY_SKIP = new Set([
@@ -657,6 +662,31 @@ function lookupRequest(issnOrOptions?: string | JournalLookupOptions): { issn?: 
 function catalogForUrl(canonical: string): JCRJournalEntry | undefined {
   const norm = normalizeJournalUrl(canonical);
   return CLARIVATE_JCR_CATALOG.find((entry) => journalUrlsMatch(norm, normalizeJournalUrl(entry.url)));
+}
+
+/** Catalog row whose print or electronic ISSN matches. */
+function catalogForIssn(issn: string): JCRJournalEntry | undefined {
+  const wanted = normalizeIssn(issn);
+  if (!wanted) return undefined;
+  return CLARIVATE_JCR_CATALOG.find(
+    (entry) => normalizeIssn(entry.issn || '') === wanted || normalizeIssn(entry.eIssn || '') === wanted
+  );
+}
+
+/**
+ * True when this URL is the catalog landing page for the ISSN, or a real
+ * child path of that landing page (for example /ncomms/about). A publisher
+ * homepage (empty path) is not a parent of every path on the host — otherwise
+ * www.nature.com/apc would inherit Nature's metrics.
+ */
+export function issnBelongsToRequestUrl(issn: string, requestUrl: string): boolean {
+  const home = catalogForIssn(issn);
+  if (!home) return true;
+  const homeNorm = normalizeJournalUrl(home.url);
+  const current = normalizeJournalUrl(requestUrl);
+  if (journalUrlsMatch(homeNorm, current)) return true;
+  if (homeNorm.pathname && current.pathname.startsWith(`${homeNorm.pathname}/`)) return true;
+  return false;
 }
 
 /** Longest catalog landing page that is a real parent of this URL. Never invents a path. */
@@ -778,13 +808,16 @@ export async function lookupClarivateFacts(
     fetchError = err instanceof Error ? err.message : 'Landing page fetch failed';
   }
 
+  // Never alias the cache by a client-supplied ISSN from a previous journal.
+  // Only a page (or later, catalog) ISSN for this URL may share a cache entry.
+  const pageIssnForCache = page?.issnPrint.value || page?.issnElectronic.value;
   const issnKey = journalCacheKey({
-    issn: page?.issnPrint.value || issnArg,
+    issn: page?.issnPrint.value,
     eIssn: page?.issnElectronic.value,
     canonicalUrl: page?.canonicalUrl.value,
     requestUrl: norm.canonical,
   });
-  if (!forceRefresh && issnKey !== urlKey) {
+  if (!forceRefresh && pageIssnForCache && issnKey !== urlKey) {
     const cachedIssn = freshCachedFacts(cache.get(issnKey), norm.canonical);
     if (cachedIssn) {
       console.log(`[Cache ALIAS] ${urlKey} matches ${issnKey}`);
@@ -820,13 +853,19 @@ export async function lookupClarivateFacts(
       aliasChild = true;
     }
   }
-  const issnToUse = resolveJournalIssn({
+  const issnToUseRaw = resolveJournalIssn({
     requested: issnArg,
     pagePrintIssn: page?.issnPrint.value,
     pageElectronicIssn: page?.issnElectronic.value,
     cached: cache.get(urlKey)?.fullFacts || cache.get(issnKey)?.fullFacts,
     catalog,
   });
+  const issnToUse = issnToUseRaw && issnBelongsToRequestUrl(issnToUseRaw, norm.canonical) ? issnToUseRaw : '';
+  // A real page that is not that journal's homepage (for example /apc) must
+  // not inherit the journal's catalog row or Clarivate figures.
+  if (issnToUseRaw && !issnToUse && catalog && !catalogForUrl(norm.canonical)) {
+    catalog = undefined;
+  }
 
   let base: JCRJournalEntry = catalog
     ? { ...catalog, url: normalizeJournalUrl(catalog.url).canonical }
@@ -840,6 +879,10 @@ export async function lookupClarivateFacts(
       merged = mergeClarivateOverLanding(merged, fromApi);
       usedClarivate = true;
     }
+  }
+  if (issnToUseRaw && !issnToUse && !catalogForUrl(norm.canonical) && !catalogForChildUrl(norm.canonical)) {
+    // The page mentioned another journal's ISSN (site chrome on /apc, for example).
+    return missingJournalFacts(norm.canonical);
   }
   if (catalog && !usedClarivate && !aliasChild) {
     console.log(`[Catalog MATCH] Found catalog snapshot for ${base.journalName}`);

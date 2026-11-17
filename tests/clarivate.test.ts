@@ -302,6 +302,7 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
     displayPublisher,
     generateDeterministicCampaign,
     mergeClarivateOverLanding,
+    issnBelongsToRequestUrl,
     resolveJournalIssn,
     toDisplayCase,
     withAdIdentity,
@@ -492,6 +493,20 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
     catalog: { issn: '1111-1111' },
   }), '1476-4687');
   assert.strictEqual(resolveJournalIssn({ catalog: nature }), '0028-0836');
+  // A previous journal's ISSN must not beat the ISSN on the new landing page.
+  assert.strictEqual(resolveJournalIssn({
+    requested: '0028-0836',
+    pagePrintIssn: '0950-9232',
+    catalog: nature,
+  }), '0950-9232');
+  assert.strictEqual(resolveJournalIssn({
+    requested: '0028-0836',
+    pageElectronicIssn: '1476-5578',
+  }), '1476-5578');
+  assert.strictEqual(issnBelongsToRequestUrl('0028-0836', 'https://www.nature.com'), true);
+  assert.strictEqual(issnBelongsToRequestUrl('0028-0836', 'https://www.nature.com/apc'), false);
+  assert.strictEqual(issnBelongsToRequestUrl('2041-1723', 'https://www.nature.com/ncomms'), true);
+  assert.strictEqual(issnBelongsToRequestUrl('2041-1723', 'https://www.nature.com/ncomms/about'), true);
 
   const mixed = mergeClarivateOverLanding(
     {

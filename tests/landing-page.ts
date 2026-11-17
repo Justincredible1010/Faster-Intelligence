@@ -505,8 +505,8 @@ export async function runLandingPageTests() {
     assert.equal(ncomms.provenanceMap?.firstDecisionDays?.source, 'page_sourced');
     assert.match(ncomms.provenanceMap?.firstDecisionDaysCatalogSnapshot?.note || '', /28/);
     assert.equal(ncomms.fiveYearImpactFactor, null, 'The catalog never serves a 5-year IF');
-    assert.equal(ncomms.apcUsd, 6790);
-    assert.equal(ncomms.provenanceMap?.apcUsd?.source, 'catalog_snapshot');
+    assert.equal(ncomms.apcUsd, null, 'A catalog APC is not shown; only a page-stated or later verified fee is');
+    assert.match(ncomms.provenanceMap?.apcUsdCatalogSnapshot?.note || '', /6790/);
     assert.equal(ncomms.articleDownloads, 349_945_839);
     assert.equal(ncomms.provenanceMap?.articleDownloads?.source, 'page_sourced');
     assert.equal(ncomms.provenanceMap?.articleDownloads?.year, undefined);
@@ -1025,6 +1025,34 @@ export async function runLandingPageTests() {
     assert.equal(collision.has('paper'), false);
     assert.equal(collision.has('issn:1111-1119'), true);
     assert.equal(collision.has('issn:2222-2228'), true);
+
+    const staleIssnSwitch = await lookupClarivateFacts('https://link.springer.com/paper', false, {
+      ...quiet,
+      cache: collision,
+      issn: '1111-1119',
+      fetchPage: async (url) => ({
+        html: url.includes('springer')
+          ? '<html><head><meta property="og:title" content="Beta Journal"/></head><body><span itemprop="issn">2222-2228</span> (print)</body></html>'
+          : '<html><head><meta property="og:title" content="Alpha Journal"/></head><body><span itemprop="issn">1111-1119</span> (online)</body></html>',
+        finalUrl: url,
+      }),
+    });
+    assert.equal(staleIssnSwitch.journalName, 'Beta Journal');
+    assert.equal(staleIssnSwitch.issn, '2222-2228');
+
+    const apcPage = await lookupClarivateFacts('https://www.nature.com/apc', false, {
+      ...quiet,
+      cache: new Map(),
+      fetchPage: async () => ({
+        html: '<html><head><title>Open access and APCs</title></head><body><span itemprop="issn">0028-0836</span> (print) Nature</body></html>',
+        finalUrl: 'https://www.nature.com/apc',
+      }),
+    });
+    assert.equal(apcPage.verificationStatus, 'missing');
+    assert.equal(apcPage.journalName, 'Unknown journal');
+    assert.equal(apcPage.impactFactor, null);
+    assert.equal(apcPage.firstDecisionDays ?? null, null);
+    assert.equal(apcPage.articleDownloads ?? null, null);
 
     let fetched = 0;
     const portal = await lookupClarivateFacts('https://www.springer.com/', false, {

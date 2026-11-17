@@ -33,6 +33,7 @@ import { createCopyEditQueue } from './utils/playbookProposals';
 const copyEditQueue = createCopyEditQueue();
 import { pickEditableJournalFacts } from './utils/editableJournalFacts';
 import { journalUrlsMatch, normalizeJournalUrl } from './utils/journalUrl';
+import { JOURNAL_CATALOG } from './data/journalCatalog';
 import { formatJifClaim, trustedApcUsd, trustedCasZone, trustedQuartile, trustedQuartileClaim } from './utils/metricClaims';
 import { DEFAULT_STAGE_URL_RULES, type StageUrlRules } from './utils/stageUrlRules';
 
@@ -42,6 +43,35 @@ interface GeneratedFor {
   search: boolean;
   display: boolean;
   language: OutputLanguage;
+}
+
+const UNRECOGNIZED_JOURNAL_URL =
+  "This link didn't match a journal. Check the URL and try again.";
+
+/** Only reuse an ISSN when it belongs to the URL we are about to fetch. */
+function issnForMatchingUrl(facts: ClarivateJournalMetrics | null | undefined, url: string): string | undefined {
+  if (!facts?.url || !url.trim()) return undefined;
+  if (!journalUrlsMatch(normalizeJournalUrl(facts.url), normalizeJournalUrl(url))) return undefined;
+  return facts.issn || facts.eIssn || undefined;
+}
+
+function factsUrlMatches(facts: ClarivateJournalMetrics | null | undefined, url: string): boolean {
+  return Boolean(facts?.url && url.trim() && journalUrlsMatch(normalizeJournalUrl(facts.url), normalizeJournalUrl(url)));
+}
+
+function journalNameForUrl(url: string): string {
+  const hit = JOURNAL_CATALOG.find((journal) =>
+    journalUrlsMatch(normalizeJournalUrl(journal.url), normalizeJournalUrl(url))
+  );
+  return hit?.journalName || '';
+}
+
+function isUnrecognizedJournal(facts: any): boolean {
+  const name = typeof facts?.journalName === 'string' ? facts.journalName : '';
+  return (
+    facts?.verificationStatus === 'missing' &&
+    (name === 'Unknown journal' || name === 'Publisher homepage' || !name)
+  );
 }
 
 export default function App() {
@@ -57,7 +87,9 @@ export default function App() {
   const [campaign, setCampaign] = useState<GeneratedAdCampaign | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isFetchingFacts, setIsFetchingFacts] = useState<boolean>(false);
+  const [checkingLabel, setCheckingLabel] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const [lookupError, setLookupError] = useState<string | null>(null);
   const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
   const [isPlaybookOpen, setIsPlaybookOpen] = useState<boolean>(false);
   const [isCompareOpen, setIsCompareOpen] = useState<boolean>(false);
@@ -82,7 +114,9 @@ export default function App() {
 
   // Request race-condition safeguard
   const latestRequestIdRef = useRef<number>(0);
+  const latestFactsRequestIdRef = useRef<number>(0);
   const activeAbortControllerRef = useRef<AbortController | null>(null);
+  const factsAbortRef = useRef<AbortController | null>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
   const shouldScrollRef = useRef(false);
 
@@ -173,34 +207,58 @@ export default function App() {
 
   const fetchClarivateFacts = async (url: string, forceRefresh = false) => {
     if (!url || !url.trim()) return;
+    const requestUrl = url.trim();
+    const requestId = ++latestFactsRequestIdRef.current;
+    if (factsAbortRef.current) factsAbortRef.current.abort();
+    const abortController = new AbortController();
+    factsAbortRef.current = abortController;
+
+    // Drop the previous journal's figures immediately so a second click cannot
+    // keep showing the first journal's IF, downloads, or decision days.
+    setClarivateFacts((prev) => (factsUrlMatches(prev, requestUrl) ? prev : null));
+    setCheckingLabel(journalNameForUrl(requestUrl) || 'this link');
     setIsFetchingFacts(true);
+    setLookupError(null);
     setError(null);
     try {
       const res = await apiFetch('/api/fetch-clarivate-facts', {
         method: 'POST',
+        signal: abortController.signal,
         body: JSON.stringify({
-          url: url.trim(),
+          url: requestUrl,
           forceRefresh,
-          issn: clarivateFacts?.issn || clarivateFacts?.eIssn,
+          issn: issnForMatchingUrl(clarivateFacts, requestUrl),
         }),
       });
-      const data = await res.json();
-      if (data.facts) {
-        setClarivateFacts(data.facts);
-        await loadStageUrlRules();
-        setCampaign((prev) => {
-          if (!prev?.clarivateFacts) return prev;
-          const samePage = journalUrlsMatch(
-            normalizeJournalUrl(prev.clarivateFacts.url),
-            normalizeJournalUrl(data.facts.url || url),
-          );
-          return samePage ? { ...prev, clarivateFacts: data.facts } : prev;
-        });
+      const data = await res.json().catch(() => ({}));
+      if (requestId !== latestFactsRequestIdRef.current) return;
+      if (!res.ok || !data.facts || isUnrecognizedJournal(data.facts)) {
+        setClarivateFacts(null);
+        setLookupError(UNRECOGNIZED_JOURNAL_URL);
+        return;
       }
+      setLookupError(null);
+      setClarivateFacts(data.facts);
+      await loadStageUrlRules();
+      if (requestId !== latestFactsRequestIdRef.current) return;
+      setCampaign((prev) => {
+        if (!prev?.clarivateFacts) return prev;
+        const samePage = journalUrlsMatch(
+          normalizeJournalUrl(prev.clarivateFacts.url),
+          normalizeJournalUrl(data.facts.url || requestUrl),
+        );
+        return samePage ? { ...prev, clarivateFacts: data.facts } : prev;
+      });
     } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       console.error('Failed to fetch Clarivate JCR facts:', err);
+      if (requestId === latestFactsRequestIdRef.current) {
+        setLookupError(UNRECOGNIZED_JOURNAL_URL);
+      }
     } finally {
-      setIsFetchingFacts(false);
+      if (requestId === latestFactsRequestIdRef.current) {
+        setIsFetchingFacts(false);
+      }
     }
   };
 
@@ -258,7 +316,7 @@ export default function App() {
           outputLanguage: lang,
           channels: activeChannels,
           customPlaybook: playbook,
-          issn: (manualFacts || clarivateFacts)?.issn || (manualFacts || clarivateFacts)?.eIssn,
+          issn: issnForMatchingUrl(manualFacts || clarivateFacts, url),
           userProvidedFacts: browserFacts ? pickEditableJournalFacts(browserFacts) : null,
           verifiedPageFacts: getVerifiedPageFacts(url.trim()),
         }),
@@ -694,6 +752,8 @@ ${chinaChannelsExportSection(campaign)}
             hasCustomPlaybook={playbookIsCustom}
             isLoading={isLoading}
             isFetchingFacts={isFetchingFacts}
+            checkingLabel={checkingLabel}
+            lookupError={lookupError}
             stageUrlRules={stageUrlRules}
           />
         </section>
