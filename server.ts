@@ -714,6 +714,8 @@ function freshCachedFacts(cached: CachedJournal | undefined, requestUrl: string)
   if (!cached?.fullFacts) return null;
   const status = cached.fullFacts.verificationStatus;
   if (!status || status === 'missing' || !CURRENT_METRIC_STATUSES.has(status)) return null;
+  const cachedIssn = normalizeIssn(cached.fullFacts.issn || '') || normalizeIssn(cached.fullFacts.eIssn || '');
+  if (cachedIssn && !issnBelongsToRequestUrl(cachedIssn, requestUrl)) return null;
   if (isNatureHomepage(requestUrl)) {
     const fetchedAt = Date.parse(cached.lastAccess || '');
     if (!Number.isFinite(fetchedAt) || Date.now() - fetchedAt > NATURE_HOME_CACHE_MS) return null;
@@ -809,7 +811,8 @@ export async function lookupClarivateFacts(
   }
 
   // Never alias the cache by a client-supplied ISSN from a previous journal.
-  // Only a page (or later, catalog) ISSN for this URL may share a cache entry.
+  // Only a page ISSN that belongs to this URL may share a cache entry — a
+  // Nature ISSN in site chrome on /apc must not return Nature's cached figures.
   const pageIssnForCache = page?.issnPrint.value || page?.issnElectronic.value;
   const issnKey = journalCacheKey({
     issn: page?.issnPrint.value,
@@ -817,7 +820,15 @@ export async function lookupClarivateFacts(
     canonicalUrl: page?.canonicalUrl.value,
     requestUrl: norm.canonical,
   });
-  if (!forceRefresh && pageIssnForCache && issnKey !== urlKey) {
+  const pageIssnNormalized =
+    normalizeIssn(page?.issnPrint.value || '') || normalizeIssn(page?.issnElectronic.value || '');
+  if (
+    !forceRefresh &&
+    pageIssnForCache &&
+    issnKey !== urlKey &&
+    pageIssnNormalized &&
+    issnBelongsToRequestUrl(pageIssnNormalized, norm.canonical)
+  ) {
     const cachedIssn = freshCachedFacts(cache.get(issnKey), norm.canonical);
     if (cachedIssn) {
       console.log(`[Cache ALIAS] ${urlKey} matches ${issnKey}`);

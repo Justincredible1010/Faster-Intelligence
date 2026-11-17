@@ -1054,6 +1054,60 @@ export async function runLandingPageTests() {
     assert.equal(apcPage.firstDecisionDays ?? null, null);
     assert.equal(apcPage.articleDownloads ?? null, null);
 
+    const warmed = new Map();
+    const nowStr = new Date().toISOString();
+    const later = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    warmed.set('issn:0028-0836', {
+      journalId: 'issn:0028-0836',
+      journalName: 'Nature',
+      publisher: 'Springer Nature',
+      lastAccess: nowStr,
+      metrics: {
+        impactFactor: {
+          metric: 'impactFactor',
+          value: 50.5,
+          year: 2024,
+          source: 'clarivate_api',
+          cachedAt: nowStr,
+          expireAt: later,
+        },
+        firstDecisionDays: {
+          metric: 'firstDecisionDays',
+          value: 32,
+          year: 2024,
+          source: 'clarivate_api',
+          cachedAt: nowStr,
+          expireAt: later,
+        },
+      },
+      fullFacts: {
+        url: 'https://www.nature.com/',
+        slugs: [],
+        journalName: 'Nature',
+        publisher: 'Springer Nature',
+        issn: '0028-0836',
+        impactFactor: 50.5,
+        firstDecisionDays: 32,
+        articleDownloads: 111000,
+        verificationStatus: 'clarivate_api',
+      },
+    });
+    const apcWarm = await lookupClarivateFacts('https://www.nature.com/apc', false, {
+      ...quiet,
+      cache: warmed,
+      fetchPage: async () => ({
+        html: '<html><head><title>Open access and APCs</title></head><body><span itemprop="issn">0028-0836</span> (print) Nature</body></html>',
+        finalUrl: 'https://www.nature.com/apc',
+      }),
+    });
+    assert.equal(apcWarm.verificationStatus, 'missing');
+    assert.equal(apcWarm.journalName, 'Unknown journal');
+    assert.equal(apcWarm.impactFactor, null);
+    assert.equal(apcWarm.firstDecisionDays ?? null, null);
+    assert.equal(apcWarm.articleDownloads ?? null, null);
+    assert.equal(warmed.get('issn:0028-0836')?.fullFacts?.impactFactor, 50.5);
+    assert.notEqual(warmed.get('issn:0028-0836')?.fullFacts?.journalName, 'Unknown journal');
+
     let fetched = 0;
     const portal = await lookupClarivateFacts('https://www.springer.com/', false, {
       ...quiet,
