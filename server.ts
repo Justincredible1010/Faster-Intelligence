@@ -685,7 +685,11 @@ export function issnBelongsToRequestUrl(issn: string, requestUrl: string): boole
   const homeNorm = normalizeJournalUrl(home.url);
   const current = normalizeJournalUrl(requestUrl);
   if (journalUrlsMatch(homeNorm, current)) return true;
-  if (homeNorm.pathname && current.pathname.startsWith(`${homeNorm.pathname}/`)) return true;
+  if (
+    homeNorm.hostKey === current.hostKey &&
+    homeNorm.pathname &&
+    current.pathname.startsWith(`${homeNorm.pathname}/`)
+  ) return true;
   return false;
 }
 

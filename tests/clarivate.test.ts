@@ -507,6 +507,7 @@ console.log('\n[Clarivate] HTTP client, claim guard, and metrics store...');
   assert.strictEqual(issnBelongsToRequestUrl('0028-0836', 'https://www.nature.com/apc'), false);
   assert.strictEqual(issnBelongsToRequestUrl('2041-1723', 'https://www.nature.com/ncomms'), true);
   assert.strictEqual(issnBelongsToRequestUrl('2041-1723', 'https://www.nature.com/ncomms/about'), true);
+  assert.strictEqual(issnBelongsToRequestUrl('2041-1723', 'https://example.com/ncomms/about'), false);
 
   const mixed = mergeClarivateOverLanding(
     {
